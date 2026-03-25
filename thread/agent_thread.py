@@ -4,12 +4,13 @@ import threading
 
 from config import JsonConfig
 from context.shared_context import SharedContext
-from llm.llm_api import (
+from llm import (
     BaseLLMClient,
+    DeepSeekLLMClient,
     DynamicLLMClient,
     LLMProviderRegistry,
-    MockLLMClient,
-    OpenAICompatibleLLMClient,
+    OpenAILLMClient,
+    QwenLLMClient,
 )
 from llm.message_formatter import MessageFormatter
 from queue.message_queue import MessageQueue
@@ -74,16 +75,34 @@ class AgentThread(threading.Thread):
         )
 
     def _build_llm_client(self) -> BaseLLMClient:
-        registry = LLMProviderRegistry([MockLLMClient()])
-        provider_name = self._config.get("llm.provider", "mock")
-        if provider_name == "openai_compatible":
-            openai_client = OpenAICompatibleLLMClient.from_settings(
+        registry = LLMProviderRegistry()
+        provider_name = self._config.get("llm.provider", "openai")
+        if provider_name == "openai":
+            provider = OpenAILLMClient.from_settings(
                 api_key=self._config.get("llm.api_key"),
                 model=self._config.get("llm.model", "gpt-4.1-mini"),
                 base_url=self._config.get("llm.base_url", "https://api.openai.com/v1"),
                 timeout=float(self._config.get("llm.timeout", 60.0)),
             )
-            registry.register(openai_client)
+            registry.register(provider)
+        elif provider_name == "qwen":
+            provider = QwenLLMClient.from_settings(
+                api_key=self._config.get("llm.api_key"),
+                model=self._config.get("llm.model", "qwen-plus"),
+                base_url=self._config.get("llm.base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                timeout=float(self._config.get("llm.timeout", 60.0)),
+            )
+            registry.register(provider)
+        elif provider_name == "deepseek":
+            provider = DeepSeekLLMClient.from_settings(
+                api_key=self._config.get("llm.api_key"),
+                model=self._config.get("llm.model", "deepseek-chat"),
+                base_url=self._config.get("llm.base_url", "https://api.deepseek.com/v1"),
+                timeout=float(self._config.get("llm.timeout", 60.0)),
+            )
+            registry.register(provider)
+        else:
+            raise build_error("LLM_PROVIDER_NOT_FOUND", f"Unsupported LLM provider: {provider_name}")
         return DynamicLLMClient(registry, default_provider=provider_name)
 
     def run(self) -> None:
