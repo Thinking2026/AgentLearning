@@ -1,0 +1,23 @@
+{
+  "agent": {
+    "system_prompt": "You are a prototype AI agent. Use external context when it helps, call tools when necessary, and keep answers clear and concise.",
+    "max_tool_iterations": 3
+  },
+  "llm": {
+    "provider": "mock",
+    "model": "gpt-4.1-mini",
+    "base_url": "https://api.openai.com/v1",
+    "api_key": null,
+    "timeout": 60.0
+  },
+  "storage": {
+    "backend": "memory",
+    "sqlite": {
+      "path": "runtime/agent_storage.db"
+    }
+  },
+  "tools": {
+    "package": null,
+    "modules": []
+  }
+}

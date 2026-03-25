@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+from pathlib import Path
 import threading
 
-from llm_api import BaseLLMClient
+from config import JsonConfig
+from llm_api import (
+    BaseLLMClient,
+    DynamicLLMClient,
+    LLMProviderRegistry,
+    MockLLMClient,
+    OpenAICompatibleLLMClient,
+)
 from message_formatter import MessageFormatter
 from message_queue import MessageQueue
 from models import AgentEvent, ChatMessage
 from rag_service import RAGService
 from shared_context import SharedContext
-from tools import ToolRegistry
+from storage import InMemoryStorage, SQLiteStorage, StorageRegistry
+from tools import ToolRegistry, create_default_tool_registry
 
 
 class AgentThread(threading.Thread):
@@ -16,24 +25,67 @@ class AgentThread(threading.Thread):
         self,
         message_queue: MessageQueue,
         shared_context: SharedContext,
-        rag_service: RAGService,
-        llm_client: BaseLLMClient,
-        message_formatter: MessageFormatter,
-        tool_registry: ToolRegistry,
-        max_tool_iterations: int = 3,
+        config: JsonConfig,
+        max_tool_iterations: int | None = None,
     ) -> None:
         super().__init__(name="AgentThread", daemon=True)
         self._message_queue = message_queue
         self._shared_context = shared_context
-        self._rag_service = rag_service
-        self._llm_client = llm_client
-        self._message_formatter = message_formatter
-        self._tool_registry = tool_registry
-        self._max_tool_iterations = max_tool_iterations
+        self._config = config
+        self._storage_registry = self._build_storage_registry()
+        self._storage = self._build_storage()
+        self._rag_service = self._build_rag_service()
+        self._message_formatter = self._build_message_formatter()
+        self._tool_registry = self._build_tool_registry()
+        self._llm_client = self._build_llm_client()
+        self._max_tool_iterations = max_tool_iterations or int(
+            self._config.get("agent.max_tool_iterations", 3)
+        )
         self._stop_event = threading.Event()
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def _build_storage_registry(self) -> StorageRegistry:
+        memory_storage = InMemoryStorage()
+        sqlite_path = self._config.get("storage.sqlite.path", "runtime/agent_storage.db")
+        sqlite_storage = SQLiteStorage(sqlite_path)
+        sqlite_storage.seed(memory_storage.get_documents())
+        return StorageRegistry([memory_storage, sqlite_storage])
+
+    def _build_storage(self):
+        backend_name = self._config.get("storage.backend", "memory")
+        return self._storage_registry.get(backend_name)
+
+    def _build_rag_service(self) -> RAGService:
+        return RAGService(self._storage)
+
+    @staticmethod
+    def _build_message_formatter() -> MessageFormatter:
+        return MessageFormatter()
+
+    def _build_tool_registry(self) -> ToolRegistry:
+        package_name = self._config.get("tools.package")
+        module_names = self._config.get("tools.modules", [])
+        if not isinstance(module_names, list):
+            module_names = []
+        return create_default_tool_registry(
+            module_names=module_names,
+            package_name=package_name,
+        )
+
+    def _build_llm_client(self) -> BaseLLMClient:
+        registry = LLMProviderRegistry([MockLLMClient()])
+        provider_name = self._config.get("llm.provider", "mock")
+        if provider_name == "openai_compatible":
+            openai_client = OpenAICompatibleLLMClient.from_settings(
+                api_key=self._config.get("llm.api_key"),
+                model=self._config.get("llm.model", "gpt-4.1-mini"),
+                base_url=self._config.get("llm.base_url", "https://api.openai.com/v1"),
+                timeout=float(self._config.get("llm.timeout", 60.0)),
+            )
+            registry.register(openai_client)
+        return DynamicLLMClient(registry, default_provider=provider_name)
 
     def run(self) -> None:
         while not self._stop_event.is_set() and not self._message_queue.is_closed():

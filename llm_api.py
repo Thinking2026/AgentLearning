@@ -111,6 +111,24 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL") or "https://api.openai.com/v1"
         return cls(api_key=api_key, model=model, base_url=base_url)
 
+    @classmethod
+    def from_settings(
+        cls,
+        api_key: str | None,
+        model: str,
+        base_url: str = "https://api.openai.com/v1",
+        timeout: float = 60.0,
+    ) -> "OpenAICompatibleLLMClient":
+        resolved_api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+        if not resolved_api_key:
+            raise ValueError("Missing API key for OpenAI-compatible client.")
+        return cls(
+            api_key=resolved_api_key,
+            model=model,
+            base_url=base_url,
+            timeout=timeout,
+        )
+
     def generate(self, request: LLMRequest) -> LLMResponse:
         payload = {
             "model": self._model,
