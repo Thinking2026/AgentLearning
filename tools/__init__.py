@@ -1,7 +1,8 @@
 from .tools import (
     BaseTool,
     CurrentTimeTool,
-    EchoTool,
+    FileTool,
+    ShellTool,
     ToolRegistry,
     create_default_tool_registry,
     discover_tools,
@@ -10,7 +11,8 @@ from .tools import (
 __all__ = [
     "BaseTool",
     "CurrentTimeTool",
-    "EchoTool",
+    "FileTool",
+    "ShellTool",
     "ToolRegistry",
     "create_default_tool_registry",
     "discover_tools",

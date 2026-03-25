@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
+import subprocess
 from abc import ABC, abstractmethod
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from schemas import ToolCall, ToolResult, build_error
@@ -30,20 +32,72 @@ class BaseTool(ABC):
         }
 
 
-class EchoTool(BaseTool):
-    name = "echo"
-    description = "Echo the provided text back to the agent."
+class ShellTool(BaseTool):
+    name = "shell"
+    description = "Run a shell command and return stdout or stderr."
     parameters = {
         "type": "object",
         "properties": {
-            "text": {"type": "string", "description": "The text to echo back."}
+            "command": {
+                "type": "string",
+                "description": "The shell command to execute.",
+            },
+            "timeout": {
+                "type": "integer",
+                "description": "Optional timeout in seconds.",
+                "default": 15,
+            },
         },
-        "required": ["text"],
+        "required": ["command"],
     }
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
-        text = str(arguments.get("text", ""))
-        return ToolResult(call_id="", output=text, success=True)
+        command = str(arguments.get("command", "")).strip()
+        if not command:
+            return ToolResult(
+                call_id="",
+                output="",
+                success=False,
+                error=build_error("TOOL_ARGUMENT_ERROR", "Shell tool requires a non-empty command."),
+            )
+
+        timeout = int(arguments.get("timeout", 15))
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=Path.cwd(),
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return ToolResult(
+                call_id="",
+                output="",
+                success=False,
+                error=build_error("SHELL_TIMEOUT", f"Shell command timed out after {timeout} seconds."),
+            )
+        except Exception as exc:
+            return ToolResult(
+                call_id="",
+                output="",
+                success=False,
+                error=build_error("SHELL_EXECUTION_ERROR", f"Shell command failed to start: {exc}"),
+            )
+
+        output = completed.stdout.strip()
+        error_output = completed.stderr.strip()
+        if completed.returncode != 0:
+            message = error_output or output or f"Command exited with code {completed.returncode}"
+            return ToolResult(
+                call_id="",
+                output="",
+                success=False,
+                error=build_error("SHELL_COMMAND_FAILED", message),
+            )
+
+        return ToolResult(call_id="", output=output or "(no output)", success=True)
 
 
 class CurrentTimeTool(BaseTool):
@@ -54,6 +108,75 @@ class CurrentTimeTool(BaseTool):
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         current_time = datetime.now().isoformat(timespec="seconds")
         return ToolResult(call_id="", output=current_time, success=True)
+
+
+class FileTool(BaseTool):
+    name = "file"
+    description = "Read, write, or append file content."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "description": "One of read, write, append.",
+                "enum": ["read", "write", "append"],
+            },
+            "path": {
+                "type": "string",
+                "description": "Target file path.",
+            },
+            "content": {
+                "type": "string",
+                "description": "Content used for write or append.",
+            },
+        },
+        "required": ["action", "path"],
+    }
+
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
+        action = str(arguments.get("action", "")).strip().lower()
+        path_value = str(arguments.get("path", "")).strip()
+        content = str(arguments.get("content", ""))
+
+        if action not in {"read", "write", "append"}:
+            return ToolResult(
+                call_id="",
+                output="",
+                success=False,
+                error=build_error("TOOL_ARGUMENT_ERROR", "File tool action must be read, write, or append."),
+            )
+        if not path_value:
+            return ToolResult(
+                call_id="",
+                output="",
+                success=False,
+                error=build_error("TOOL_ARGUMENT_ERROR", "File tool requires a non-empty path."),
+            )
+
+        target_path = Path(path_value).expanduser()
+        try:
+            if action == "read":
+                return ToolResult(
+                    call_id="",
+                    output=target_path.read_text(encoding="utf-8"),
+                    success=True,
+                )
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if action == "write":
+                target_path.write_text(content, encoding="utf-8")
+                return ToolResult(call_id="", output=f"Wrote file: {target_path}", success=True)
+
+            with target_path.open("a", encoding="utf-8") as file_handle:
+                file_handle.write(content)
+            return ToolResult(call_id="", output=f"Appended file: {target_path}", success=True)
+        except Exception as exc:
+            return ToolResult(
+                call_id="",
+                output="",
+                success=False,
+                error=build_error("FILE_TOOL_ERROR", f"File tool failed: {exc}"),
+            )
 
 
 class ToolRegistry:
