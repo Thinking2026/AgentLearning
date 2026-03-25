@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from schemas.errors import AgentError
+
 
 def utc_now_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
@@ -35,7 +37,7 @@ class ToolResult:
     call_id: str
     output: str
     success: bool = True
-    error: str | None = None
+    error: AgentError | None = None
 
 
 @dataclass(slots=True)

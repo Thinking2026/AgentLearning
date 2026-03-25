@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
 
-from schemas import ToolCall, ToolResult
+from schemas import ToolCall, ToolResult, build_error
 
 
 class BaseTool(ABC):
@@ -97,7 +97,7 @@ class BaseToolHandler(ABC):
             call_id=tool_call.call_id,
             output="",
             success=False,
-            error=f"Unknown tool: {tool_call.name}",
+            error=build_error("TOOL_NOT_FOUND", f"Unknown tool: {tool_call.name}"),
         )
 
     @abstractmethod
@@ -132,7 +132,7 @@ class FallbackToolHandler(BaseToolHandler):
             call_id=tool_call.call_id,
             output="",
             success=False,
-            error=f"Unknown tool: {tool_call.name}",
+            error=build_error("TOOL_NOT_FOUND", f"Unknown tool: {tool_call.name}"),
         )
 
 

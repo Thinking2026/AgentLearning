@@ -1,3 +1,4 @@
+from .errors import AgentError, build_error
 from .types import (
     AgentEvent,
     ChatMessage,
@@ -16,4 +17,6 @@ __all__ = [
     "ToolCall",
     "ToolResult",
     "utc_now_iso",
+    "AgentError",
+    "build_error",
 ]

@@ -15,7 +15,7 @@ from llm.message_formatter import MessageFormatter
 from queue.message_queue import MessageQueue
 from rag.rag_service import RAGService
 from rag.storage import InMemoryStorage, SQLiteStorage, StorageRegistry
-from schemas import AgentEvent, ChatMessage
+from schemas import AgentError, ChatMessage, build_error
 from tools import ToolRegistry, create_default_tool_registry
 
 
@@ -100,37 +100,30 @@ class AgentThread(threading.Thread):
             try:
                 self._handle_user_message(user_message)
             except Exception as exc:
+                agent_error = self._normalize_error(exc)
                 error_message = ChatMessage(
                     role="assistant",
-                    content=f"Agent 处理消息时发生异常：{exc}",
+                    content=str(agent_error),
+                    metadata={"error_code": agent_error.code, "error_message": agent_error.message},
                 )
                 self._message_queue.send_agent_message(error_message)
 
     def _handle_user_message(self, user_message: ChatMessage) -> None:
-        self._shared_context.append_message(user_message)
-        self._shared_context.append_event(
-            AgentEvent(event_type="user_message_received", payload={"content": user_message.content})
-        )
-
-        working_messages = self._shared_context.get_conversation()
+        working_messages = [user_message]
         rag_context = self._rag_service.retrieve(user_message.content)
 
         for iteration in range(self._max_tool_iterations + 1):
             request = self._message_formatter.build_request(
-                system_prompt=self._shared_context.system_prompt,
+                system_prompt=self._shared_context.get_system_prompt(),
                 conversation=working_messages,
                 tools=self._tool_registry.get_tool_schemas(),
                 context=rag_context,
             )
             response = self._message_formatter.parse_response(self._llm_client.generate(request))
             assistant_message = response.assistant_message
-            self._shared_context.append_message(assistant_message)
 
             if not response.tool_calls:
                 self._message_queue.send_agent_message(assistant_message)
-                self._shared_context.append_event(
-                    AgentEvent(event_type="assistant_answered", payload={"content": assistant_message.content})
-                )
                 return
 
             if iteration >= self._max_tool_iterations:
@@ -138,7 +131,6 @@ class AgentThread(threading.Thread):
                     role="assistant",
                     content="工具调用次数超过上限，本轮先停止，避免进入死循环。",
                 )
-                self._shared_context.append_message(fallback)
                 self._message_queue.send_agent_message(fallback)
                 return
 
@@ -148,21 +140,20 @@ class AgentThread(threading.Thread):
                     tool_call.arguments,
                     tool_call.call_id,
                 )
-                self._shared_context.append_event(
-                    AgentEvent(
-                        event_type="tool_executed",
-                        payload={
-                            "tool_name": tool_call.name,
-                            "success": result.success,
-                            "error": result.error,
-                        },
-                    )
+                observation_text = (
+                    result.output
+                    if result.success
+                    else f"Tool error: {result.error if result.error else 'unknown error'}"
                 )
-                observation_text = result.output if result.success else f"Tool error: {result.error}"
                 observation = self._message_formatter.format_tool_observation(
                     tool_name=tool_call.name,
                     output=observation_text,
                     call_id=tool_call.call_id,
                 )
                 working_messages = working_messages + [assistant_message, observation]
-                self._shared_context.append_message(observation)
+
+    @staticmethod
+    def _normalize_error(exc: Exception) -> AgentError:
+        if isinstance(exc, AgentError):
+            return exc
+        return build_error("UNEXPECTED_ERROR", f"Agent encountered an unexpected error: {exc}")

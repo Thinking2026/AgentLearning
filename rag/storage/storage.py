@@ -5,6 +5,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterable
 
+from schemas import build_error
+
 
 class BaseStorage(ABC):
     backend_name: str = "base"
@@ -149,8 +151,9 @@ class StorageRegistry:
             return self._storages[backend_name]
         except KeyError as exc:
             available = ", ".join(sorted(self._storages)) or "<none>"
-            raise ValueError(
-                f"Unknown storage backend: {backend_name}. Available backends: {available}"
+            raise build_error(
+                "STORAGE_BACKEND_NOT_FOUND",
+                f"Unknown storage backend: {backend_name}. Available backends: {available}",
             ) from exc
 
     def list_backends(self) -> list[str]:

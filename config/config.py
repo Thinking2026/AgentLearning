@@ -4,9 +4,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from schemas import AgentError, build_error
 
-class ConfigError(Exception):
-    pass
+
+class ConfigError(AgentError):
+    def __init__(self, message: str) -> None:
+        super().__init__(code="CONFIG_ERROR", message=message)
 
 
 class JsonConfig:
@@ -15,7 +18,7 @@ class JsonConfig:
         self._data: dict[str, Any] = {}
         self.reload()
 
-    @property
+    @property #让方法可以像属性一样被访问
     def config_path(self) -> Path:
         return self._config_path
 

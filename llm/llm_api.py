@@ -8,7 +8,7 @@ import urllib.request
 from abc import ABC, abstractmethod
 from typing import Iterable
 
-from schemas import ChatMessage, LLMRequest, LLMResponse, ToolCall
+from schemas import ChatMessage, LLMRequest, LLMResponse, ToolCall, build_error
 
 
 class BaseLLMClient(ABC):
@@ -105,7 +105,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
     def from_env(cls) -> "OpenAICompatibleLLMClient":
         api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
         if not api_key:
-            raise ValueError("Missing OPENAI_API_KEY or LLM_API_KEY for OpenAI-compatible client.")
+            raise build_error("LLM_CONFIG_ERROR", "Missing OPENAI_API_KEY or LLM_API_KEY for OpenAI-compatible client.")
 
         model = os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL") or "gpt-4.1-mini"
         base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("LLM_BASE_URL") or "https://api.openai.com/v1"
@@ -121,7 +121,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
     ) -> "OpenAICompatibleLLMClient":
         resolved_api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
         if not resolved_api_key:
-            raise ValueError("Missing API key for OpenAI-compatible client.")
+            raise build_error("LLM_CONFIG_ERROR", "Missing API key for OpenAI-compatible client.")
         return cls(
             api_key=resolved_api_key,
             model=model,
@@ -159,9 +159,9 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
                 body = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"OpenAI-compatible API HTTP {exc.code}: {body}") from exc
+            raise build_error("LLM_HTTP_ERROR", f"OpenAI-compatible API HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"OpenAI-compatible API request failed: {exc.reason}") from exc
+            raise build_error("LLM_NETWORK_ERROR", f"OpenAI-compatible API request failed: {exc.reason}") from exc
 
         return json.loads(body)
 
@@ -196,7 +196,7 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
     def _parse_chat_completion(response_data: dict) -> LLMResponse:
         choices = response_data.get("choices") or []
         if not choices:
-            raise RuntimeError(f"OpenAI-compatible API returned no choices: {response_data}")
+            raise build_error("LLM_RESPONSE_ERROR", f"OpenAI-compatible API returned no choices: {response_data}")
 
         first_choice = choices[0]
         message = first_choice.get("message") or {}
@@ -236,8 +236,9 @@ class LLMProviderRegistry:
             return self._providers[provider_name]
         except KeyError as exc:
             available = ", ".join(sorted(self._providers)) or "<none>"
-            raise ValueError(
-                f"Unknown LLM provider: {provider_name}. Available providers: {available}"
+            raise build_error(
+                "LLM_PROVIDER_NOT_FOUND",
+                f"Unknown LLM provider: {provider_name}. Available providers: {available}",
             ) from exc
 
     def list_providers(self) -> list[str]:

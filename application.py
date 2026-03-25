@@ -14,9 +14,8 @@ class AgentApplication:
     def __init__(self, config: JsonConfig) -> None:
         self._config = config
         self._message_queue = MessageQueue()
-        self._shared_context = SharedContext(
-            system_prompt=self._build_system_prompt()
-        )
+        self._shared_context = SharedContext()
+        self._shared_context.append_system_prompt(self._build_system_prompt())
         self._message_formatter = MessageFormatter()
         self._agent_thread = AgentThread(
             message_queue=self._message_queue,
