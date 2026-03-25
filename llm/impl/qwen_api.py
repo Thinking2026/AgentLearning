@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from llm.openai_api import OpenAILLMClient
+from llm.impl.openai_api import OpenAILLMClient
 from schemas import build_error
 
 
