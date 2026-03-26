@@ -1,3 +1,4 @@
+from .consts import SessionStatus
 from .errors import AgentError, build_error
 from .types import (
     AgentEvent,
@@ -17,6 +18,7 @@ __all__ = [
     "ToolCall",
     "ToolResult",
     "utc_now_iso",
+    "SessionStatus",
     "AgentError",
     "build_error",
 ]
