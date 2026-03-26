@@ -45,9 +45,13 @@ class MessageFormatter:
         call_id: str | None = None,
     ) -> ChatMessage:
         return ChatMessage(
-            role="tool",
+            role="conversation",
             content=output,
-            metadata={"tool_name": tool_name, "tool_call_id": call_id},
+            metadata={
+                "tool_name": tool_name,
+                "tool_call_id": call_id,
+                "conversation_source": "tool",
+            },
         )
 
     def parse_response(self, response: LLMResponse) -> LLMResponse:

@@ -17,7 +17,15 @@ from llm.message_formatter import MessageFormatter
 from queue.message_queue import MessageQueue
 from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
-from schemas import AgentError, ChatMessage, LLMRequest, LLMResponse, SessionStatus, build_error
+from schemas import (
+    AgentError,
+    ChatMessage,
+    LLMRequest,
+    LLMResponse,
+    SessionStatus,
+    SystemMessage,
+    build_error,
+)
 from tools import ToolRegistry, create_default_tool_registry
 
 
@@ -146,27 +154,30 @@ class AgentThread(threading.Thread):
             ):
                 self._message_queue.send_agent_message(
                     ChatMessage(
-                        role="system",
+                        role="assistant",
                         content="Sorry, this question is too hard, i can not solve",
                     )
                 )
                 self.cleanup()
                 continue
 
-            user_message = self._wait_for_user_message(session_status)#TODO user_thread增加一种控制消息，用于用户退出后清理所有对象
-            if user_message.metadata.get("control") == "shutdown":
-                self._message_queue.close()
-                self.stop()
-                break
+            incoming_message = self._wait_for_user_message(session_status)
+            if isinstance(incoming_message, SystemMessage):
+                if self._handle_system_message(incoming_message):
+                    break
+                continue
 
             try:
-                prompt = self._build_current_prompt(session_status, user_message)
-                request = self._format_llm_request(prompt, user_message)
+                prompt = self._build_current_prompt(session_status, incoming_message)
+                request = self._format_llm_request(prompt, incoming_message)
+                if request is None:
+                    continue
                 self._shared_context.append_system_prompt_line(prompt)
                 llm_response = self._call_llm_with_timeout_handling(request)
+                if llm_response is None:
+                    continue
                 parsed_response = self._parse_llm_api_response(llm_response)
                 if parsed_response is None:
-                    self._handle_unexpected_llm_response(llm_response)
                     continue
                 if self._route_llm_response(parsed_response):
                     continue
@@ -180,26 +191,39 @@ class AgentThread(threading.Thread):
                 self._message_queue.send_agent_message(error_message)
                 self.cleanup()
 
-    def _wait_for_user_message(self, session_status: SessionStatus) -> ChatMessage:
+    def _wait_for_user_message(
+        self,
+        session_status: SessionStatus,
+    ) -> ChatMessage | SystemMessage | None:
         timeout = None if session_status == SessionStatus.NEW_TASK else 5.0
         while not self._stop_event.is_set() and not self._message_queue.is_closed():
             user_message = self._message_queue.get_user_message(timeout=timeout)
             if user_message is not None:
                 return user_message
             if session_status == SessionStatus.IN_PROGRESS:
-                return ChatMessage(role="system", content="", metadata={"control": "poll_timeout"})
-        return ChatMessage(role="system", content="shutdown", metadata={"control": "shutdown"})
+                return None
+        return SystemMessage(command="shutdown", content="queue closed")
+
+    def _handle_system_message(self, message: SystemMessage) -> bool:
+        if message.command in {"quit", "shutdown"}:
+            self.cleanup()
+            self._message_queue.close()
+            self.stop()
+            return True
+        return False
 
     def _build_current_prompt(
         self,
         session_status: SessionStatus,
-        user_message: ChatMessage,
+        user_message: ChatMessage | None,
     ) -> str:
         if session_status == SessionStatus.NEW_TASK:
+            if user_message is None:
+                raise build_error("MISSING_USER_MESSAGE", "A new task requires a user message.")
             self._shared_context.set_session_status(SessionStatus.IN_PROGRESS)
             self._cur_react_attempt_iterations = 0
             return self._generate_react_prompt(user_message)
-        if user_message.content.strip():
+        if user_message is not None and user_message.content.strip():
             return user_message.content.strip()
         return self._build_continuation_prompt()
 
@@ -209,10 +233,15 @@ class AgentThread(threading.Thread):
     def _format_llm_request(
         self,
         prompt: str,
-        user_message: ChatMessage,
-    ) -> LLMRequest:
-        rag_context = self._rag_service.retrieve(user_message.content) if user_message.content.strip() else []
-        conversation = [ChatMessage(role="user", content=prompt)]
+        user_message: ChatMessage | None,
+    ) -> LLMRequest | None:
+        rag_context = []
+        if user_message is not None and user_message.content.strip():
+            rag_context = self._retrieve_rag_context(user_message.content)
+            if rag_context is None:
+                return None
+        message_role = "user" if user_message is not None else "assistant"
+        conversation = [ChatMessage(role=message_role, content=prompt)]
         return self._message_formatter.build_request(
             system_prompt=self._shared_context.get_system_prompt(),
             conversation=conversation,
@@ -220,23 +249,35 @@ class AgentThread(threading.Thread):
             context=rag_context,
         )
 
-    def _call_llm_with_timeout_handling(self, request: LLMRequest) -> LLMResponse:
+    def _call_llm_with_timeout_handling(self, request: LLMRequest) -> LLMResponse | None:
         try:
             return self._llm_client.generate(request)
         except TimeoutError as exc:
             self._handle_llm_timeout(exc)
-            raise
+            return None
         except AgentError as exc:
             if exc.code == "LLM_TIMEOUT":
                 self._handle_llm_timeout(exc)
+                return None
+            if exc.code in {"LLM_RESPONSE_PARSE_ERROR", "LLM_RESPONSE_ERROR"}:
+                self._handle_llm_parse_error(exc)
+                return None
             raise
 
     def _handle_llm_timeout(self, exc: Exception) -> None:
         timeout_message = ChatMessage(
-            role="system",
+            role="assistant",
             content=f"LLM call timed out. Temporary timeout strategy applied: {exc}",
         )
         self._message_queue.send_agent_message(timeout_message)
+        self.cleanup()
+
+    def _handle_llm_parse_error(self, exc: Exception) -> None:
+        parse_error_message = ChatMessage(
+            role="assistant",
+            content=f"LLM returned a response that could not be parsed: {exc}",
+        )
+        self._message_queue.send_agent_message(parse_error_message)
         self.cleanup()
 
     def _parse_llm_api_response(self, response: Any) -> LLMResponse | None:
@@ -244,14 +285,16 @@ class AgentThread(threading.Thread):
             if response is None:
                 return None
             if not isinstance(response, LLMResponse):
+                self._handle_unexpected_llm_response(response)
                 return None
             return self._message_formatter.parse_response(response)
-        except Exception:
+        except Exception as exc:
+            self._handle_unexpected_llm_response(exc)
             return None
 
     def _handle_unexpected_llm_response(self, response: Any) -> None:
         fallback = ChatMessage(
-            role="system",
+            role="assistant",
             content=f"LLM returned an unexpected response format: {response}",
         )
         self._message_queue.send_agent_message(fallback)
@@ -277,7 +320,6 @@ class AgentThread(threading.Thread):
             content=response.assistant_message.content,
             metadata=response.assistant_message.metadata,
         )
-        return True
 
     def _handle_tool_calls(self, response: LLMResponse) -> None:
         if self._cur_react_attempt_iterations >= self._max_tool_iterations:
@@ -296,11 +338,10 @@ class AgentThread(threading.Thread):
                 tool_call.arguments,
                 tool_call.call_id,
             )
-            observation_text = (
-                result.output
-                if result.success
-                else f"Tool error: {result.error if result.error else 'unknown error'}"
-            )
+            if not result.success:
+                self._handle_tool_error(tool_call.name, result)
+                return
+            observation_text = result.output
             observation = self._message_formatter.format_tool_observation(
                 tool_name=tool_call.name,
                 output=observation_text,
@@ -322,13 +363,70 @@ class AgentThread(threading.Thread):
         return None
 
     def _handle_external_lookup(self, query: str) -> None:
-        rag_context = self._rag_service.retrieve(query)
+        rag_context = self._retrieve_rag_context(query)
+        if rag_context is None:
+            return
         formatted_context = self._message_formatter.build_system_prompt(
             "External lookup result:",
             rag_context,
         )
         self._shared_context.append_system_prompt_line(formatted_context)
         self._cur_react_attempt_iterations += 1
+
+    def _retrieve_rag_context(self, query: str) -> list[dict] | None:
+        try:
+            return self._rag_service.retrieve(query)
+        except TimeoutError as exc:
+            self._handle_rag_timeout(exc)
+            return None
+        except AgentError as exc:
+            if exc.code == "RAG_TIMEOUT":
+                self._handle_rag_timeout(exc)
+                return None
+            self._handle_rag_error(exc)
+            return None
+        except Exception as exc:
+            self._handle_rag_error(exc)
+            return None
+
+    def _handle_tool_error(self, tool_name: str, result) -> None:
+        error = result.error
+        if error is None:
+            error = build_error("TOOL_EXECUTION_ERROR", f"Tool `{tool_name}` failed with an unknown error.")
+
+        if error.code == "TOOL_NOT_FOUND":
+            content = f"Requested tool `{tool_name}` was not found."
+        elif "TIMEOUT" in error.code:
+            content = f"Tool `{tool_name}` timed out: {error.message}"
+        else:
+            content = f"Tool `{tool_name}` returned an error: {error.message}"
+
+        self._message_queue.send_agent_message(
+            ChatMessage(
+                role="assistant",
+                content=content,
+                metadata={"error_code": error.code, "tool_name": tool_name},
+            )
+        )
+        self.cleanup()
+
+    def _handle_rag_timeout(self, exc: Exception) -> None:
+        self._message_queue.send_agent_message(
+            ChatMessage(
+                role="assistant",
+                content=f"External knowledge lookup timed out: {exc}",
+            )
+        )
+        self.cleanup()
+
+    def _handle_rag_error(self, exc: Exception) -> None:
+        self._message_queue.send_agent_message(
+            ChatMessage(
+                role="assistant",
+                content=f"External knowledge lookup failed: {exc}",
+            )
+        )
+        self.cleanup()
 
     def _restore_base_system_prompt(self) -> None:
         with self._shared_context._lock:

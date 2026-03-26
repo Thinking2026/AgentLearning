@@ -76,19 +76,34 @@ class OpenAILLMClient(BaseLLMClient):
             raise build_error("LLM_HTTP_ERROR", f"OpenAI API HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
             raise build_error("LLM_NETWORK_ERROR", f"OpenAI API request failed: {exc.reason}") from exc
-        return json.loads(body)
+        except TimeoutError as exc:
+            raise build_error("LLM_TIMEOUT", f"OpenAI API request timed out: {exc}") from exc
+
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise build_error("LLM_RESPONSE_PARSE_ERROR", f"OpenAI API returned invalid JSON: {exc}") from exc
 
     @staticmethod
     def _serialize_messages(request: LLMRequest) -> list[dict]:
         serialized_messages: list[dict] = [{"role": "system", "content": request.system_prompt}]
         for message in request.messages:
-            serialized = {"role": message.role, "content": message.content}
-            if message.role == "tool":
+            role = OpenAILLMClient._map_message_role(message)
+            serialized = {"role": role, "content": message.content}
+            if role == "tool":
                 tool_call_id = message.metadata.get("tool_call_id")
                 if tool_call_id:
                     serialized["tool_call_id"] = tool_call_id
             serialized_messages.append(serialized)
         return serialized_messages
+
+    @staticmethod
+    def _map_message_role(message: ChatMessage) -> str:
+        if message.role == "conversation" and message.metadata.get("conversation_source") == "tool":
+            return "tool"
+        if message.role == "conversation":
+            return "assistant"
+        return message.role
 
     @staticmethod
     def _serialize_tools(tools: list[dict]) -> list[dict]:
@@ -111,14 +126,20 @@ class OpenAILLMClient(BaseLLMClient):
             raise build_error("LLM_RESPONSE_ERROR", f"OpenAI API returned no choices: {response_data}")
         first_choice = choices[0]
         message = first_choice.get("message") or {}
-        tool_calls = [
-            ToolCall(
-                name=tool_call["function"]["name"],
-                arguments=json.loads(tool_call["function"]["arguments"] or "{}"),
-                call_id=tool_call["id"],
-            )
-            for tool_call in (message.get("tool_calls") or [])
-        ]
+        try:
+            tool_calls = [
+                ToolCall(
+                    name=tool_call["function"]["name"],
+                    arguments=json.loads(tool_call["function"]["arguments"] or "{}"),
+                    call_id=tool_call["id"],
+                )
+                for tool_call in (message.get("tool_calls") or [])
+            ]
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise build_error(
+                "LLM_RESPONSE_PARSE_ERROR",
+                f"OpenAI API returned an invalid tool call payload: {exc}",
+            ) from exc
         return LLMResponse(
             assistant_message=ChatMessage(
                 role=message.get("role", "assistant"),

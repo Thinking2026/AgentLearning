@@ -3,26 +3,28 @@ from __future__ import annotations
 import time
 from collections import deque
 from threading import Condition
-from typing import Optional
+from typing import Optional, TypeVar
 
-from schemas import ChatMessage
+from schemas import ChatMessage, ThreadMessage
+
+T = TypeVar("T")
 
 
 class MessageQueue:
     def __init__(self) -> None:
-        self._user_to_agent: deque[ChatMessage] = deque()
+        self._user_to_agent: deque[ThreadMessage] = deque()
         self._agent_to_user: deque[ChatMessage] = deque()
         self._condition = Condition()
         self._closed = False
 
-    def send_user_message(self, message: ChatMessage) -> None:
+    def send_user_message(self, message: ThreadMessage) -> None:
         with self._condition:
             if self._closed:
                 return
             self._user_to_agent.append(message)
             self._condition.notify_all()
 
-    def get_user_message(self, timeout: float | None = None) -> Optional[ChatMessage]:
+    def get_user_message(self, timeout: float | None = None) -> Optional[ThreadMessage]:
         return self._safe_get(self._user_to_agent, timeout)
 
     def send_agent_message(self, message: ChatMessage) -> None:
@@ -45,9 +47,9 @@ class MessageQueue:
 
     def _safe_get(
         self,
-        target_queue: deque[ChatMessage],
+        target_queue: deque[T],
         timeout: float | None = None,
-    ) -> Optional[ChatMessage]:
+    ) -> Optional[T]:
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:
             while not target_queue:

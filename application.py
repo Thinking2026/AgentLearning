@@ -35,12 +35,14 @@ class AgentApplication:
 
         try:
             self._user_thread.join()
+            self._agent_thread.join(timeout=1)
         except KeyboardInterrupt:
             self._message_queue.close()
             self._user_thread.stop()
         finally:
-            self._agent_thread.stop()
-            self._agent_thread.join(timeout=1)
+            if self._agent_thread.is_alive():
+                self._agent_thread.stop()
+                self._agent_thread.join(timeout=1)
 
     def _build_system_prompt(self) -> str:
         return self._config.get(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from schemas.errors import AgentError
 
@@ -11,11 +11,29 @@ def utc_now_iso() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
+ChatRole = Literal["user", "assistant", "conversation"]
+
+
 @dataclass(slots=True)
 class ChatMessage:
-    role: str
+    role: ChatRole
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        valid_roles = {"user", "assistant", "conversation"}
+        if self.role not in valid_roles:
+            raise ValueError(f"Unsupported chat role: {self.role}")
+
+
+@dataclass(slots=True)
+class SystemMessage:
+    command: str
+    content: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+ThreadMessage = ChatMessage | SystemMessage
 
 
 @dataclass(slots=True)

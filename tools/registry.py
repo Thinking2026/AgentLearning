@@ -6,7 +6,7 @@ import pkgutil
 from abc import ABC, abstractmethod
 from typing import Any
 
-from schemas import ToolCall, ToolResult, build_error
+from schemas import AgentError, ToolCall, ToolResult, build_error
 from tools.tools import BaseTool
 
 
@@ -72,7 +72,32 @@ class ToolHandlerNode(BaseToolHandler):
         return self._tool.can_handle(tool_call.name)
 
     def process(self, tool_call: ToolCall) -> ToolResult:
-        result = self._tool.run(tool_call.arguments)
+        try:
+            result = self._tool.run(tool_call.arguments)
+        except TimeoutError as exc:
+            return ToolResult(
+                call_id=tool_call.call_id,
+                output="",
+                success=False,
+                error=build_error("TOOL_TIMEOUT", f"Tool `{tool_call.name}` timed out: {exc}"),
+            )
+        except Exception as exc:
+            if isinstance(exc, AgentError):
+                return ToolResult(
+                    call_id=tool_call.call_id,
+                    output="",
+                    success=False,
+                    error=exc,
+                )
+            return ToolResult(
+                call_id=tool_call.call_id,
+                output="",
+                success=False,
+                error=build_error(
+                    "TOOL_EXECUTION_ERROR",
+                    f"Tool `{tool_call.name}` failed unexpectedly: {exc}",
+                ),
+            )
         result.call_id = tool_call.call_id
         return result
 

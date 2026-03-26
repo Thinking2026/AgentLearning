@@ -6,7 +6,7 @@ import threading
 
 from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
-from schemas import ChatMessage, SessionStatus
+from schemas import ChatMessage, SessionStatus, SystemMessage
 
 
 class UserThread(threading.Thread):
@@ -35,7 +35,9 @@ class UserThread(threading.Thread):
                 continue
 
             if stripped.lower() in {"exit", "quit"}:
-                self._message_queue.close()
+                self._message_queue.send_user_message(
+                    SystemMessage(command="quit", content=stripped)
+                )
                 self.stop()
                 break
 
