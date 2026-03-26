@@ -26,6 +26,27 @@
 **Step4:** 进行一个while loop，在这个loop里先轮询message_queue里有没有agent thread投递给user thread的消息，如果没有消息向屏幕输出“Solving...”，然后等待5秒再进入下一次循环；如果发现queue中有agent_thread给user thread投递的消息，将这个消息显示在屏幕上，然后跳出循环
 **Step6:** 回到Step1
 
+### agent_thread工作流程
+**Step1** 进入一个while True循环
+**Step2:** 如果sharedcontext里_session_status的状态等于IN_PROGRESS且超过_max_react_attempt_iterations，通过message_queue向user_thread投递一个消息role=System, context="Sorry, this question is too hard, i can not solve"的ChatMessage. 执行成员函数cleanup, continue掉后面处理流程回到循环开始
+**Step3:** 从message queue中获取user thread投递过来的用户输入。如果sharedcontext里_session_status的状态等于NEW_TASK，且用户还没输入消息需要无限等待，否则最多等待5秒继续执行后面流程
+**Step4:**如果sharedcontext里_session_status的状态等于NEW_TASK则调用_generate_react_prompt生成一个起始Prompt, _generate_react_prompt这个方法我后面补充
+**Step5:**调用message formatter格式化输入，具体如何处理后面再补充
+**Step6:**将目前得到的Prompt追加到shared_context对应字段中
+**Step7:**调用LLM API并有限等待返回结果， 如果调用超时，我还没想好怎么处理，先保留一个超时处理策略函数调用
+**Step8:**AgentThread需要增加一个成员方法，解析 LLM API的调用返回
+**Step9:**如果LLM API返回的信息不是预期格式，也需要加一个兜底处理函数，目前没想好;如果能解析进行行为路由, 先设计三种可能的路由情况：
+（1）是一次工具调用：路由给指定工具执行调用并获取工具执行的返回结果
+（2）需要查询外部数据库获取信息：调用外部数据源API获取信息
+（3）是最终结论：标准化一个chatmessage
+
+如果是（1）和（2）需要先调用message formatter标准化和格式化信息，追加到shared_context的prompt上下文里 （3）不需要
+
+**Step10:** 如果已经得到最终答案，将答案投递user_thread，并调用cleanup重重会话状态和上下文；
+
+**Step11:** 进入下一轮AgentThread循环
+
+
 
 ## ReAct Prompt模板思路：
 - **任务分解**：把大问题拆解成小步骤。
