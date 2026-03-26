@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import sys
-import time
 import threading
+import time
 
 from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue

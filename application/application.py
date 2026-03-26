@@ -5,8 +5,9 @@ from pathlib import Path
 from config import JsonConfig, load_config
 from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
-from thread.agent_thread import AgentThread
-from thread.user_thread import UserThread
+
+from .agent_thread import AgentThread
+from .user_thread import UserThread
 
 
 class AgentApplication:
@@ -14,7 +15,6 @@ class AgentApplication:
         self._config = config
         self._message_queue = MessageQueue()
         self._shared_context = SharedContext()
-        self._shared_context.append_system_prompt(self._build_system_prompt())
         self._agent_thread = AgentThread(
             message_queue=self._message_queue,
             shared_context=self._shared_context,
@@ -43,10 +43,3 @@ class AgentApplication:
             if self._agent_thread.is_alive():
                 self._agent_thread.stop()
                 self._agent_thread.join(timeout=1)
-
-    def _build_system_prompt(self) -> str:
-        return self._config.get(
-            "agent.system_prompt",
-            "You are a prototype AI agent. Use external context when it helps, "
-            "call tools when necessary, and keep answers clear and concise.",
-        )

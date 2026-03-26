@@ -1,6 +1,5 @@
 {
   "agent": {
-    "system_prompt": "You are a prototype AI agent. Use external context when it helps, call tools when necessary, and keep answers clear and concise.",
     "max_tool_iterations": 3,
     "max_react_attempt_iterations": 20
   },
