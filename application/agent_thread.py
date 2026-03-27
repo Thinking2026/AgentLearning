@@ -70,6 +70,7 @@ class AgentThread(threading.Thread):
     def reset(self) -> None:
         if self._agent is not None:
             self._agent.reset()
+        self._shared_context.archive_current_task()
         self._shared_context.set_session_status(SessionStatus.NEW_TASK)
         self._restore_base_system_prompt()
 

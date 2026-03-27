@@ -12,12 +12,10 @@ class ReActAgent(Agent):
         session_status: SessionStatus,
         user_message: ChatMessage | None,
     ) -> AgentExecutionResult:
-        prompt = self._build_current_prompt(session_status, user_message)
-        request, request_result = self._build_llm_request(prompt, user_message)
+        request, request_result = self._build_llm_request(session_status, user_message)
         if request_result is not None:
             return request_result
 
-        self._shared_context.append_system_prompt_line(prompt)
         llm_response, error_result = self._call_llm_with_timeout_handling(request)
         if error_result is not None:
             return error_result
@@ -28,34 +26,9 @@ class ReActAgent(Agent):
 
         return self._route_llm_response(parsed_response)
 
-    def _build_current_prompt(
-        self,
-        session_status: SessionStatus,
-        user_message: ChatMessage | None,
-    ) -> str:
-        if session_status == SessionStatus.NEW_TASK:
-            if user_message is None:
-                raise build_error("MISSING_USER_MESSAGE", "A new task requires a user message.")
-            self._shared_context.set_session_status(SessionStatus.IN_PROGRESS)
-            self._cur_react_attempt_iterations = 0
-            return self._generate_react_prompt(user_message)
-        if user_message is not None and user_message.content.strip():
-            return user_message.content.strip()
-        return self._build_continuation_prompt()
-
-    def _generate_react_prompt(self, user_message: ChatMessage) -> str:
-        return (
-            "Start a new reasoning loop for this user request.\n"
-            f"User question: {user_message.content}"
-        )
-
-    @staticmethod
-    def _build_continuation_prompt() -> str:
-        return "Continue reasoning from the existing prompt context and decide the next best action."
-
     def _build_llm_request(
         self,
-        prompt: str,
+        session_status: SessionStatus,
         user_message: ChatMessage | None,
     ) -> tuple[LLMRequest | None, AgentExecutionResult | None]:
         rag_context = []
@@ -64,8 +37,13 @@ class ReActAgent(Agent):
             if rag_result is not None:
                 return None, rag_result
 
-        message_role = "user" if user_message is not None else "assistant"
-        conversation = [ChatMessage(role=message_role, content=prompt)]
+        conversation = self._shared_context.get_conversation_history()
+        next_message, request_result = self._build_next_message(session_status, user_message)
+        if request_result is not None:
+            return None, request_result
+
+        if next_message is not None:
+            conversation.append(next_message)
         return (
             self._message_formatter.build_request(
                 system_prompt=self._shared_context.get_system_prompt(),
@@ -75,6 +53,27 @@ class ReActAgent(Agent):
             ),
             None,
         )
+
+    def _build_next_message(
+        self,
+        session_status: SessionStatus,
+        user_message: ChatMessage | None,
+    ) -> tuple[ChatMessage | None, AgentExecutionResult | None]:
+        if session_status == SessionStatus.NEW_TASK:
+            if user_message is None:
+                raise build_error("MISSING_USER_MESSAGE", "A new task requires a user message.")
+            self._shared_context.set_session_status(SessionStatus.IN_PROGRESS)
+            self._cur_react_attempt_iterations = 0
+            message = ChatMessage(role="user", content=user_message.content)
+            self._shared_context.append_conversation_message(message)
+            return message, None
+
+        if user_message is not None and user_message.content.strip():
+            message = ChatMessage(role="user", content=user_message.content.strip())
+            self._shared_context.append_conversation_message(message)
+            return message, None
+
+        return None, None
 
     def _call_llm_with_timeout_handling(
         self,
@@ -115,6 +114,7 @@ class ReActAgent(Agent):
             )
 
     def _route_llm_response(self, response: LLMResponse) -> AgentExecutionResult:
+        self._shared_context.append_conversation_message(response.assistant_message)
         if response.tool_calls:
             return self._handle_tool_calls(response)
 
@@ -161,7 +161,7 @@ class ReActAgent(Agent):
                 output=result.output,
                 call_id=tool_call.call_id,
             )
-            self._shared_context.append_system_prompt_line(observation.content)
+            self._shared_context.append_conversation_message(observation)
 
         self._cur_react_attempt_iterations += 1
         return AgentExecutionResult()
@@ -184,11 +184,11 @@ class ReActAgent(Agent):
         if rag_result is not None:
             return rag_result
 
-        formatted_context = self._message_formatter.build_system_prompt(
-            "External lookup result:",
-            rag_context,
+        observation = self._message_formatter.format_rag_observation(
+            query=query,
+            context=rag_context,
         )
-        self._shared_context.append_system_prompt_line(formatted_context)
+        self._shared_context.append_conversation_message(observation)
         self._cur_react_attempt_iterations += 1
         return AgentExecutionResult()
 

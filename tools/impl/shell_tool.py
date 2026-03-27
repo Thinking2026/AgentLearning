@@ -4,12 +4,16 @@ import subprocess
 from pathlib import Path
 
 from schemas import ToolResult, build_error
-from tools.tools import BaseTool
+from tools.tools import BaseTool, build_tool_output
 
 
 class ShellTool(BaseTool):
     name = "shell"
-    description = "Run a shell command and return stdout or stderr."
+    description = (
+        "Run a shell command in the local environment and return the command output. "
+        "Use this tool when information or file changes require command-line execution. "
+        "The command may read files, modify files, or affect local system state."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -19,21 +23,23 @@ class ShellTool(BaseTool):
             },
             "timeout": {
                 "type": "integer",
-                "description": "Optional timeout in seconds.",
+                "description": "The maximum number of seconds to wait before stopping the command.",
                 "default": 15,
             },
         },
         "required": ["command"],
+        "additionalProperties": False,
     }
 
     def run(self, arguments: dict[str, object]) -> ToolResult:
         command = str(arguments.get("command", "")).strip()
         if not command:
+            error = build_error("TOOL_ARGUMENT_ERROR", "Shell tool requires a non-empty command.")
             return ToolResult(
                 call_id="",
-                output="",
+                output=build_tool_output(success=False, error=error),
                 success=False,
-                error=build_error("TOOL_ARGUMENT_ERROR", "Shell tool requires a non-empty command."),
+                error=error,
             )
 
         timeout = int(arguments.get("timeout", 15))
@@ -47,29 +53,44 @@ class ShellTool(BaseTool):
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
+            error = build_error("SHELL_TIMEOUT", f"Shell command timed out after {timeout} seconds.")
             return ToolResult(
                 call_id="",
-                output="",
+                output=build_tool_output(success=False, error=error),
                 success=False,
-                error=build_error("SHELL_TIMEOUT", f"Shell command timed out after {timeout} seconds."),
+                error=error,
             )
         except Exception as exc:
+            error = build_error("SHELL_EXECUTION_ERROR", f"Shell command failed to start: {exc}")
             return ToolResult(
                 call_id="",
-                output="",
+                output=build_tool_output(success=False, error=error),
                 success=False,
-                error=build_error("SHELL_EXECUTION_ERROR", f"Shell command failed to start: {exc}"),
+                error=error,
             )
 
         output = completed.stdout.strip()
         error_output = completed.stderr.strip()
         if completed.returncode != 0:
             message = error_output or output or f"Command exited with code {completed.returncode}"
+            error = build_error("SHELL_COMMAND_FAILED", message)
             return ToolResult(
                 call_id="",
-                output="",
+                output=build_tool_output(success=False, error=error),
                 success=False,
-                error=build_error("SHELL_COMMAND_FAILED", message),
+                error=error,
             )
 
-        return ToolResult(call_id="", output=output or "(no output)", success=True)
+        return ToolResult(
+            call_id="",
+            output=build_tool_output(
+                success=True,
+                data={
+                    "command": command,
+                    "stdout": output,
+                    "stderr": error_output,
+                    "exit_code": completed.returncode,
+                },
+            ),
+            success=True,
+        )

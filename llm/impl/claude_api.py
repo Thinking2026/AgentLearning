@@ -110,6 +110,28 @@ class ClaudeLLMClient(BaseLLMClient):
         if message.role == "user":
             return {"role": "user", "content": message.content}
         if message.role == "assistant":
+            tool_calls = message.metadata.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                content: list[dict[str, object]] = []
+                if message.content:
+                    content.append({"type": "text", "text": message.content})
+                for tool_call in tool_calls:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    tool_name = tool_call.get("name")
+                    tool_call_id = tool_call.get("call_id")
+                    tool_arguments = tool_call.get("arguments")
+                    if not isinstance(tool_name, str) or not isinstance(tool_call_id, str):
+                        continue
+                    content.append(
+                        {
+                            "type": "tool_use",
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "input": tool_arguments if isinstance(tool_arguments, dict) else {},
+                        }
+                    )
+                return {"role": "assistant", "content": content}
             return {"role": "assistant", "content": message.content}
         if message.metadata.get("conversation_source") == "tool":
             tool_call_id = message.metadata.get("tool_call_id")
@@ -177,7 +199,17 @@ class ClaudeLLMClient(BaseLLMClient):
             assistant_message=ChatMessage(
                 role="assistant",
                 content="\n".join(text_parts).strip(),
-                metadata={"tool_calls_count": len(tool_calls)},
+                metadata={
+                    "tool_calls_count": len(tool_calls),
+                    "tool_calls": [
+                        {
+                            "name": tool_call.name,
+                            "call_id": tool_call.call_id,
+                            "arguments": tool_call.arguments,
+                        }
+                        for tool_call in tool_calls
+                    ],
+                },
             ),
             tool_calls=tool_calls,
             raw_response=response_data,

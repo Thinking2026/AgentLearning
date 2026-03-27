@@ -61,5 +61,9 @@
   - *例子*：“...所以最终的答案是x
 
 
-
+## 思考点
+- 上下文如何裁剪，token aware怎么做
+- 大模型喜欢输入列表，conversation history和system prompt边界
+- tool calling的输入和输出标准协议
+- 用conversation history统一所有外部调用过程
 

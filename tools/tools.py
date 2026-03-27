@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from typing import Any
 
-from schemas import ToolResult
+from schemas import AgentError, ToolResult
 
 
 class BaseTool(ABC):
@@ -24,3 +25,22 @@ class BaseTool(ABC):
             "description": self.description,
             "parameters": self.parameters,
         }
+
+
+def build_tool_output(
+    *,
+    success: bool,
+    data: dict[str, Any] | None = None,
+    error: AgentError | None = None,
+) -> str:
+    payload = {
+        "success": success,
+        "data": data,
+        "error": None,
+    }
+    if error is not None:
+        payload["error"] = {
+            "code": error.code,
+            "message": error.message,
+        }
+    return json.dumps(payload, ensure_ascii=False)

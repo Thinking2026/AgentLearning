@@ -90,6 +90,10 @@ class OpenAILLMClient(BaseLLMClient):
         for message in request.messages:
             role = OpenAILLMClient._map_message_role(message)
             serialized = {"role": role, "content": message.content}
+            if role == "assistant":
+                tool_calls = message.metadata.get("tool_calls")
+                if isinstance(tool_calls, list) and tool_calls:
+                    serialized["tool_calls"] = tool_calls
             if role == "tool":
                 tool_call_id = message.metadata.get("tool_call_id")
                 if tool_call_id:
@@ -144,7 +148,20 @@ class OpenAILLMClient(BaseLLMClient):
             assistant_message=ChatMessage(
                 role=message.get("role", "assistant"),
                 content=message.get("content") or "",
-                metadata={"tool_calls_count": len(tool_calls)},
+                metadata={
+                    "tool_calls_count": len(tool_calls),
+                    "tool_calls": [
+                        {
+                            "id": tool_call.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.name,
+                                "arguments": json.dumps(tool_call.arguments, ensure_ascii=False),
+                            },
+                        }
+                        for tool_call in tool_calls
+                    ],
+                },
             ),
             tool_calls=tool_calls,
             raw_response=response_data,
