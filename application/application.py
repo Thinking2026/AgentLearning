@@ -71,21 +71,20 @@ class AgentApplication:
             self._user_thread.start()
             self._wait_for_shutdown()
         except KeyboardInterrupt:
-            self.request_stop()
+            self._logger.info(
+                "recieved shutdown signal, stopping application",
+            )
         except Exception as exc:
             self._logger.error(
                 "Agent application exited with unexpected error",
                 zap.any("error", exc),
             )
-            self.request_stop()
         finally:
             self._stop_threads()
             self._cleanup_shared_resources()
 
     def request_stop(self) -> None:
         self._stop_event.set()
-        if self._message_queue is not None:
-            self._message_queue.close()
 
     def _wait_for_shutdown(self) -> None:
         while not self._stop_event.is_set():
