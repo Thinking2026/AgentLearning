@@ -33,7 +33,7 @@ class AgentThread(threading.Thread):
         logger: Logger,
         max_tool_iterations: int | None = None,
     ) -> None:
-        super().__init__(name="AgentThread", daemon=True)
+        super().__init__(name="AgentThread", daemon=False)
         self._message_queue = message_queue
         self._shared_context = shared_context
         self._config = config

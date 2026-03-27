@@ -19,16 +19,13 @@ class UserThread(threading.Thread):
         stop_event: threading.Event,
         logger: Logger,
     ) -> None:
-        super().__init__(name="UserThread", daemon=True)
+        super().__init__(name="UserThread", daemon=False)
         self._message_queue = message_queue
         self._shared_context = shared_context
         self._stop_event = stop_event
         self._logger = logger
 
     def stop(self) -> None:
-        self.request_shutdown()
-
-    def request_shutdown(self) -> None:
         self._stop_event.set()
 
     def release_resources(self) -> None:
@@ -57,9 +54,12 @@ class UserThread(threading.Thread):
                 self._wait_for_agent_message()
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
-            self.request_shutdown()
+            self.release_resources()
+            self.stop()
+            print("Goodbye!")
         finally:
             self.release_resources()
+            self.stop()
             print("Goodbye!")
 
     def _print_prompt(self) -> None:
@@ -71,16 +71,16 @@ class UserThread(threading.Thread):
 
     def _wait_for_agent_message(self) -> None:
         while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            message = self._message_queue.get_agent_message(timeout=0.01)
+            message = self._message_queue.get_agent_message(timeout=0.5)
             if message is not None:
-                print(f"Agent: {message.content}")
+                print(f"Assistant: {message.content}")
                 return
-            print("Solving...")
+            print("Assistant: thinking and solving...")
             time.sleep(5)
 
     def _read_user_input(self) -> str | None:
         while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+            readable, _, _ = select.select([sys.stdin], [], [], 0.5)
             if readable:
                 return sys.stdin.readline()
         return None
