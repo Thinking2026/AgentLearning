@@ -20,6 +20,7 @@ from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, SystemMessage, build_error
 from tools import ToolRegistry, create_default_tool_registry
+from utils.log import Logger, zap
 
 
 class AgentThread(threading.Thread):
@@ -29,6 +30,7 @@ class AgentThread(threading.Thread):
         shared_context: SharedContext,
         config: JsonConfig,
         stop_event: threading.Event,
+        logger: Logger,
         max_tool_iterations: int | None = None,
     ) -> None:
         super().__init__(name="AgentThread", daemon=True)
@@ -36,6 +38,7 @@ class AgentThread(threading.Thread):
         self._shared_context = shared_context
         self._config = config
         self._stop_event = stop_event
+        self._logger = logger
         self._run_error: Exception | None = None
         self._storage_registry: StorageRegistry | None = None
         self._storage = None
@@ -218,10 +221,15 @@ class AgentThread(threading.Thread):
                         self.cleanup()
                 except Exception as exc:
                     self._run_error = self._normalize_error(exc)
+                    self._logger.error(
+                        "Agent thread execution failed",
+                        zap.any("error", self._run_error),
+                    )
                     self.request_shutdown()
                     break
         except Exception as exc:
             self._run_error = exc
+            self._logger.error("Agent thread crashed", zap.any("error", exc))
             self.request_shutdown()
         finally:
             self.release_resources()

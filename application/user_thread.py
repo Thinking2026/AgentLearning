@@ -8,6 +8,7 @@ import time
 from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
 from schemas import ChatMessage, SessionStatus, SystemMessage
+from utils.log import Logger, zap
 
 
 class UserThread(threading.Thread):
@@ -16,11 +17,13 @@ class UserThread(threading.Thread):
         message_queue: MessageQueue,
         shared_context: SharedContext,
         stop_event: threading.Event,
+        logger: Logger,
     ) -> None:
         super().__init__(name="UserThread", daemon=True)
         self._message_queue = message_queue
         self._shared_context = shared_context
         self._stop_event = stop_event
+        self._logger = logger
         self._run_error: Exception | None = None
 
     def stop(self) -> None:
@@ -59,6 +62,7 @@ class UserThread(threading.Thread):
                 self._wait_for_agent_message()
         except Exception as exc:
             self._run_error = exc
+            self._logger.error("User thread crashed", zap.any("error", exc))
             self.request_shutdown()
         finally:
             self.release_resources()
