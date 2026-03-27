@@ -31,7 +31,6 @@ class AgentThread(threading.Thread):
         config: JsonConfig,
         stop_event: threading.Event,
         logger: Logger,
-        max_tool_iterations: int | None = None,
     ) -> None:
         super().__init__(name="AgentThread", daemon=False)
         self._message_queue = message_queue
@@ -47,8 +46,7 @@ class AgentThread(threading.Thread):
         self._llm_client: BaseLLMClient | None = None
         self._agent: Agent | None = None
         self._base_system_prompt = self._shared_context.get_system_prompt()
-        self._max_tool_iterations = max_tool_iterations or int(
-            self._config.get("agent.max_tool_iterations", 3)
+        self._max_tool_iterations = int(self._config.get("agent.max_tool_iterations", 3)
         )
         self._max_react_attempt_iterations = int(
             self._config.get("agent.max_react_attempt_iterations", 20)
@@ -63,22 +61,20 @@ class AgentThread(threading.Thread):
             self._agent = self._build_agent()
         except Exception:
             self.release_resources()
+            self.stop()
             raise
 
     def stop(self) -> None:
-        self.request_shutdown()
-
-    def request_shutdown(self) -> None:
         self._stop_event.set()
 
-    def cleanup(self) -> None:
+    def reset(self) -> None:
         if self._agent is not None:
-            self._agent.cleanup()
+            self._agent.reset()
         self._shared_context.set_session_status(SessionStatus.NEW_TASK)
         self._restore_base_system_prompt()
 
     def release_resources(self) -> None:
-        self.cleanup()
+        self.reset()
         if self._agent is not None:
             self._agent.release_resources()
         if self._storage_registry is not None:
@@ -92,10 +88,11 @@ class AgentThread(threading.Thread):
         self._storage_registry = None
 
     def _build_storage_registry(self) -> StorageRegistry:
+        #TODO 暂时还用不上这里，先把桩代码写了，后续完善
         file_storage = FileStorage(
-            self._config.get("storage.file.path", "runtime/agent_documents.json")
+            self._config.get("storage.file.path", "runtime/nanoagent_soul.json")
         )
-        sqlite_path = self._config.get("storage.sqlite.path", "runtime/agent_storage.db")
+        sqlite_path = self._config.get("storage.sqlite.path", "runtime/nanoagent_local_storage.db")
         sqlite_storage = SQLiteStorage(sqlite_path)
         sqlite_storage.seed(file_storage.get_documents())
         storages = [file_storage, sqlite_storage]
@@ -104,7 +101,7 @@ class AgentThread(threading.Thread):
         if chromadb_path:
             chromadb_storage = ChromaDBStorage(
                 persist_directory=chromadb_path,
-                collection_name=self._config.get("storage.chromadb.collection_name", "agent_documents"),
+                collection_name=self._config.get("storage.chromadb.collection_name", "nanoagent_collection"),
             )
             if not chromadb_storage.get_documents():
                 chromadb_storage.upsert_documents(file_storage.get_documents())
@@ -200,7 +197,7 @@ class AgentThread(threading.Thread):
                             content="Sorry, this question is too hard, i can not solve",
                         )
                     )
-                    self.cleanup()
+                    self.reset()
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
@@ -213,15 +210,15 @@ class AgentThread(threading.Thread):
                     execution_result = self._agent.run(session_status, incoming_message)
                     for message in execution_result.user_messages:
                         self._message_queue.send_agent_message(message)
-                    if execution_result.should_cleanup:
-                        self.cleanup()
+                    if execution_result.should_reset:
+                        self.reset()
                 except Exception as exc:
                     normalized_error = self._normalize_error(exc)
                     self._logger.error(
                         "Agent thread execution failed",
                         zap.any("error", normalized_error),
                     )
-                    self.request_shutdown()
+                    self.stop()
                     break
         except Exception as exc:
             self._logger.error("Agent thread crashed", zap.any("error", exc))
@@ -244,7 +241,7 @@ class AgentThread(threading.Thread):
 
     def _handle_system_message(self, message: SystemMessage) -> bool:
         if message.command in {"quit", "shutdown"}:
-            self.cleanup()
+            self.reset()
             return True
         return False
 

@@ -124,7 +124,7 @@ class ReActAgent(Agent):
 
         return AgentExecutionResult(
             user_messages=[self._format_final_conclusion(response)],
-            should_cleanup=True,
+            should_reset=True,
         )
 
     @staticmethod
@@ -144,7 +144,7 @@ class ReActAgent(Agent):
                         content="工具调用次数超过上限，本轮先停止，避免进入死循环。",
                     )
                 ],
-                should_cleanup=True,
+                should_reset=True,
             )
 
         for tool_call in response.tool_calls:
@@ -227,12 +227,12 @@ class ReActAgent(Agent):
                     metadata={"error_code": error.code, "tool_name": tool_name},
                 )
             ],
-            should_cleanup=True,
+            should_reset=True,
         )
 
     @staticmethod
     def _build_error_result(content: str) -> AgentExecutionResult:
         return AgentExecutionResult(
             user_messages=[ChatMessage(role="assistant", content=content)],
-            should_cleanup=True,
+            should_reset=True,
         )

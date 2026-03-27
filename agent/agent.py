@@ -14,7 +14,7 @@ from tools import ToolRegistry
 @dataclass(slots=True)
 class AgentExecutionResult:
     user_messages: list[ChatMessage] = field(default_factory=list)
-    should_cleanup: bool = False
+    should_reset: bool = False
 
 
 class Agent(ABC):
@@ -35,11 +35,11 @@ class Agent(ABC):
         self._max_tool_iterations = max_tool_iterations
         self._cur_react_attempt_iterations = 0
 
-    def cleanup(self) -> None:
+    def reset(self) -> None:
         self._cur_react_attempt_iterations = 0
 
     def release_resources(self) -> None:
-        self.cleanup()
+        self.reset()
 
     def get_react_attempt_iterations(self) -> int:
         return self._cur_react_attempt_iterations
