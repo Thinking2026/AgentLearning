@@ -57,7 +57,6 @@ class UserThread(threading.Thread):
         finally:
             self.release_resources()
             self.stop()
-            print("Goodbye!")
 
     def _print_prompt(self) -> None:
         status = self._shared_context.get_session_status()

@@ -80,6 +80,7 @@ class AgentApplication:
         finally:
             self._stop_threads()
             self._cleanup_shared_resources()
+            self._logger.error("Agent application stopped",)
 
     def request_stop(self) -> None:
         self._stop_event.set()

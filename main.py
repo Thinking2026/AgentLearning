@@ -12,14 +12,14 @@ def main() -> None:
     logger = Logger()
     try:
         application = AgentApplication(config_path)
+        application.run()
     except Exception as exc:
         logger.error(
-            "Agent application initialization failed",
+            "Agent application initialization failed or run encountered an error",
             zap.any("config_path", config_path),
             zap.any("error", exc),
         )
         sys.exit(1)
-    application.run()
 
 
 if __name__ == "__main__":
