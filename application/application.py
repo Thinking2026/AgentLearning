@@ -31,7 +31,7 @@ class AgentApplication:
                 zap.any("config_path", self._config_path),
                 zap.any("error", exc),
             )
-            return #如果配置加载失败，应用程序无法继续运行，因此直接返回
+            raise
 
         self._message_queue = MessageQueue()
         self._shared_context = SharedContext()
@@ -57,15 +57,13 @@ class AgentApplication:
             )
             self.request_stop()
             self._cleanup_shared_resources()
-            return
+            raise
 
     @classmethod
     def from_config_file(cls, config_path: str | Path) -> "AgentApplication":
         return cls(config_path)
 
     def run(self) -> None:
-        if self._config is None or self._agent_thread is None or self._user_thread is None:
-            return
         try:
             self._agent_thread.start()
             self._user_thread.start()
