@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from typing import Callable
 
 from agent import Agent, ReActAgent
 from config import JsonConfig
@@ -31,6 +32,7 @@ class AgentThread(threading.Thread):
         shared_context: SharedContext,
         config: JsonConfig,
         stop_event: ThreadEvent,
+        stop_callback: Callable[[str | None], None],
         logger: Logger,
     ) -> None:
         super().__init__(name="AgentThread", daemon=False)
@@ -38,6 +40,7 @@ class AgentThread(threading.Thread):
         self._shared_context = shared_context
         self._config = config
         self._stop_event = stop_event
+        self._stop_callback = stop_callback
         self._logger = logger
         self._storage_registry: StorageRegistry | None = None
         self._storage = None
@@ -66,7 +69,7 @@ class AgentThread(threading.Thread):
             raise
 
     def stop(self) -> None:
-        self._stop_event.set(source=self.name)
+        self._stop_callback(self.name)
 
     def reset(self) -> None:
         if self._agent is not None:
@@ -226,6 +229,7 @@ class AgentThread(threading.Thread):
             self._logger.error("Agent thread crashed", zap.any("error", exc))
             self.stop()
         finally:
+            self.stop()
             self.release_resources()
 
     def _wait_for_user_message(

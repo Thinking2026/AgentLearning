@@ -4,6 +4,7 @@ import select
 import sys
 import threading
 import time
+from typing import Callable
 
 from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
@@ -18,16 +19,18 @@ class UserThread(threading.Thread):
         message_queue: MessageQueue,
         shared_context: SharedContext,
         stop_event: ThreadEvent,
+        stop_callback: Callable[[str | None], None],
         logger: Logger,
     ) -> None:
         super().__init__(name="UserThread", daemon=False)
         self._message_queue = message_queue
         self._shared_context = shared_context
         self._stop_event = stop_event
+        self._stop_callback = stop_callback
         self._logger = logger
 
     def stop(self) -> None:
-        self._stop_event.set(source=self.name)
+        self._stop_callback(self.name)
 
     def release_resources(self) -> None:
         return None
@@ -55,6 +58,7 @@ class UserThread(threading.Thread):
                 self._wait_for_agent_message()
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
+            self.stop()
         finally:
             self.release_resources()
             self.stop()

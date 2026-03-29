@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from config import JsonConfig, load_config
@@ -20,6 +21,7 @@ class AgentApplication:
         self._message_queue: MessageQueue | None = None
         self._shared_context: SharedContext | None = None
         self._stop_event = ThreadEvent()
+        self._shutdown_lock = threading.Lock()
         self._agent_thread: AgentThread | None = None
         self._user_thread: UserThread | None = None
 
@@ -42,12 +44,14 @@ class AgentApplication:
                 shared_context=self._shared_context,
                 config=self._config,
                 stop_event=self._stop_event,
+                stop_callback=self.request_stop,
                 logger=self._logger,
             )
             self._user_thread = UserThread(
                 message_queue=self._message_queue,
                 shared_context=self._shared_context,
                 stop_event=self._stop_event,
+                stop_callback=self.request_stop,
                 logger=self._logger,
             )
         except Exception as exc:
@@ -72,11 +76,13 @@ class AgentApplication:
             self._logger.info(
                 "recieved shutdown signal, stopping application",
             )
+            self.request_stop(source="KeyboardInterrupt")
         except Exception as exc:
             self._logger.error(
                 "Agent application exited with unexpected error",
                 zap.any("error", exc),
             )
+            self.request_stop(source="AgentApplication.run")
         finally:
             self._stop_threads()
             self._cleanup_shared_resources()
@@ -85,25 +91,34 @@ class AgentApplication:
                 zap.any("stop_source", self._stop_event.get_source()),
             )
 
-    def request_stop(self) -> None:
-        self._stop_event.set(source=self.__class__.__name__)
-        if self._message_queue is not None:
-            self._message_queue.close()
+    def request_stop(self, source: str | None = None) -> None:
+        stop_source = source or self.__class__.__name__
+        with self._shutdown_lock:
+            self._stop_event.set(source=stop_source)
+            if self._message_queue is not None:
+                self._message_queue.close()
 
     def _wait_for_shutdown(self) -> None:
         while not self._stop_event.is_set():
-            if not self._user_thread.is_alive() or not self._agent_thread.is_alive():
-                self.request_stop()
+            if not self._user_thread.is_alive():
+                self.request_stop(source=self._user_thread.name)
+                return
+            if not self._agent_thread.is_alive():
+                self.request_stop(source=self._agent_thread.name)
                 return
             self._user_thread.join(timeout=1)
             self._agent_thread.join(timeout=1)
 
     def _stop_threads(self) -> None:
-        self.request_stop()
-        if self._user_thread is not None:
-            self._user_thread.join()
-        if self._agent_thread is not None:
-            self._agent_thread.join()
+        self.request_stop(source="AgentApplication.stop_threads")
+        self._safe_join(self._user_thread)
+        self._safe_join(self._agent_thread)
+
+    @staticmethod
+    def _safe_join(thread: threading.Thread | None) -> None:
+        if thread is None or thread.ident is None:
+            return
+        thread.join()
 
     def _cleanup_shared_resources(self) -> None:
         if self._message_queue is not None:
