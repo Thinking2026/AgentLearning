@@ -1,0 +1,29 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test and type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Runtime and logs (non-source artifacts)
+logs/
+runtime/
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
