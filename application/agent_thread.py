@@ -21,6 +21,7 @@ from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegi
 from schemas import AgentError, ChatMessage, SessionStatus, SystemMessage, build_error
 from tools import ToolRegistry, create_default_tool_registry
 from utils.log import Logger, zap
+from utils.thread_event import ThreadEvent
 
 
 class AgentThread(threading.Thread):
@@ -29,7 +30,7 @@ class AgentThread(threading.Thread):
         message_queue: MessageQueue,
         shared_context: SharedContext,
         config: JsonConfig,
-        stop_event: threading.Event,
+        stop_event: ThreadEvent,
         logger: Logger,
     ) -> None:
         super().__init__(name="AgentThread", daemon=False)
@@ -65,7 +66,7 @@ class AgentThread(threading.Thread):
             raise
 
     def stop(self) -> None:
-        self._stop_event.set()
+        self._stop_event.set(source=self.name)
 
     def reset(self) -> None:
         if self._agent is not None:

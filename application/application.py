@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 from config import JsonConfig, load_config
 from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
 from utils.log import Logger, zap
+from utils.thread_event import ThreadEvent
 
 from .agent_thread import AgentThread
 from .user_thread import UserThread
@@ -19,7 +19,7 @@ class AgentApplication:
         self._config: JsonConfig | None = None
         self._message_queue: MessageQueue | None = None
         self._shared_context: SharedContext | None = None
-        self._stop_event = threading.Event()
+        self._stop_event = ThreadEvent()
         self._agent_thread: AgentThread | None = None
         self._user_thread: UserThread | None = None
 
@@ -80,10 +80,13 @@ class AgentApplication:
         finally:
             self._stop_threads()
             self._cleanup_shared_resources()
-            self._logger.error("Agent application stopped",)
+            self._logger.info(
+                "Agent application stopped",
+                zap.any("stop_source", self._stop_event.get_source()),
+            )
 
     def request_stop(self) -> None:
-        self._stop_event.set()
+        self._stop_event.set(source=self.__class__.__name__)
         if self._message_queue is not None:
             self._message_queue.close()
 

@@ -9,6 +9,7 @@ from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
 from schemas import ChatMessage, SessionStatus, SystemMessage
 from utils.log import Logger, zap
+from utils.thread_event import ThreadEvent
 
 
 class UserThread(threading.Thread):
@@ -16,7 +17,7 @@ class UserThread(threading.Thread):
         self,
         message_queue: MessageQueue,
         shared_context: SharedContext,
-        stop_event: threading.Event,
+        stop_event: ThreadEvent,
         logger: Logger,
     ) -> None:
         super().__init__(name="UserThread", daemon=False)
@@ -26,7 +27,7 @@ class UserThread(threading.Thread):
         self._logger = logger
 
     def stop(self) -> None:
-        self._stop_event.set()
+        self._stop_event.set(source=self.name)
 
     def release_resources(self) -> None:
         return None
