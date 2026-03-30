@@ -63,7 +63,6 @@ class UserThread(threading.Thread):
                 self._wait_for_agent_message()
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
-            self.stop()
         finally:
             self.release_resources()
             self.stop()

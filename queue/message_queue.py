@@ -5,28 +5,28 @@ from collections import deque
 from threading import Condition, RLock
 from typing import Optional, TypeVar
 
-from schemas import ChatMessage, ThreadMessage
+from schemas import ChatMessage
 
 T = TypeVar("T")
 
 
 class MessageQueue:
     def __init__(self) -> None:
-        self._user_to_agent: deque[ThreadMessage] = deque()
+        self._user_to_agent: deque[ChatMessage] = deque()
         self._agent_to_user: deque[ChatMessage] = deque()
         self._lock = RLock()
         self._user_to_agent_condition = Condition(self._lock)
         self._agent_to_user_condition = Condition(self._lock)
         self._closed = False
 
-    def send_user_message(self, message: ThreadMessage) -> None:
+    def send_user_message(self, message: ChatMessage) -> None:
         with self._user_to_agent_condition:
             if self._closed:
                 return
             self._user_to_agent.append(message)
             self._user_to_agent_condition.notify_all()
 
-    def get_user_message(self, timeout: float | None = None) -> Optional[ThreadMessage]:
+    def get_user_message(self, timeout: float | None = None) -> Optional[ChatMessage]:
         return self._safe_get(
             self._user_to_agent,
             self._user_to_agent_condition,

@@ -19,7 +19,7 @@ from llm.message_formatter import MessageFormatter
 from queue.message_queue import MessageQueue
 from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
-from schemas import AgentError, ChatMessage, SessionStatus, SystemMessage, build_error
+from schemas import AgentError, ChatMessage, SessionStatus, build_error
 from tools import ToolRegistry, create_default_tool_registry
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
@@ -63,10 +63,11 @@ class AgentThread(threading.Thread):
             self._tool_registry = self._build_tool_registry()
             self._llm_client = self._build_llm_client()
             self._agent = self._build_agent()
-        except Exception:
+        except Exception as exc:
+            self._logger.error("Agent thread crashed", zap.any("error", exc))
+        finally:
             self.release_resources()
             self.stop()
-            raise
 
     def stop(self) -> None:
         self._stop_callback(self.name)
@@ -206,10 +207,6 @@ class AgentThread(threading.Thread):
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
-                if isinstance(incoming_message, SystemMessage):
-                    if self._handle_system_message(incoming_message):
-                        break
-                    continue
 
                 try:
                     execution_result = self._agent.run(session_status, incoming_message)
@@ -235,7 +232,7 @@ class AgentThread(threading.Thread):
     def _wait_for_user_message(
         self,
         session_status: SessionStatus,
-    ) -> ChatMessage | SystemMessage | None:
+    ) -> ChatMessage | None:
         timeout = None if session_status == SessionStatus.NEW_TASK else 5.0
         while not self._stop_event.is_set() and not self._message_queue.is_closed():
             user_message = self._message_queue.get_user_message(timeout=timeout)
@@ -243,13 +240,7 @@ class AgentThread(threading.Thread):
                 return user_message
             if session_status == SessionStatus.IN_PROGRESS:
                 return None
-        return SystemMessage(command="shutdown", content="queue closed")
-
-    def _handle_system_message(self, message: SystemMessage) -> bool:
-        if message.command in {"quit", "shutdown"}:
-            self.reset()
-            return True
-        return False
+        return None
 
     def _restore_base_system_prompt(self) -> None:
         with self._shared_context._lock:

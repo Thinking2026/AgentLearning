@@ -27,16 +27,6 @@ class ChatMessage:
 
 
 @dataclass(slots=True)
-class SystemMessage:
-    command: str
-    content: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-ThreadMessage = ChatMessage | SystemMessage
-
-
-@dataclass(slots=True)
 class AgentEvent:
     event_type: str
     payload: dict[str, Any]
