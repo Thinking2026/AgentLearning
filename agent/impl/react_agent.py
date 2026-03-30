@@ -33,7 +33,7 @@ class ReActAgent(Agent):
     ) -> tuple[LLMRequest | None, AgentExecutionResult | None]:
         rag_context = []
         if user_message is not None and user_message.content.strip():
-            rag_context, rag_result = self._retrieve_rag_context(user_message.content)
+            rag_context, rag_result = self._retrieve_rag_context(user_message.content) #TODO 缺少容错fallback
             if rag_result is not None:
                 return None, rag_result
 
@@ -80,8 +80,9 @@ class ReActAgent(Agent):
         request: LLMRequest,
     ) -> tuple[LLMResponse | None, AgentExecutionResult | None]:
         try:
+            self._cur_react_attempt_iterations += 1
             return self._llm_client.generate(request), None
-        except TimeoutError as exc:
+        except TimeoutError as exc: #TODO 如何fallback需要想方案
             return None, self._build_error_result(
                 f"LLM call timed out. Temporary timeout strategy applied: {exc}"
             )
@@ -136,17 +137,6 @@ class ReActAgent(Agent):
         )
 
     def _handle_tool_calls(self, response: LLMResponse) -> AgentExecutionResult:
-        if self._cur_react_attempt_iterations >= self._max_tool_iterations:
-            return AgentExecutionResult(
-                user_messages=[
-                    ChatMessage(
-                        role="assistant",
-                        content="工具调用次数超过上限，本轮先停止，避免进入死循环。",
-                    )
-                ],
-                should_reset=True,
-            )
-
         for tool_call in response.tool_calls:
             result = self._tool_registry.execute(
                 tool_call.name,
@@ -162,8 +152,6 @@ class ReActAgent(Agent):
                 call_id=tool_call.call_id,
             )
             self._shared_context.append_conversation_message(observation)
-
-        self._cur_react_attempt_iterations += 1
         return AgentExecutionResult()
 
     @staticmethod
@@ -189,7 +177,6 @@ class ReActAgent(Agent):
             context=rag_context,
         )
         self._shared_context.append_conversation_message(observation)
-        self._cur_react_attempt_iterations += 1
         return AgentExecutionResult()
 
     def _retrieve_rag_context(
