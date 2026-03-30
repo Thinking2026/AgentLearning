@@ -8,7 +8,7 @@ from typing import Callable
 
 from context.shared_context import SharedContext
 from queue.message_queue import MessageQueue
-from schemas import ChatMessage, SessionStatus, SystemMessage
+from schemas import ChatMessage, SessionStatus
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
@@ -36,9 +36,12 @@ class UserThread(threading.Thread):
         return None
 
     def run(self) -> None:
+        prompt_shown = False
         try:
             while not self._stop_event.is_set() and not self._message_queue.is_closed():
-                self._print_prompt()
+                if not prompt_shown:
+                    self._print_prompt()
+                    prompt_shown = True
                 user_input = self._read_user_input()
                 if not user_input:
                     continue
@@ -47,9 +50,11 @@ class UserThread(threading.Thread):
                 if not stripped:
                     continue
 
+                prompt_shown = False
                 if stripped.lower() in {"exit", "quit"}:
-                    self._message_queue.send_user_message(
-                        SystemMessage(command="quit", content=stripped)
+                    self._logger.error(
+                        "User requested exit, stopping user thread",
+                        zap.any("input", stripped),
                     )
                     break
 
@@ -81,7 +86,7 @@ class UserThread(threading.Thread):
 
     def _read_user_input(self) -> str | None:
         while not self._stop_event.is_set() and not self._message_queue.is_closed():
-            readable, _, _ = select.select([sys.stdin], [], [], 0.5)
+            readable, _, _ = select.select([sys.stdin], [], [], 1)
             if readable:
                 return sys.stdin.readline()
         return None
