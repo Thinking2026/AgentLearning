@@ -208,7 +208,7 @@ class AgentThread(threading.Thread):
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
-                if incoming_message is None:
+                if incoming_message is None and session_status == SessionStatus.NEW_TASK:
                     continue  # No new user message, loop back and check stop condition or wait again   
 
                 try:
@@ -223,22 +223,19 @@ class AgentThread(threading.Thread):
                         "Agent thread execution failed",
                         zap.any("error", normalized_error),
                     )
-                    self.stop()
                     break
         except Exception as exc:
             self._logger.error("Agent thread crashed", zap.any("error", exc))
-            self.stop()
         finally:
-            self.stop()
             self.release_resources()
+            self.stop()
 
     def _wait_for_user_message(
         self,
         session_status: SessionStatus,
     ) -> ChatMessage | None:
-        timeout = None if session_status == SessionStatus.NEW_TASK else 2.0
         while not self._stop_event.is_set() and not self._user_to_agent_queue.is_closed():
-            user_message = self._user_to_agent_queue.get_user_message(timeout=timeout)
+            user_message = self._user_to_agent_queue.get_user_message(timeout=2)
             if user_message is not None:
                 return user_message
             if session_status == SessionStatus.IN_PROGRESS:
