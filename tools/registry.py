@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import pkgutil
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -11,13 +12,31 @@ from tools.tools import BaseTool
 
 
 class ToolRegistry:
-    def __init__(self, tools: list[BaseTool] | None = None) -> None:
+    def __init__(
+        self,
+        tools: list[BaseTool] | None = None,
+        timeout_retry_max_attempts: int = 4,
+        timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
+    ) -> None:
         self._tools = {tool.name: tool for tool in (tools or [])}
-        self._router = ToolChainRouter(self._tools.values())
+        self._timeout_retry_max_attempts = timeout_retry_max_attempts
+        self._timeout_retry_delays = self._normalize_retry_delays(
+            timeout_retry_delays,
+            timeout_retry_max_attempts,
+        )
+        self._router = ToolChainRouter(
+            self._tools.values(),
+            timeout_retry_max_attempts=self._timeout_retry_max_attempts,
+            timeout_retry_delays=self._timeout_retry_delays,
+        )
 
     def register(self, tool: BaseTool) -> None:
         self._tools[tool.name] = tool
-        self._router = ToolChainRouter(self._tools.values())
+        self._router = ToolChainRouter(
+            self._tools.values(),
+            timeout_retry_max_attempts=self._timeout_retry_max_attempts,
+            timeout_retry_delays=self._timeout_retry_delays,
+        )
 
     def auto_register(
         self,
@@ -32,6 +51,21 @@ class ToolRegistry:
 
     def execute(self, name: str, arguments: dict[str, Any], call_id: str) -> ToolResult:
         return self._router.route(ToolCall(name=name, arguments=arguments, call_id=call_id))
+
+    @staticmethod
+    def _normalize_retry_delays(
+        retry_delays: tuple[float, ...],
+        max_attempts: int,
+    ) -> tuple[float, ...]:
+        target_length = max(0, max_attempts - 1)
+        if target_length == 0:
+            return ()
+        delays = [delay for delay in retry_delays if delay > 0]
+        if not delays:
+            delays = [1.0]
+        while len(delays) < target_length:
+            delays.append(delays[-1] * 2)
+        return tuple(delays[:target_length])
 
 
 class BaseToolHandler(ABC):
@@ -64,42 +98,68 @@ class BaseToolHandler(ABC):
 
 
 class ToolHandlerNode(BaseToolHandler):
-    def __init__(self, tool: BaseTool) -> None:
+    def __init__(
+        self,
+        tool: BaseTool,
+        timeout_retry_max_attempts: int,
+        timeout_retry_delays: tuple[float, ...],
+    ) -> None:
         super().__init__()
         self._tool = tool
+        self._timeout_retry_max_attempts = timeout_retry_max_attempts
+        self._timeout_retry_delays = timeout_retry_delays
 
     def can_handle(self, tool_call: ToolCall) -> bool:
         return self._tool.can_handle(tool_call.name)
 
     def process(self, tool_call: ToolCall) -> ToolResult:
-        try:
-            result = self._tool.run(tool_call.arguments)
-        except TimeoutError as exc:
-            return ToolResult(
-                call_id=tool_call.call_id,
-                output="",
-                success=False,
-                error=build_error("TOOL_TIMEOUT", f"Tool `{tool_call.name}` timed out: {exc}"),
-            )
-        except Exception as exc:
-            if isinstance(exc, AgentError):
+        total_attempts = self._timeout_retry_max_attempts
+        for attempt_idx in range(total_attempts):
+            try:
+                result = self._tool.run(tool_call.arguments)
+                result.call_id = tool_call.call_id
+                return result
+            except TimeoutError as exc:
+                if attempt_idx < total_attempts - 1:
+                    time.sleep(self._timeout_retry_delays[attempt_idx])
+                    continue
+                return ToolResult(
+                    call_id=tool_call.call_id,
+                    output="",
+                    success=False,
+                    error=build_error(
+                        "TOOL_TIMEOUT",
+                        (
+                            f"Tool `{tool_call.name}` timed out after {total_attempts} attempts: {exc}"
+                        ),
+                    ),
+                )
+            except AgentError as exc:
+                if "TIMEOUT" in exc.code and attempt_idx < total_attempts - 1:
+                    time.sleep(self._timeout_retry_delays[attempt_idx])
+                    continue
                 return ToolResult(
                     call_id=tool_call.call_id,
                     output="",
                     success=False,
                     error=exc,
                 )
-            return ToolResult(
-                call_id=tool_call.call_id,
-                output="",
-                success=False,
-                error=build_error(
-                    "TOOL_EXECUTION_ERROR",
-                    f"Tool `{tool_call.name}` failed unexpectedly: {exc}",
-                ),
-            )
-        result.call_id = tool_call.call_id
-        return result
+            except Exception as exc:
+                return ToolResult(
+                    call_id=tool_call.call_id,
+                    output="",
+                    success=False,
+                    error=build_error(
+                        "TOOL_EXECUTION_ERROR",
+                        f"Tool `{tool_call.name}` failed unexpectedly: {exc}",
+                    ),
+                )
+        return ToolResult(
+            call_id=tool_call.call_id,
+            output="",
+            success=False,
+            error=build_error("TOOL_TIMEOUT", f"Tool `{tool_call.name}` timed out."),
+        )
 
 
 class FallbackToolHandler(BaseToolHandler):
@@ -116,19 +176,39 @@ class FallbackToolHandler(BaseToolHandler):
 
 
 class ToolChainRouter:
-    def __init__(self, tools: list[BaseTool] | Any) -> None:
-        self._root_handler = self._build_chain(list(tools))
+    def __init__(
+        self,
+        tools: list[BaseTool] | Any,
+        timeout_retry_max_attempts: int,
+        timeout_retry_delays: tuple[float, ...],
+    ) -> None:
+        self._root_handler = self._build_chain(
+            list(tools),
+            timeout_retry_max_attempts=timeout_retry_max_attempts,
+            timeout_retry_delays=timeout_retry_delays,
+        )
 
     def route(self, tool_call: ToolCall) -> ToolResult:
         return self._root_handler.handle(tool_call)
 
     @staticmethod
-    def _build_chain(tools: list[BaseTool]) -> BaseToolHandler:
+    def _build_chain(
+        tools: list[BaseTool],
+        timeout_retry_max_attempts: int,
+        timeout_retry_delays: tuple[float, ...],
+    ) -> BaseToolHandler:
         fallback = FallbackToolHandler()
         if not tools:
             return fallback
 
-        handlers = [ToolHandlerNode(tool) for tool in tools]
+        handlers = [
+            ToolHandlerNode(
+                tool,
+                timeout_retry_max_attempts=timeout_retry_max_attempts,
+                timeout_retry_delays=timeout_retry_delays,
+            )
+            for tool in tools
+        ]
         current = handlers[0]
         root = current
         for handler in handlers[1:]:
@@ -171,8 +251,13 @@ def discover_tools(
 def create_default_tool_registry(
     module_names: list[str] | None = None,
     package_name: str | None = "tools.impl",
+    timeout_retry_max_attempts: int = 4,
+    timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
 ) -> ToolRegistry:
-    registry = ToolRegistry()
+    registry = ToolRegistry(
+        timeout_retry_max_attempts=timeout_retry_max_attempts,
+        timeout_retry_delays=timeout_retry_delays,
+    )
     registry.auto_register(module_names=module_names, package_name=package_name)
     return registry
 

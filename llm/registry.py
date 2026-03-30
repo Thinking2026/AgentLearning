@@ -57,23 +57,24 @@ class FallbackLLMClient(BaseLLMClient):
         self,
         registry: LLMProviderRegistry,
         provider_priority: list[str],
+        max_attempts: int = 4,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
     ) -> None:
         if not provider_priority:
             raise build_error("LLM_CONFIG_ERROR", "provider_priority cannot be empty")
-        if not retry_delays:
-            raise build_error("LLM_CONFIG_ERROR", "retry_delays cannot be empty")
+        if max_attempts <= 0:
+            raise build_error("LLM_CONFIG_ERROR", "max_attempts must be greater than 0")
         self._registry = registry
         self._provider_priority = provider_priority
-        self._retry_delays = retry_delays
+        self._max_attempts = max_attempts
+        self._retry_delays = self._normalize_retry_delays(retry_delays, max_attempts)
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         failure_messages: list[str] = []
-        max_attempts = len(self._retry_delays)
 
         for provider_name in self._provider_priority:
             provider = self._registry.get(provider_name)
-            for attempt_idx in range(max_attempts):
+            for attempt_idx in range(self._max_attempts):
                 try:
                     return provider.generate(request)
                 except AgentError as exc:
@@ -82,21 +83,36 @@ class FallbackLLMClient(BaseLLMClient):
                         return repaired
 
                     failure_messages.append(
-                        f"{provider_name}[attempt {attempt_idx + 1}/{max_attempts}]: {exc}"
+                        f"{provider_name}[attempt {attempt_idx + 1}/{self._max_attempts}]: {exc}"
                     )
-                    if attempt_idx < max_attempts - 1:
+                    if attempt_idx < self._max_attempts - 1:
                         time.sleep(self._retry_delays[attempt_idx])
                 except Exception as exc:
                     failure_messages.append(
-                        f"{provider_name}[attempt {attempt_idx + 1}/{max_attempts}]: {exc}"
+                        f"{provider_name}[attempt {attempt_idx + 1}/{self._max_attempts}]: {exc}"
                     )
-                    if attempt_idx < max_attempts - 1:
+                    if attempt_idx < self._max_attempts - 1:
                         time.sleep(self._retry_delays[attempt_idx])
 
         raise build_error(
             "LLM_ALL_PROVIDERS_FAILED",
             "All configured LLM providers failed. " + " | ".join(failure_messages),
         )
+
+    @staticmethod
+    def _normalize_retry_delays(
+        retry_delays: tuple[float, ...],
+        max_attempts: int,
+    ) -> tuple[float, ...]:
+        target_length = max(0, max_attempts - 1)
+        if target_length == 0:
+            return ()
+        delays = [delay for delay in retry_delays if delay > 0]
+        if not delays:
+            delays = [1.0]
+        while len(delays) < target_length:
+            delays.append(delays[-1] * 2)
+        return tuple(delays[:target_length])
 
     def _try_parse_error_self_repair(
         self,

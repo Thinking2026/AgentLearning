@@ -57,6 +57,14 @@ class AgentThread(threading.Thread):
         self._max_react_attempt_iterations = int(
             self._config.get("agent.max_react_attempt_iterations", 20)
         )
+        self._llm_retry_max_attempts = int(self._config.get("llm.retry.max_attempts", 4))
+        self._llm_retry_delays = self._parse_retry_delays(
+            self._config.get("llm.retry.backoff_seconds", [1.0, 2.0, 4.0]),
+        )
+        self._tool_retry_max_attempts = int(self._config.get("tools.retry.max_attempts", 4))
+        self._tool_retry_delays = self._parse_retry_delays(
+            self._config.get("tools.retry.backoff_seconds", [1.0, 2.0, 4.0]),
+        )
         try:
             self._storage_registry = self._build_storage_registry()
             self._storage = self._build_storage()
@@ -135,6 +143,8 @@ class AgentThread(threading.Thread):
         return create_default_tool_registry(
             module_names=module_names,
             package_name=package_name,
+            timeout_retry_max_attempts=self._tool_retry_max_attempts,
+            timeout_retry_delays=self._tool_retry_delays,
         )
 
     def _build_llm_client(self) -> BaseLLMClient:
@@ -161,7 +171,8 @@ class AgentThread(threading.Thread):
         return FallbackLLMClient(
             registry=registry,
             provider_priority=provider_priority,
-            retry_delays=(1.0, 2.0, 4.0),
+            max_attempts=self._llm_retry_max_attempts,
+            retry_delays=self._llm_retry_delays,
         )
 
     def _create_llm_provider(
@@ -276,6 +287,22 @@ class AgentThread(threading.Thread):
 
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
+
+    @staticmethod
+    def _parse_retry_delays(raw: object) -> tuple[float, ...]:
+        if not isinstance(raw, list):
+            return (1.0, 2.0, 4.0)
+        parsed = []
+        for item in raw:
+            try:
+                value = float(item)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                parsed.append(value)
+        if not parsed:
+            return (1.0, 2.0, 4.0)
+        return tuple(parsed)
 
     def _restore_base_system_prompt(self) -> None:
         with self._shared_context._lock:
