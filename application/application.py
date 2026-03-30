@@ -100,14 +100,8 @@ class AgentApplication:
 
     def _wait_for_shutdown(self) -> None:
         while not self._stop_event.is_set():
-            if not self._user_thread.is_alive():
-                self.request_stop(source=self._user_thread.name)
-                return
-            if not self._agent_thread.is_alive():
-                self.request_stop(source=self._agent_thread.name)
-                return
-            self._user_thread.join(timeout=1)
-            self._agent_thread.join(timeout=1)
+            self._safe_join(self._user_thread, timeout=1)
+            self._safe_join(self._agent_thread, timeout=1)
 
     def _stop_threads(self) -> None:
         self.request_stop(source="AgentApplication.stop_threads")
@@ -115,10 +109,10 @@ class AgentApplication:
         self._safe_join(self._agent_thread)
 
     @staticmethod
-    def _safe_join(thread: threading.Thread | None) -> None:
+    def _safe_join(thread: threading.Thread | None, timeout: float | None = None) -> None:
         if thread is None or thread.ident is None:
             return
-        thread.join()
+        thread.join(timeout=timeout)
 
     def release_resources(self) -> None:
         if self._message_queue is not None:
