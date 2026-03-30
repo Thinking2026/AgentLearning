@@ -60,7 +60,7 @@ class AgentApplication:
                 zap.any("error", exc),
             )
             self.request_stop()
-            self._cleanup_shared_resources()
+            self.release_resources()
             raise
 
     @classmethod
@@ -85,7 +85,7 @@ class AgentApplication:
             self.request_stop(source="AgentApplication.run")
         finally:
             self._stop_threads()
-            self._cleanup_shared_resources()
+            self.release_resources()
             self._logger.info(
                 "Agent application stopped",
                 zap.any("stop_source", self._stop_event.get_source()),
@@ -120,7 +120,7 @@ class AgentApplication:
             return
         thread.join()
 
-    def _cleanup_shared_resources(self) -> None:
+    def release_resources(self) -> None:
         if self._message_queue is not None:
             self._message_queue.release()
         if self._shared_context is not None:
