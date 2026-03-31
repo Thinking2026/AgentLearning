@@ -125,9 +125,14 @@ Provider clients should use these error classes/codes:
 - `LLM_RESPONSE_PARSE_ERROR`
 - `LLM_RESPONSE_ERROR`
 
-For fallback-chain total failure, wrapper client may raise:
+For retry exhaustion or fallback-chain total failure, wrapper client may raise:
 
 - `LLM_ALL_PROVIDERS_FAILED`
+
+Provider fallback is optional and controlled by config:
+
+- `llm.retry.*` always controls per-provider exponential backoff retries.
+- `llm.enable_provider_fallback` decides whether to continue to the next provider in `llm.priority_chain` after retries are exhausted.
 
 ## Compatibility Note
 

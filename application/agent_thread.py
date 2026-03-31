@@ -150,9 +150,12 @@ class AgentThread(threading.Thread):
     def _build_llm_client(self) -> BaseLLMClient:
         registry = LLMProviderRegistry()
         default_provider_name = self._config.get("llm.provider", "openai")
+        enable_provider_fallback = bool(
+            self._config.get("llm.enable_provider_fallback", False)
+        )
         configured_priority = self._config.get("llm.priority_chain")
         provider_priority: list[str]
-        if isinstance(configured_priority, list) and configured_priority:
+        if enable_provider_fallback and isinstance(configured_priority, list) and configured_priority:
             provider_priority = [str(item) for item in configured_priority if str(item).strip()]
         else:
             provider_priority = [default_provider_name]
@@ -173,6 +176,7 @@ class AgentThread(threading.Thread):
             provider_priority=provider_priority,
             max_attempts=self._llm_retry_max_attempts,
             retry_delays=self._llm_retry_delays,
+            enable_provider_fallback=enable_provider_fallback,
         )
 
     def _create_llm_provider(

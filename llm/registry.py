@@ -59,6 +59,7 @@ class FallbackLLMClient(BaseLLMClient):
         provider_priority: list[str],
         max_attempts: int = 4,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
+        enable_provider_fallback: bool = False,
     ) -> None:
         if not provider_priority:
             raise build_error("LLM_CONFIG_ERROR", "provider_priority cannot be empty")
@@ -68,11 +69,17 @@ class FallbackLLMClient(BaseLLMClient):
         self._provider_priority = provider_priority
         self._max_attempts = max_attempts
         self._retry_delays = self._normalize_retry_delays(retry_delays, max_attempts)
+        self._enable_provider_fallback = enable_provider_fallback
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         failure_messages: list[str] = []
+        provider_names = (
+            self._provider_priority
+            if self._enable_provider_fallback
+            else [self._provider_priority[0]]
+        )
 
-        for provider_name in self._provider_priority:
+        for provider_name in provider_names:
             provider = self._registry.get(provider_name)
             for attempt_idx in range(self._max_attempts):
                 try:
@@ -96,7 +103,7 @@ class FallbackLLMClient(BaseLLMClient):
 
         raise build_error(
             "LLM_ALL_PROVIDERS_FAILED",
-            "All configured LLM providers failed. " + " | ".join(failure_messages),
+            "All attempted LLM providers failed. " + " | ".join(failure_messages),
         )
 
     @staticmethod
