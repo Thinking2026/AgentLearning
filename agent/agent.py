@@ -35,8 +35,14 @@ class Agent(ABC):
         self._max_tool_iterations = max_tool_iterations
         self._cur_react_attempt_iterations = 0
 
+    def begin_session(self) -> None:
+        self._cur_react_attempt_iterations = 0
+        self._shared_context.set_session_status(SessionStatus.IN_PROGRESS)
+
     def reset(self) -> None:
         self._cur_react_attempt_iterations = 0
+        self._shared_context.archive_current_task()
+        self._shared_context.set_session_status(SessionStatus.NEW_TASK)
 
     def release_resources(self) -> None:
         self.reset()

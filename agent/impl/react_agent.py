@@ -33,10 +33,12 @@ class ReActAgent(Agent):
         user_message: ChatMessage | None,
     ) -> tuple[LLMRequest | None, AgentExecutionResult | None]:
         rag_context = []
+        '''
         if user_message is not None and user_message.content.strip():
             rag_context, rag_result = self._retrieve_rag_context(user_message.content) #TODO 缺少容错fallback
             if rag_result is not None:
                 return None, rag_result
+        '''
 
         conversation = self._shared_context.get_conversation_history()
         next_message, request_result = self._build_next_message(session_status, user_message)
@@ -61,10 +63,8 @@ class ReActAgent(Agent):
         user_message: ChatMessage | None,
     ) -> tuple[ChatMessage | None, AgentExecutionResult | None]:
         if session_status == SessionStatus.NEW_TASK:
-            if user_message is None:
+            if user_message is None:#按照现在的设计不可能走到这里
                 raise build_error("MISSING_USER_MESSAGE", "A new task requires a user message.")
-            self._shared_context.set_session_status(SessionStatus.IN_PROGRESS)
-            self._cur_react_attempt_iterations = 0
             message = ChatMessage(role="user", content=user_message.content)
             self._shared_context.append_conversation_message(message)
             return message, None

@@ -52,26 +52,9 @@ class AgentThread(threading.Thread):
         self._llm_client: BaseLLMClient | None = None
         self._agent: Agent | None = None
         self._base_system_prompt = self._shared_context.get_system_prompt()
-        self._max_tool_iterations = int(self._config.get("agent.max_tool_iterations", 3)
-        )
-        self._max_react_attempt_iterations = int(
-            self._config.get("agent.max_react_attempt_iterations", 20)
-        )
-        self._llm_retry_max_attempts = int(self._config.get("llm.retry.max_attempts", 4))
-        self._llm_retry_delays = self._parse_retry_delays(
-            self._config.get("llm.retry.backoff_seconds", [1.0, 2.0, 4.0]),
-        )
-        self._tool_retry_max_attempts = int(self._config.get("tools.retry.max_attempts", 4))
-        self._tool_retry_delays = self._parse_retry_delays(
-            self._config.get("tools.retry.backoff_seconds", [1.0, 2.0, 4.0]),
-        )
-        self._llm_context_trimming_enabled = bool(
-            self._config.get("llm.context_trimming.enabled", True)
-        )
-        self._llm_context_max_messages = self._parse_positive_int(
-            self._config.get("llm.context_trimming.max_messages", 40),
-            default=40,
-        )
+        self._load_agent_config()
+        self._load_llm_config()
+        self._load_tool_config()
         try:
             self._storage_registry = self._build_storage_registry()
             self._storage = self._build_storage()
@@ -91,8 +74,6 @@ class AgentThread(threading.Thread):
     def reset(self) -> None:
         if self._agent is not None:
             self._agent.reset()
-        self._shared_context.archive_current_task()
-        self._shared_context.set_session_status(SessionStatus.NEW_TASK)
         self._restore_base_system_prompt()
 
     def release_resources(self) -> None:
@@ -137,6 +118,31 @@ class AgentThread(threading.Thread):
 
     def _build_rag_service(self) -> RAGService:
         return RAGService(self._storage)
+
+    def _load_agent_config(self) -> None:
+        self._max_tool_iterations = int(self._config.get("agent.max_tool_iterations", 3))
+        self._max_react_attempt_iterations = int(
+            self._config.get("agent.max_react_attempt_iterations", 20)
+        )
+
+    def _load_llm_config(self) -> None:
+        self._llm_retry_max_attempts = int(self._config.get("llm.retry.max_attempts", 4))
+        self._llm_retry_delays = self._parse_retry_delays(
+            self._config.get("llm.retry.backoff_seconds", [1.0, 2.0, 4.0]),
+        )
+        self._llm_context_trimming_enabled = bool(
+            self._config.get("llm.context_trimming.enabled", True)
+        )
+        self._llm_context_max_messages = self._parse_positive_int(
+            self._config.get("llm.context_trimming.max_messages", 40),
+            default=40,
+        )
+
+    def _load_tool_config(self) -> None:
+        self._tool_retry_max_attempts = int(self._config.get("tools.retry.max_attempts", 4))
+        self._tool_retry_delays = self._parse_retry_delays(
+            self._config.get("tools.retry.backoff_seconds", [1.0, 2.0, 4.0]),
+        )
 
     def _build_message_formatter(self) -> MessageFormatter:
         if not self._llm_context_trimming_enabled:
@@ -262,8 +268,11 @@ class AgentThread(threading.Thread):
                     self.reset()
                     continue
 
+                if session_status == SessionStatus.NEW_TASK:
+                    self._agent.begin_session()
+
                 incoming_message = self._wait_for_user_message(session_status)
-                if incoming_message is None and session_status == SessionStatus.NEW_TASK:
+                if incoming_message is None and session_status == SessionStatus.NEW_TASK: #排除法，此时说明收到的停止信号了
                     continue  # No new user message, loop back and check stop condition or wait again   
 
                 try:
@@ -288,7 +297,7 @@ class AgentThread(threading.Thread):
     def _wait_for_user_message(
         self,
         session_status: SessionStatus,
-    ) -> ChatMessage | None:
+    ) -> ChatMessage | None: #两种情况下会返回None：1. 收到停止信号 2. 任务进行中但没有收到用户消息（此时agent可以继续执行之前的任务）
         while not self._stop_event.is_set() and not self._user_to_agent_queue.is_closed():
             user_message = self._user_to_agent_queue.get_user_message(timeout=2)
             if user_message is not None:
