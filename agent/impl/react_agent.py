@@ -166,7 +166,12 @@ class ReActAgent(Agent):
                 ChatMessage(
                     role="assistant",
                     content=f"[tool:{tool_call.name}] {result.output}",
-                    metadata={"source": "tool", "tool_name": tool_call.name},
+                    metadata={
+                        "source": "tool",
+                        "tool_name": tool_call.name,
+                        "tool_arguments": tool_call.arguments,
+                        "tool_result": result.output,
+                    },
                 )
             )
         return AgentExecutionResult(user_messages=intermediate_messages)
@@ -199,7 +204,12 @@ class ReActAgent(Agent):
                 ChatMessage(
                     role="assistant",
                     content=f"[rag:{query}] {json.dumps(rag_context, ensure_ascii=False)}",
-                    metadata={"source": "rag", "query": query},
+                    metadata={
+                        "source": "rag",
+                        "query": query,
+                        "rag_source": self._rag_service.get_source_name(),
+                        "rag_result": rag_context,
+                    },
                 )
             ]
         )

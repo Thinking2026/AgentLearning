@@ -16,6 +16,9 @@ class RAGService:
     def set_tracer(self, tracer: Tracer | None) -> None:
         self._tracer = tracer
 
+    def get_source_name(self) -> str:
+        return self._storage.__class__.__name__
+
     def _start_span(
         self,
         name: str,
