@@ -54,5 +54,11 @@
       "max_attempts": 4,
       "backoff_seconds": [1.0, 2.0, 4.0]
     }
+  },
+  "tracing": {
+    "enabled": true,
+    "output_path": "runtime/traces.jsonl",
+    "capture_payloads": false,
+    "max_content_length": 1000
   }
 }

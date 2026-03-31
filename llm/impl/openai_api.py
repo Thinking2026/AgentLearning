@@ -45,16 +45,32 @@ class OpenAILLMClient(BaseLLMClient):
         )
 
     def generate(self, request: LLMRequest) -> LLMResponse:
-        payload = {
-            "model": self._model,
-            "messages": self._serialize_messages(request),
-        }
-        tools = self._serialize_tools(request.tools)
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-        response_data = self._post_json("/chat/completions", payload)
-        return self._parse_chat_completion(response_data)
+        with self._start_span(
+            "llm.generate",
+            attributes={
+                "provider": self.provider_name,
+                "model": self._model,
+                "message_count": len(request.messages),
+                "tool_schema_count": len(request.tools),
+            },
+        ) as span:
+            payload = {
+                "model": self._model,
+                "messages": self._serialize_messages(request),
+            }
+            tools = self._serialize_tools(request.tools)
+            if tools:
+                payload["tools"] = tools
+                payload["tool_choice"] = "auto"
+            response_data = self._post_json("/chat/completions", payload)
+            response = self._parse_chat_completion(response_data)
+            span.add_attributes(
+                {
+                    "finish_reason": response.finish_reason,
+                    "tool_calls_count": len(response.tool_calls),
+                }
+            )
+            return response
 
     def _post_json(self, path: str, payload: dict) -> dict:
         request_url = f"{self._base_url}{path}"
@@ -97,10 +113,7 @@ class OpenAILLMClient(BaseLLMClient):
                         tool_calls
                     )
             if role == "tool":
-                tool_call_id = (
-                    message.metadata.get("llm_raw_tool_call_id")
-                    or message.metadata.get("tool_call_id")
-                )
+                tool_call_id = message.metadata.get("llm_raw_tool_call_id")
                 if tool_call_id:
                     serialized["tool_call_id"] = tool_call_id
             serialized_messages.append(serialized)
@@ -134,10 +147,7 @@ class OpenAILLMClient(BaseLLMClient):
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 continue
-            llm_raw_tool_call_id = (
-                tool_call.get("llm_raw_tool_call_id")
-                or tool_call.get("id")
-            )
+            llm_raw_tool_call_id = tool_call.get("llm_raw_tool_call_id") or tool_call.get("id")
             function_payload = tool_call.get("function")
             if not isinstance(llm_raw_tool_call_id, str) or not isinstance(function_payload, dict):
                 continue

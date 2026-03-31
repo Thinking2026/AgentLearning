@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from schemas import AgentError, ToolCall, ToolResult, build_error
+from tracing import SpanHandle, Tracer
 from tools.tools import BaseTool
 
 
@@ -17,6 +18,7 @@ class ToolRegistry:
         tools: list[BaseTool] | None = None,
         timeout_retry_max_attempts: int = 4,
         timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
+        tracer: Tracer | None = None,
     ) -> None:
         self._tools = {tool.name: tool for tool in (tools or [])}
         self._timeout_retry_max_attempts = timeout_retry_max_attempts
@@ -24,6 +26,7 @@ class ToolRegistry:
             timeout_retry_delays,
             timeout_retry_max_attempts,
         )
+        self._tracer = tracer
         self._router = ToolChainRouter(
             self._tools.values(),
             timeout_retry_max_attempts=self._timeout_retry_max_attempts,
@@ -55,13 +58,36 @@ class ToolRegistry:
         arguments: dict[str, Any],
         llm_raw_tool_call_id: str | None = None,
     ) -> ToolResult:
-        return self._router.route(
-            ToolCall(
-                name=name,
-                arguments=arguments,
-                llm_raw_tool_call_id=llm_raw_tool_call_id,
-            )
+        tool_call = ToolCall(
+            name=name,
+            arguments=arguments,
+            llm_raw_tool_call_id=llm_raw_tool_call_id,
         )
+        with self._start_span(
+            f"tool.execute.{name}",
+            attributes={
+                "tool_name": name,
+                "arguments": arguments,
+                "llm_raw_tool_call_id": llm_raw_tool_call_id,
+            },
+        ) as span:
+            result = self._router.route(tool_call)
+            span.add_attributes(
+                {
+                    "success": result.success,
+                    "error_code": None if result.error is None else result.error.code,
+                }
+            )
+            return result
+
+    def _start_span(
+        self,
+        name: str,
+        attributes: dict[str, Any] | None = None,
+    ) -> SpanHandle:
+        if self._tracer is None:
+            return SpanHandle(None)
+        return self._tracer.start_span(name=name, kind="tool", attributes=attributes)
 
     @staticmethod
     def _normalize_retry_delays(
@@ -264,10 +290,12 @@ def create_default_tool_registry(
     package_name: str | None = "tools.impl",
     timeout_retry_max_attempts: int = 4,
     timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
+    tracer: Tracer | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(
         timeout_retry_max_attempts=timeout_retry_max_attempts,
         timeout_retry_delays=timeout_retry_delays,
+        tracer=tracer,
     )
     registry.auto_register(module_names=module_names, package_name=package_name)
     return registry

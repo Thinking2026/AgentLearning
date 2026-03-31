@@ -76,3 +76,4 @@
 - 什么情况下使用RAG，是否可以让大模型自己决定
 - 已经回答过问题的答案，是否要用多级存储
 - 编写ReActAgent的system prompt
+- checkpoint机制

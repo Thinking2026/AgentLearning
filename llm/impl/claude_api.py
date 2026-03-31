@@ -53,20 +53,37 @@ class ClaudeLLMClient(BaseLLMClient):
         )
 
     def generate(self, request: LLMRequest) -> LLMResponse:
-        payload: dict[str, object] = {
-            "model": self._model,
-            "max_tokens": self._max_tokens,
-            "messages": self._serialize_messages(request),
-        }
-        if request.system_prompt:
-            payload["system"] = request.system_prompt
+        with self._start_span(
+            "llm.generate",
+            attributes={
+                "provider": self.provider_name,
+                "model": self._model,
+                "message_count": len(request.messages),
+                "tool_schema_count": len(request.tools),
+                "max_tokens": self._max_tokens,
+            },
+        ) as span:
+            payload: dict[str, object] = {
+                "model": self._model,
+                "max_tokens": self._max_tokens,
+                "messages": self._serialize_messages(request),
+            }
+            if request.system_prompt:
+                payload["system"] = request.system_prompt
 
-        tools = self._serialize_tools(request.tools)
-        if tools:
-            payload["tools"] = tools
+            tools = self._serialize_tools(request.tools)
+            if tools:
+                payload["tools"] = tools
 
-        response_data = self._post_json("/v1/messages", payload)
-        return self._parse_message_response(response_data)
+            response_data = self._post_json("/v1/messages", payload)
+            response = self._parse_message_response(response_data)
+            span.add_attributes(
+                {
+                    "finish_reason": response.finish_reason,
+                    "tool_calls_count": len(response.tool_calls),
+                }
+            )
+            return response
 
     def _post_json(self, path: str, payload: dict[str, object]) -> dict:
         http_request = urllib.request.Request(
@@ -119,9 +136,7 @@ class ClaudeLLMClient(BaseLLMClient):
                     if not isinstance(tool_call, dict):
                         continue
                     tool_name = tool_call.get("name")
-                    tool_call_id = (
-                        tool_call.get("llm_raw_tool_call_id")
-                    )
+                    tool_call_id = tool_call.get("llm_raw_tool_call_id")
                     tool_arguments = tool_call.get("arguments")
                     if not isinstance(tool_name, str) or not isinstance(tool_call_id, str):
                         continue
@@ -136,10 +151,7 @@ class ClaudeLLMClient(BaseLLMClient):
                 return {"role": "assistant", "content": content}
             return {"role": "assistant", "content": message.content}
         if message.metadata.get("conversation_source") == "tool":
-            tool_call_id = (
-                message.metadata.get("llm_raw_tool_call_id")
-                or message.metadata.get("tool_call_id")
-            )
+            tool_call_id = message.metadata.get("llm_raw_tool_call_id")
             if not tool_call_id:
                 return {"role": "user", "content": message.content}
             return {

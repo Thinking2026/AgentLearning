@@ -20,6 +20,7 @@ from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
+from tracing import SpanHandle, Tracer
 from tools import ToolRegistry, create_default_tool_registry
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
@@ -51,11 +52,15 @@ class AgentThread(threading.Thread):
         self._tool_registry: ToolRegistry | None = None
         self._llm_client: BaseLLMClient | None = None
         self._agent: Agent | None = None
+        self._tracer: Tracer | None = None
+        self._session_span: SpanHandle | None = None
         self._base_system_prompt = self._shared_context.get_system_prompt()
         self._load_agent_config()
         self._load_llm_config()
         self._load_tool_config()
+        self._load_tracing_config()
         try:
+            self._tracer = self._build_tracer()
             self._storage_registry = self._build_storage_registry()
             self._storage = self._build_storage()
             self._rag_service = self._build_rag_service()
@@ -72,6 +77,7 @@ class AgentThread(threading.Thread):
         self._stop_callback(self.name)
 
     def reset(self) -> None:
+        self._finish_session_trace()
         if self._agent is not None:
             self._agent.reset()
         self._restore_base_system_prompt()
@@ -89,6 +95,7 @@ class AgentThread(threading.Thread):
         self._rag_service = None
         self._storage = None
         self._storage_registry = None
+        self._session_span = None
 
     def _build_storage_registry(self) -> StorageRegistry:
         #TODO 暂时还用不上这里，先把桩代码写了，后续完善
@@ -117,7 +124,26 @@ class AgentThread(threading.Thread):
         return self._storage_registry.get(backend_name)
 
     def _build_rag_service(self) -> RAGService:
-        return RAGService(self._storage)
+        return RAGService(self._storage, tracer=self._tracer)
+
+    def _load_tracing_config(self) -> None:
+        self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
+        self._tracing_output_path = self._config.get("tracing.output_path", "runtime/traces.jsonl")
+        self._tracing_capture_payloads = bool(
+            self._config.get("tracing.capture_payloads", False)
+        )
+        self._tracing_max_content_length = self._parse_positive_int(
+            self._config.get("tracing.max_content_length", 1000),
+            default=1000,
+        )
+
+    def _build_tracer(self) -> Tracer:
+        return Tracer(
+            enabled=self._tracing_enabled,
+            output_path=self._tracing_output_path,
+            capture_payloads=self._tracing_capture_payloads,
+            max_content_length=self._tracing_max_content_length,
+        )
 
     def _load_agent_config(self) -> None:
         self._max_tool_iterations = int(self._config.get("agent.max_tool_iterations", 3))
@@ -159,6 +185,7 @@ class AgentThread(threading.Thread):
             package_name=package_name,
             timeout_retry_max_attempts=self._tool_retry_max_attempts,
             timeout_retry_delays=self._tool_retry_delays,
+            tracer=self._tracer,
         )
 
     def _build_llm_client(self) -> BaseLLMClient:
@@ -183,6 +210,7 @@ class AgentThread(threading.Thread):
             if not isinstance(overrides, dict):
                 overrides = {}
             provider = self._create_llm_provider(provider_name, overrides)
+            provider.set_tracer(self._tracer)
             registry.register(provider)
 
         return FallbackLLMClient(
@@ -268,12 +296,13 @@ class AgentThread(threading.Thread):
                     self.reset()
                     continue
 
-                if session_status == SessionStatus.NEW_TASK:
-                    self._agent.begin_session()
-
                 incoming_message = self._wait_for_user_message(session_status)
                 if incoming_message is None and session_status == SessionStatus.NEW_TASK: #排除法，此时说明收到的停止信号了
                     continue  # No new user message, loop back and check stop condition or wait again   
+                if session_status == SessionStatus.NEW_TASK and incoming_message is not None:
+                    self._start_session_trace(incoming_message)
+                    self._agent.begin_session()
+                    session_status = self._shared_context.get_session_status()
 
                 try:
                     execution_result = self._agent.run(session_status, incoming_message)
@@ -282,22 +311,48 @@ class AgentThread(threading.Thread):
                     if execution_result.error is not None:
                         self._logger.error(
                             "Agent execution returned an internal error",
+                            zap.any("trace_id", None if self._tracer is None else self._tracer.current_trace_id()),
+                            zap.any("span_id", None if self._tracer is None else self._tracer.current_span_id()),
                             zap.any("error", execution_result.error),
                         )
                     if execution_result.should_reset:
+                        self._finish_session_trace(error=execution_result.error)
                         self.reset()
                 except Exception as exc:
                     normalized_error = self._normalize_error(exc)
+                    self._finish_session_trace(error=normalized_error)
                     self._logger.error(
                         "Agent thread execution failed",
+                        zap.any("trace_id", None if self._tracer is None else self._tracer.current_trace_id()),
+                        zap.any("span_id", None if self._tracer is None else self._tracer.current_span_id()),
                         zap.any("error", normalized_error),
                     )
                     break
         except Exception as exc:
+            self._finish_session_trace(error=exc)
             self._logger.error("Agent thread crashed", zap.any("error", exc))
         finally:
             self.release_resources()
             self.stop()
+
+    def _start_session_trace(self, user_message: ChatMessage) -> None:
+        if self._tracer is None or self._session_span is not None:
+            return
+        self._session_span = self._tracer.start_trace(
+            "session",
+            attributes={
+                "thread": self.name,
+                "session_status": SessionStatus.NEW_TASK,
+                "user_message": user_message.content,
+            },
+        )
+
+    def _finish_session_trace(self, error: Exception | AgentError | None = None) -> None:
+        if self._session_span is None:
+            return
+        status = "error" if error is not None else "ok"
+        self._session_span.finish(status=status, error=error)
+        self._session_span = None
 
     def _wait_for_user_message(
         self,
