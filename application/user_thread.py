@@ -47,7 +47,8 @@ class UserThread(threading.Thread):
                     break
 
                 user_input = self._poll_user_input(timeout=0.5)
-                if self._handle_user_input(user_input):
+                need_quit = self._handle_user_input(user_input)
+                if need_quit:
                     break
 
                 self._print_progress_notice_if_needed(displayed_any_message)
