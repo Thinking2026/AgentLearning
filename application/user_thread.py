@@ -31,9 +31,17 @@ class UserThread(threading.Thread):
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
-        self._user_input_poll_timeout_seconds = self._get_positive_float(
-            "agent.latency.user_input_poll_timeout_seconds",
-            0.5,
+        self._new_task_user_input_timeout_seconds = self._get_positive_float(
+            "agent.latency.new_task_user_input_timeout_seconds",
+            60.0,
+        )
+        self._in_progress_wait_command_timeout_seconds = self._get_positive_float(
+            "agent.latency.in_progress_wait_command_timeout_seconds",
+            5.0,
+        )
+        self._hint_input_timeout_seconds = self._get_positive_float(
+            "agent.latency.hint_input_timeout_seconds",
+            60.0,
         )
         self._agent_message_poll_timeout_seconds = self._get_positive_float(
             "agent.latency.agent_message_poll_timeout_seconds",
@@ -61,9 +69,7 @@ class UserThread(threading.Thread):
                 if not self._is_running():
                     break
 
-                user_input = self._poll_user_input(
-                    timeout=self._user_input_poll_timeout_seconds
-                )
+                user_input = self._wait_for_user_input()
                 need_quit = self._handle_user_input(user_input)
                 if need_quit:
                     break
@@ -108,6 +114,27 @@ class UserThread(threading.Thread):
         if readable:
             return sys.stdin.readline()
         return None
+
+    def _wait_for_user_input(self) -> str | None:
+        if self._ui_session_status == SessionStatus.NEW_TASK:
+            return self._poll_user_input(
+                timeout=self._new_task_user_input_timeout_seconds,
+            )
+        return self._wait_for_hint_command()
+
+    def _wait_for_hint_command(self) -> str | None:
+        user_input = self._poll_user_input(
+            timeout=self._in_progress_wait_command_timeout_seconds,
+        )
+        if user_input is None:
+            return None
+
+        stripped = user_input.strip()
+        if stripped.lower() != "wait":
+            return user_input
+
+        print("Assistant: hint mode enabled, please input your hint within 60 seconds")
+        return self._poll_user_input(timeout=self._hint_input_timeout_seconds)
 
     def _handle_user_input(self, user_input: str | None) -> bool:
         if user_input is None:
@@ -179,13 +206,9 @@ class UserThread(threading.Thread):
 
     def _sync_session_status_from_agent_message(self, message: ChatMessage) -> None:
         session_status = message.metadata.get("session_status")
-        if session_status == SessionStatus.NEW_TASK:
-            self._ui_session_status = SessionStatus.NEW_TASK
-            self._last_prompt_status = None #TODO 思考这里为什么
-            return
-        if session_status == SessionStatus.IN_PROGRESS:
-            self._ui_session_status = SessionStatus.IN_PROGRESS
-            self._last_prompt_status = None
+        if session_status != self._ui_session_status:
+            self._last_prompt_status = None 
+            self._ui_session_status = session_status
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
