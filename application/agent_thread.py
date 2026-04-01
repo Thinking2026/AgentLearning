@@ -4,6 +4,7 @@ import threading
 from typing import Callable
 
 from agent import Agent, ReActAgent
+from agent.impl import ReActAgentContext
 from config import ConfigValueReader, JsonConfig
 from context.agent_context import AgentContext
 from context.formatter import MessageFormatter
@@ -40,7 +41,7 @@ class AgentThread(threading.Thread):
         super().__init__(name="AgentThread", daemon=False)
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
-        self._agent_context = AgentContext()
+        self._agent_context: AgentContext = self._build_agent_context()
         self._session = Session()
         self._config = config
         self._config_value_reader = ConfigValueReader(config)
@@ -78,6 +79,10 @@ class AgentThread(threading.Thread):
             self.release_resources()
             self.stop()
             raise
+
+    @staticmethod
+    def _build_agent_context() -> AgentContext:
+        return ReActAgentContext()
 
     def stop(self) -> None:
         self._stop_callback(self.name)
