@@ -5,9 +5,9 @@ from typing import Callable
 
 from agent import Agent, ReActAgent
 from config import ConfigValueReader, JsonConfig
+from context.agent_context import AgentContext
 from context.formatter import MessageFormatter
 from context.session import Session
-from context.shared_context import SharedContext
 from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
@@ -32,7 +32,6 @@ class AgentThread(threading.Thread):
         self,
         user_to_agent_queue: UserToAgentQueue,
         agent_to_user_queue: AgentToUserQueue,
-        shared_context: SharedContext,
         config: JsonConfig,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
@@ -41,7 +40,7 @@ class AgentThread(threading.Thread):
         super().__init__(name="AgentThread", daemon=False)
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
-        self._shared_context = shared_context
+        self._agent_context = AgentContext()
         self._session = Session()
         self._config = config
         self._config_value_reader = ConfigValueReader(config)
@@ -61,7 +60,7 @@ class AgentThread(threading.Thread):
         self._agent: Agent | None = None
         self._tracer: Tracer | None = None
         self._session_span: SpanHandle | None = None
-        self._base_system_prompt = self._shared_context.get_system_prompt()
+        self._base_system_prompt = self._agent_context.get_system_prompt()
         self._load_agent_config()
         self._load_llm_config()
         self._load_tool_config()
@@ -93,6 +92,7 @@ class AgentThread(threading.Thread):
         self.reset()
         if self._agent is not None:
             self._agent.release_resources()
+        self._agent_context.release()
         if self._storage_registry is not None:
             self._storage_registry.close_all()
         self._agent = None
@@ -276,7 +276,7 @@ class AgentThread(threading.Thread):
 
     def _build_agent(self) -> Agent:
         return ReActAgent(
-            shared_context=self._shared_context,
+            agent_context=self._agent_context,
             session=self._session,
             message_formatter=self._message_formatter,
             llm_client=self._llm_client,
@@ -405,8 +405,8 @@ class AgentThread(threading.Thread):
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
 
     def _restore_base_system_prompt(self) -> None:
-        with self._shared_context._lock:
-            self._shared_context._system_prompt = self._base_system_prompt
+        with self._agent_context._lock:
+            self._agent_context._system_prompt = self._base_system_prompt
 
     @staticmethod
     def _normalize_error(exc: Exception) -> AgentError:

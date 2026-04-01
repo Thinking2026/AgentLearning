@@ -3,9 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+from context.agent_context import AgentContext
 from context.formatter import MessageFormatter
 from context.session import Session
-from context.shared_context import SharedContext
 from llm import BaseLLMClient
 from rag.rag_service import RAGService
 from schemas import AgentError, ChatMessage, SessionStatus
@@ -22,7 +22,7 @@ class AgentExecutionResult:
 class Agent(ABC):
     def __init__(
         self,
-        shared_context: SharedContext,
+        agent_context: AgentContext,
         session: Session,
         message_formatter: MessageFormatter,
         llm_client: BaseLLMClient,
@@ -30,7 +30,7 @@ class Agent(ABC):
         rag_service: RAGService,
         max_tool_iterations: int,
     ) -> None:
-        self._shared_context = shared_context
+        self._agent_context = agent_context
         self._session = session
         self._message_formatter = message_formatter
         self._llm_client = llm_client
@@ -45,7 +45,7 @@ class Agent(ABC):
 
     def reset(self) -> None:
         self._cur_react_attempt_iterations = 0
-        self._shared_context.archive_current_task()
+        self._agent_context.archive_current_task()
         self._session.reset()
 
     def release_resources(self) -> None:

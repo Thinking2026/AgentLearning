@@ -56,3 +56,12 @@ make install-dev
 make check
 make run
 ```
+
+## Compile
+
+Generate an executable launcher in the project `bin/` directory:
+
+```bash
+make compile
+./bin/nanoagent
+```

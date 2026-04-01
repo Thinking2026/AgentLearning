@@ -21,6 +21,7 @@ env/
 # Runtime and logs (non-source artifacts)
 logs/
 runtime/
+bin/
 
 # Local databases and logs
 *.db

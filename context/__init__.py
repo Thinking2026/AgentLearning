@@ -1,5 +1,5 @@
 from .formatter import MessageFormatter
 from .session import Session
-from .shared_context import SharedContext
+from .agent_context import AgentContext
 
-__all__ = ["SharedContext", "MessageFormatter", "Session"]
+__all__ = ["AgentContext", "MessageFormatter", "Session"]

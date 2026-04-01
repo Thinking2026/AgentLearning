@@ -48,14 +48,14 @@ class ReActAgent(Agent):
                 return None, rag_result
         '''
 
-        conversation = self._shared_context.get_conversation_history()
+        conversation = self._agent_context.get_conversation_history()
         if user_message is not None and user_message.content.strip():
             message = ChatMessage(role="user", content=user_message.content.strip())
             conversation.append(message)
 
         return (
             self._message_formatter.build_request(
-                system_prompt=self._shared_context.get_system_prompt(),
+                system_prompt=self._agent_context.get_system_prompt(),
                 conversation=conversation,
                 tools=self._tool_registry.get_tool_schemas(),
                 context=rag_context,
@@ -105,7 +105,7 @@ class ReActAgent(Agent):
             )
 
     def _route_llm_response(self, response: LLMResponse) -> AgentExecutionResult:
-        self._shared_context.append_conversation_message(response.assistant_message)
+        self._agent_context.append_conversation_message(response.assistant_message)
         llm_messages: list[ChatMessage] = []
         llm_content = response.assistant_message.content.strip()
         if llm_content:
@@ -164,7 +164,7 @@ class ReActAgent(Agent):
                 output=result.output,
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             )
-            self._shared_context.append_conversation_message(observation)
+            self._agent_context.append_conversation_message(observation)
             intermediate_messages.append(
                 ChatMessage(
                     role="assistant",
@@ -201,7 +201,7 @@ class ReActAgent(Agent):
             query=query,
             context=rag_context,
         )
-        self._shared_context.append_conversation_message(observation)
+        self._agent_context.append_conversation_message(observation)
         return AgentExecutionResult(
             user_messages=[
                 ChatMessage(

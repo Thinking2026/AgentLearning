@@ -5,7 +5,7 @@ import threading
 from schemas import ChatMessage
 
 
-class SharedContext:
+class AgentContext:
     def __init__(self) -> None:
         self._system_prompt = ""
         self._archived_tasks: list[list[ChatMessage]] = []

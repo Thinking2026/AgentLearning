@@ -4,7 +4,6 @@ import threading
 from pathlib import Path
 
 from config import ConfigValueReader, JsonConfig, load_config
-from context.shared_context import SharedContext
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
@@ -21,7 +20,6 @@ class AgentApplication:
         self._config_value_reader: ConfigValueReader | None = None
         self._user_to_agent_queue: UserToAgentQueue | None = None
         self._agent_to_user_queue: AgentToUserQueue | None = None
-        self._shared_context: SharedContext | None = None
         self._stop_event = ThreadEvent()
         self._shutdown_lock = threading.Lock()
         self._agent_thread: AgentThread | None = None
@@ -40,13 +38,11 @@ class AgentApplication:
 
         self._user_to_agent_queue = UserToAgentQueue()
         self._agent_to_user_queue = AgentToUserQueue()
-        self._shared_context = SharedContext()
 
         try:
             self._agent_thread = AgentThread(
                 user_to_agent_queue=self._user_to_agent_queue,
                 agent_to_user_queue=self._agent_to_user_queue,
-                shared_context=self._shared_context,
                 config=self._config,
                 stop_event=self._stop_event,
                 stop_callback=self.request_stop,
@@ -125,8 +121,6 @@ class AgentApplication:
             self._user_to_agent_queue.release()
         if self._agent_to_user_queue is not None:
             self._agent_to_user_queue.release()
-        if self._shared_context is not None:
-            self._shared_context.release()
 
     @property
     def _thread_join_timeout_seconds(self) -> float:
