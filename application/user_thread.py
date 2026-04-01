@@ -123,7 +123,6 @@ class UserThread(threading.Thread):
             return True
         message = ChatMessage(role="user", content=stripped)
         self._user_to_agent_queue.send_user_message(message)
-        self._last_prompt_status = None
         return False
 
     def _print_progress_notice_if_needed(self, displayed_any_message: bool) -> None:
