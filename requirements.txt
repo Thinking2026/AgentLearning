@@ -1,0 +1,2 @@
+# Core runtime dependencies.
+# The default NanoAgent runtime currently uses only the Python standard library.
