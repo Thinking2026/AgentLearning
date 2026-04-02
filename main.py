@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from utils.log import Logger, zap
 
 def main() -> None:
     project_root = Path(__file__).resolve().parent
+    os.chdir(project_root)
     load_dotenv(project_root / ".env")
     config_path = project_root / "config.json"
     logger = Logger()

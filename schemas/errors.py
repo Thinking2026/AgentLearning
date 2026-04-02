@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(slots=True)
 class AgentError(Exception):
-    code: str
-    message: str
-
-    def __post_init__(self) -> None:
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
         super().__init__(str(self))
 
     def __str__(self) -> str:

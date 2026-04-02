@@ -238,10 +238,9 @@ class AgentThread(threading.Thread):
         provider_name: str,
         overrides: dict,
     ) -> BaseLLMClient:
-        global_api_key = self._config.get("llm.api_key")
         global_timeout = float(self._config.get("llm.timeout", 60.0))
 
-        api_key = overrides.get("api_key", global_api_key)
+        api_key = None
         timeout = float(overrides.get("timeout", global_timeout))
 
         if provider_name == "openai":
