@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,9 @@ class Logger:
         **named_fields: Any,
     ) -> None:
         entries = self._build_entries(fields, named_fields)
+        caller_file, caller_line = self._get_caller_location()
+        entries.insert(0, ("line", caller_line))
+        entries.insert(0, ("file", caller_file))
         log_line = self._format_line(level, description, entries)
         log_path = self._build_log_path(level)
         with self._lock:
@@ -74,3 +78,19 @@ class Logger:
         timestamp = datetime.now().strftime("%Y%m%d%H")
         suffix = "info" if level == "INFO" else "err"
         return self._log_dir / f"{timestamp}_{suffix}.log"
+
+    @staticmethod
+    def _get_caller_location() -> tuple[str, int]:
+        frame = inspect.currentframe()
+        try:
+            if frame is None:
+                return ("<unknown>", 0)
+            caller = frame.f_back
+            while caller is not None:
+                code_name = caller.f_code.co_name
+                if code_name not in {"_get_caller_location", "_write", "info", "error"}:
+                    return (Path(caller.f_code.co_filename).name, caller.f_lineno)
+                caller = caller.f_back
+            return ("<unknown>", 0)
+        finally:
+            del frame
