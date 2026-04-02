@@ -4,11 +4,14 @@ import sys
 from pathlib import Path
 
 from application import AgentApplication
+from utils.env_loader import load_dotenv
 from utils.log import Logger, zap
 
 
 def main() -> None:
-    config_path = Path(__file__).with_name("config.json")
+    project_root = Path(__file__).resolve().parent
+    load_dotenv(project_root / ".env")
+    config_path = project_root / "config.json"
     logger = Logger()
     try:
         application = AgentApplication(config_path)

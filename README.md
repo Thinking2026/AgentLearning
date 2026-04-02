@@ -22,6 +22,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+For local development, keep LLM secrets in a `.env` file instead of `config.json`:
+
+```bash
+cp .env.example .env
+```
+
 If you want to enable the optional ChromaDB storage backend:
 
 ```bash
@@ -38,6 +44,15 @@ pip install -r requirements-dev.txt
 
 ```bash
 python3 main.py
+```
+
+The app automatically loads `.env` from the project root before startup. Typical variables:
+
+```bash
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+DEEPSEEK_API_KEY=...
+DASHSCOPE_API_KEY=...
 ```
 
 ## Checks
