@@ -52,6 +52,7 @@ class OpenAILLMClient(BaseLLMClient):
                 "model": self._model,
                 "message_count": len(request.messages),
                 "tool_schema_count": len(request.tools),
+                "tools": self._trace_tools(request.tools),
             },
         ) as span:
             payload = {
@@ -71,6 +72,17 @@ class OpenAILLMClient(BaseLLMClient):
                 }
             )
             return response
+
+    @staticmethod
+    def _trace_tools(tools: list[dict]) -> list[dict]:
+        return [
+            {
+                "name": tool.get("name"),
+                "description": tool.get("description"),
+                "parameters": tool.get("parameters"),
+            }
+            for tool in tools
+        ]
 
     def _post_json(self, path: str, payload: dict) -> dict:
         request_url = f"{self._base_url}{path}"

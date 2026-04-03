@@ -60,6 +60,7 @@ class ClaudeLLMClient(BaseLLMClient):
                 "model": self._model,
                 "message_count": len(request.messages),
                 "tool_schema_count": len(request.tools),
+                "tools": self._trace_tools(request.tools),
                 "max_tokens": self._max_tokens,
             },
         ) as span:
@@ -84,6 +85,17 @@ class ClaudeLLMClient(BaseLLMClient):
                 }
             )
             return response
+
+    @staticmethod
+    def _trace_tools(tools: list[dict]) -> list[dict]:
+        return [
+            {
+                "name": tool.get("name"),
+                "description": tool.get("description"),
+                "parameters": tool.get("parameters"),
+            }
+            for tool in tools
+        ]
 
     def _post_json(self, path: str, payload: dict[str, object]) -> dict:
         http_request = urllib.request.Request(
