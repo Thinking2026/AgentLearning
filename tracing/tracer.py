@@ -81,18 +81,18 @@ class Tracer:
     def __init__(
         self,
         enabled: bool = True,
-        output_path: str | Path = "runtime/traces.jsonl",
+        output_path: str | Path = "runtime",
         capture_payloads: bool = False,
         max_content_length: int = 1000,
     ) -> None:
         self._enabled = enabled
-        self._output_path = Path(output_path)
+        self._output_dir = self._resolve_output_dir(output_path)
         self._capture_payloads = capture_payloads
         self._max_content_length = max(64, int(max_content_length))
         self._lock = threading.Lock()
         self._local = threading.local()
         if self._enabled:
-            self._output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._output_dir.mkdir(parents=True, exist_ok=True)
 
     def start_trace(
         self,
@@ -205,8 +205,19 @@ class Tracer:
             ensure_ascii=False,
         )
         with self._lock:
-            with self._output_path.open("a", encoding="utf-8") as file_handle:
+            with self._build_log_path().open("a", encoding="utf-8") as file_handle:
                 file_handle.write(serialized + "\n")
+
+    def _build_log_path(self) -> Path:
+        timestamp = datetime.now().strftime("%y%m%d%H")
+        return self._output_dir / f"{timestamp}_trace.jsonl"
+
+    @staticmethod
+    def _resolve_output_dir(output_path: str | Path) -> Path:
+        path = Path(output_path)
+        if path.suffix:
+            return path.parent if str(path.parent) != "." else Path(".")
+        return path
 
     def _normalize_attributes(self, attributes: dict[str, Any]) -> dict[str, Any]:
         return {
