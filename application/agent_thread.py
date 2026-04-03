@@ -188,7 +188,9 @@ class AgentThread(threading.Thread):
         return MessageFormatter(max_messages=self._llm_context_max_messages)
 
     def _build_tool_registry(self) -> ToolRegistry:
-        package_name = self._config.get("tools.package")
+        package_name = self._config.get("tools.package", "tools.impl")
+        if not isinstance(package_name, str) or not package_name.strip():
+            package_name = "tools.impl"
         module_names = self._config.get("tools.modules", [])
         if not isinstance(module_names, list):
             module_names = []

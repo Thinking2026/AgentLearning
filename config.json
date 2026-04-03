@@ -13,12 +13,12 @@
     }
   },
   "llm": {
-    "provider": "claude",
+    "provider": "deepseek",
     "enable_provider_fallback": true,
-    "model": "claude-3-5-sonnet-latest",
-    "base_url": "https://api.anthropic.com",
-    "timeout": 60.0,
-    "priority_chain": ["claude", "deepseek"],
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com/v1",
+    "timeout": 120.0,
+    "priority_chain": ["deepseek", "claude"],
     "context_trimming": {
       "enabled": true,
       "max_messages": 40
