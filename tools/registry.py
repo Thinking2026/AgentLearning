@@ -152,12 +152,13 @@ class ToolHandlerNode(BaseToolHandler):
     def process(self, tool_call: ToolCall) -> ToolResult:
         total_attempts = self._timeout_retry_max_attempts
         for attempt_idx in range(total_attempts):
+            attempt_no = attempt_idx + 1
             try:
                 result = self._tool.run(tool_call.arguments)
                 result.llm_raw_tool_call_id = tool_call.llm_raw_tool_call_id
                 return result
             except TimeoutError as exc:
-                if attempt_idx < total_attempts - 1:
+                if attempt_no < total_attempts:
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
@@ -172,7 +173,7 @@ class ToolHandlerNode(BaseToolHandler):
                     ),
                 )
             except AgentError as exc:
-                if "TIMEOUT" in exc.code and attempt_idx < total_attempts - 1:
+                if "TIMEOUT" in exc.code and attempt_no < total_attempts:
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
