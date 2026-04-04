@@ -1,3 +1,3 @@
-from .tracer import SpanHandle, Tracer
+from .tracer import Span, Tracer
 
-__all__ = ["Tracer", "SpanHandle"]
+__all__ = ["Tracer", "Span"]

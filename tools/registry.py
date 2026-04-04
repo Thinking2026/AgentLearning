@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from schemas import AgentError, ToolCall, ToolResult, build_error
-from tracing import SpanHandle, Tracer
+from tracing import Span, Tracer
 from tools.tools import BaseTool
 
 
@@ -84,10 +84,10 @@ class ToolRegistry:
         self,
         name: str,
         attributes: dict[str, Any] | None = None,
-    ) -> SpanHandle:
+    ) -> Span:
         if self._tracer is None:
-            return SpanHandle(None)
-        return self._tracer.start_span(name=name, kind="tool", attributes=attributes)
+            return Span(None)
+        return self._tracer.start_span(name=name, type="tool", attributes=attributes)
 
     @staticmethod
     def _normalize_retry_delays(

@@ -18,7 +18,7 @@ class SpanRecord:
     span_id: str
     parent_span_id: str | None
     name: str
-    kind: str
+    type: str
     start_time: str
     end_time: str | None = None
     status: str = "ok"
@@ -26,7 +26,7 @@ class SpanRecord:
     error: dict[str, Any] | None = None
 
 
-class SpanHandle:
+class Span:
     def __init__(
         self,
         tracer: "Tracer | None",
@@ -62,7 +62,7 @@ class SpanHandle:
         self._finished = True
         self._tracer._finish_span(self, status=status, error=error)
 
-    def __enter__(self) -> "SpanHandle":
+    def __enter__(self) -> "Span":
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -93,15 +93,15 @@ class Tracer:
         self,
         name: str,
         attributes: dict[str, Any] | None = None,
-    ) -> SpanHandle:
+    ) -> Span:
         if not self._enabled:
-            return SpanHandle(None)
+            return Span(None)
         trace_id = _new_id()
         self._local.trace_id = trace_id
         self._local.span_stack = []
         return self._start_span(
             name=name,
-            kind="session",
+            type="session",
             attributes=attributes,
             trace_id=trace_id,
             parent_span_id=None,
@@ -111,17 +111,17 @@ class Tracer:
     def start_span(
         self,
         name: str,
-        kind: str,
+        type: str,
         attributes: dict[str, Any] | None = None,
-    ) -> SpanHandle:
+    ) -> Span:
         if not self._enabled:
-            return SpanHandle(None)
+            return Span(None)
         trace_id = self.current_trace_id()
         if trace_id is None:
-            return SpanHandle(None)
+            return Span(None)
         return self._start_span(
             name=name,
-            kind=kind,
+            type=type,
             attributes=attributes,
             trace_id=trace_id,
             parent_span_id=self.current_span_id(),
@@ -139,29 +139,29 @@ class Tracer:
     def _start_span(
         self,
         name: str,
-        kind: str,
+        type: str,
         attributes: dict[str, Any] | None,
         trace_id: str,
         parent_span_id: str | None,
         is_root: bool = False,
-    ) -> SpanHandle:
+    ) -> Span:
         record = SpanRecord(
             trace_id=trace_id,
             span_id=_new_id(),
             parent_span_id=parent_span_id,
             name=name,
-            kind=kind,
+            type=type,
             start_time=timestamp_full(),
             attributes=self._normalize_attributes(attributes or {}),
         )
         stack = list(getattr(self._local, "span_stack", []))
         stack.append(record.span_id)
         self._local.span_stack = stack
-        return SpanHandle(self, record=record, is_root=is_root)
+        return Span(self, record=record, is_root=is_root)
 
     def _finish_span(
         self,
-        handle: SpanHandle,
+        handle: Span,
         status: str,
         error: BaseException | dict[str, Any] | None,
     ) -> None:
@@ -190,7 +190,7 @@ class Tracer:
                 "span_id": record.span_id,
                 "parent_span_id": record.parent_span_id,
                 "name": record.name,
-                "kind": record.kind,
+                "type": record.type,
                 "start_time": record.start_time,
                 "end_time": record.end_time,
                 "status": record.status,

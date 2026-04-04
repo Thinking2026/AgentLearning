@@ -22,7 +22,7 @@ from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
-from tracing import SpanHandle, Tracer
+from tracing import Span, Tracer
 from tools import ToolRegistry, create_default_tool_registry
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
@@ -60,7 +60,7 @@ class AgentThread(threading.Thread):
         self._llm_client: BaseLLMClient | None = None
         self._agent: Agent | None = None
         self._tracer: Tracer | None = None
-        self._session_span: SpanHandle | None = None
+        self._session_span: Span | None = None
         self._base_system_prompt = self._agent_context.get_system_prompt()
         self._load_agent_config()
         self._load_llm_config()
@@ -402,7 +402,7 @@ class AgentThread(threading.Thread):
             return
         with self._tracer.start_span(
             name="user.input",
-            kind="input",
+            type="input",
             attributes={
                 "input_type": input_type,
                 "role": user_message.role,

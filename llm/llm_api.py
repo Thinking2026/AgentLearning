@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 import time
 
 from schemas import AgentError, ChatMessage, LLMRequest, LLMResponse, build_error
-from tracing import SpanHandle, Tracer
+from tracing import Span, Tracer
 
 
 class BaseLLMClient(ABC):
@@ -18,11 +18,11 @@ class BaseLLMClient(ABC):
         self,
         name: str,
         attributes: dict | None = None,
-    ) -> SpanHandle:
+    ) -> Span:
         tracer = getattr(self, "_tracer", None)
         if tracer is None:
-            return SpanHandle(None)
-        return tracer.start_span(name=name, kind="llm", attributes=attributes)
+            return Span(None)
+        return tracer.start_span(name=name, type="llm", attributes=attributes)
 
     @abstractmethod
     def generate(self, request: LLMRequest) -> LLMResponse:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from rag.storage import BaseStorage
 from schemas import AgentError, build_error
-from tracing import SpanHandle, Tracer
+from tracing import Span, Tracer
 
 
 class RAGService:
@@ -23,10 +23,10 @@ class RAGService:
         self,
         name: str,
         attributes: dict | None = None,
-    ) -> SpanHandle:
+    ) -> Span:
         if self._tracer is None:
-            return SpanHandle(None)
-        return self._tracer.start_span(name=name, kind="rag", attributes=attributes)
+            return Span(None)
+        return self._tracer.start_span(name=name, type="rag", attributes=attributes)
 
     def retrieve(self, query: str, top_k: int = 3) -> list[dict]:
         with self._start_span(
