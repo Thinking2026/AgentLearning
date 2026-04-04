@@ -5,7 +5,8 @@ import inspect
 import pkgutil
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from types import ModuleType
+from typing import Any, Optional
 
 from schemas import AgentError, ToolCall, ToolResult, build_error
 from tracing import Span, Tracer
@@ -16,7 +17,7 @@ class ToolRegistry:
     def __init__(
         self,
         tools: list[BaseTool] | None = None,
-        timeout_retry_max_attempts: int = 4,
+        timeout_retry_max_attempts: int = 3,
         timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         tracer: Tracer | None = None,
     ) -> None:
@@ -94,7 +95,7 @@ class ToolRegistry:
         retry_delays: tuple[float, ...],
         max_attempts: int,
     ) -> tuple[float, ...]:
-        target_length = max(0, max_attempts - 1)
+        target_length = max(0, max_attempts)
         if target_length == 0:
             return ()
         delays = [delay for delay in retry_delays if delay > 0]
@@ -152,13 +153,12 @@ class ToolHandlerNode(BaseToolHandler):
     def process(self, tool_call: ToolCall) -> ToolResult:
         total_attempts = self._timeout_retry_max_attempts
         for attempt_idx in range(total_attempts):
-            attempt_no = attempt_idx + 1
             try:
                 result = self._tool.run(tool_call.arguments)
                 result.llm_raw_tool_call_id = tool_call.llm_raw_tool_call_id
                 return result
             except TimeoutError as exc:
-                if attempt_no < total_attempts:
+                if attempt_idx < total_attempts:
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
@@ -173,7 +173,7 @@ class ToolHandlerNode(BaseToolHandler):
                     ),
                 )
             except AgentError as exc:
-                if "TIMEOUT" in exc.code and attempt_no < total_attempts:
+                if "TIMEOUT" in exc.code and attempt_idx < total_attempts:
                     time.sleep(self._timeout_retry_delays[attempt_idx])
                     continue
                 return ToolResult(
@@ -302,7 +302,7 @@ def create_default_tool_registry(
     return registry
 
 
-def _safe_import(module_name: str):
+def _safe_import(module_name: str) -> Optional[ModuleType]:
     try:
         return importlib.import_module(module_name)
     except ModuleNotFoundError:
