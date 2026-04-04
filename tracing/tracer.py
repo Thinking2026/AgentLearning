@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from utils.timezone import now
+from utils.timezone import timestamp_full, strftime
 
 
 def _new_id() -> str:
@@ -151,7 +151,7 @@ class Tracer:
             parent_span_id=parent_span_id,
             name=name,
             kind=kind,
-            start_time=now(),
+            start_time=timestamp_full(),
             attributes=self._normalize_attributes(attributes or {}),
         )
         stack = list(getattr(self._local, "span_stack", []))
@@ -169,7 +169,7 @@ class Tracer:
         if record is None:
             return
         record.status = status
-        record.end_time = now()
+        record.end_time = timestamp_full()
         if error is not None:
             record.error = self._normalize_error(error)
         self._write_record(record)
