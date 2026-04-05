@@ -36,7 +36,7 @@ class BaseLLMClient(ABC):
 class DynamicLLMClient(BaseLLMClient):
     provider_name = "dynamic"
 
-    def __init__(self, registry: "LLMProviderRegistry", default_provider: str) -> None:
+    def __init__(self, registry: LLMProviderRegistry, default_provider: str) -> None:
         self._registry = registry
         self._provider_name = default_provider
 
@@ -58,7 +58,7 @@ class FallbackLLMClient(BaseLLMClient):
 
     def __init__(
         self,
-        registry: "LLMProviderRegistry",
+        registry: LLMProviderRegistry,
         provider_priority: list[str],
         max_attempts: int = 4,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
