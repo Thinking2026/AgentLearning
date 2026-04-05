@@ -54,6 +54,13 @@
     "chromadb": {
       "persist_directory": "",
       "collection_name": "agent_documents"
+    },
+    "mysql": {
+      "host": "",
+      "port": 3306,
+      "database": "",
+      "table_name": "documents",
+      "charset": "utf8mb4"
     }
   },
   "tools": {

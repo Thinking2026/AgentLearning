@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from typing import Callable
 
@@ -20,7 +21,7 @@ from llm import (
 )
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from rag.rag_service import RAGService
-from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
+from rag.storage import ChromaDBStorage, FileStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
 from tracing import Span, Tracer
 from tools import (
@@ -129,6 +130,19 @@ class AgentThread(threading.Thread):
             if not chromadb_storage.get_documents():
                 chromadb_storage.upsert_documents(file_storage.get_documents())
             storages.append(chromadb_storage)
+
+        mysql_host = str(self._config.get("storage.mysql.host", "")).strip()
+        if mysql_host:
+            mysql_storage = MySQLStorage(
+                host=mysql_host,
+                port=int(self._config.get("storage.mysql.port", 3306)),
+                user=os.getenv("MYSQL_USER", ""),
+                password=os.getenv("MYSQL_PASSWORD", ""),
+                database=str(self._config.get("storage.mysql.database", "")),
+                table_name=str(self._config.get("storage.mysql.table_name", "documents")),
+                charset=str(self._config.get("storage.mysql.charset", "utf8mb4")),
+            )
+            storages.append(mysql_storage)
 
         return StorageRegistry(storages)
 
