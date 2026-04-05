@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rag.storage.storage import BaseStorage
+from storage.storage import BaseStorage
 
 
 class FileStorage(BaseStorage):

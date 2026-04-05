@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from rag.storage.storage import BaseStorage
 from schemas import build_error
+from storage.storage import BaseStorage
 
 
 class MySQLStorage(BaseStorage):
@@ -51,6 +51,16 @@ class MySQLStorage(BaseStorage):
                 rows = cursor.fetchmany(row_limit)
         return list(rows)
 
+    def _connect(self):
+        return self._pymysql.connect(
+            host=self._host,
+            port=self._port,
+            user=self._user,
+            password=self._password,
+            database=self._database,
+            charset=self._charset,
+        )
+
     @staticmethod
     def _validate_select_statement(statement: str) -> str:
         normalized = statement.strip()
@@ -70,21 +80,6 @@ class MySQLStorage(BaseStorage):
         except (TypeError, ValueError):
             normalized = 100
         return max(1, min(normalized, 1000))
-
-    def _connect(self):
-        return self._pymysql.connect(
-            host=self._host,
-            port=self._port,
-            user=self._user,
-            password=self._password,
-            database=self._database,
-            charset=self._charset,
-        )
-
-    @staticmethod
-    def _quote_identifier(identifier: str) -> str:
-        escaped = identifier.replace("`", "``")
-        return f"`{escaped}`"
 
     @staticmethod
     def _require_pymysql():

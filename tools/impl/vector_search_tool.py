@@ -1,0 +1,101 @@
+from __future__ import annotations
+
+from typing import Any
+
+from schemas import AgentError, ToolResult, build_error
+from storage import BaseStorage
+from tools.tools import BaseTool, build_tool_output
+
+
+def build_vector_search_tool_name(backend_name: str) -> str:
+    return f"search_{backend_name}_vectors"
+
+
+def build_vector_search_tool_description(backend_name: str) -> str:
+    return (
+        f"Run semantic vector retrieval against the `{backend_name}` backend. "
+        "Use this when the answer depends on concept similarity, fuzzy wording, or paraphrased knowledge."
+    )
+
+
+class VectorSearchTool(BaseTool):
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Semantic search query text.",
+            },
+            "top_k": {
+                "type": "integer",
+                "description": "Maximum number of matches to return.",
+                "default": 3,
+                "minimum": 1,
+                "maximum": 20,
+            },
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        storage: BaseStorage,
+        backend_name: str,
+    ) -> None:
+        self.name = name
+        self.description = description
+        self._storage = storage
+        self._backend_name = backend_name
+
+    def run(self, arguments: dict[str, Any]) -> ToolResult:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            error = build_error("TOOL_ARGUMENT_ERROR", "Vector search tool requires a non-empty query.")
+            return self._error_result(error)
+
+        top_k = self._normalize_top_k(arguments.get("top_k", 3))
+        if isinstance(top_k, AgentError):
+            return self._error_result(top_k)
+
+        try:
+            matches = self._storage.search(query, top_k=top_k)
+        except AgentError as exc:
+            return self._error_result(exc)
+        except Exception as exc:
+            error = build_error("VECTOR_SEARCH_TOOL_ERROR", f"Vector search tool failed unexpectedly: {exc}")
+            return self._error_result(error)
+
+        return ToolResult(
+            output=build_tool_output(
+                success=True,
+                data={
+                    "backend": self._backend_name,
+                    "query": query,
+                    "top_k": top_k,
+                    "match_count": len(matches),
+                    "matches": matches,
+                },
+            ),
+            success=True,
+        )
+
+    @staticmethod
+    def _normalize_top_k(value: object) -> int | AgentError:
+        try:
+            top_k = int(value)
+        except (TypeError, ValueError):
+            return build_error("TOOL_ARGUMENT_ERROR", "Vector search tool top_k must be an integer.")
+        if top_k < 1 or top_k > 20:
+            return build_error("TOOL_ARGUMENT_ERROR", "Vector search tool top_k must be between 1 and 20.")
+        return top_k
+
+    @staticmethod
+    def _error_result(error: AgentError) -> ToolResult:
+        return ToolResult(
+            output=build_tool_output(success=False, error=error),
+            success=False,
+            error=error,
+        )

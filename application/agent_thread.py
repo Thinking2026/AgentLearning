@@ -20,18 +20,17 @@ from llm import (
     QwenLLMClient,
 )
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
-from rag.rag_service import RAGService
-from rag.storage import ChromaDBStorage, FileStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
+from storage import ChromaDBStorage, FileStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from tracing import Span, Tracer
 from tools import (
-    RAGTool,
     SQLQueryTool,
     ToolRegistry,
-    build_rag_tool_description,
-    build_rag_tool_name,
+    VectorSearchTool,
     build_sql_query_tool_description,
     build_sql_query_tool_name,
+    build_vector_search_tool_description,
+    build_vector_search_tool_name,
     create_default_tool_registry,
 )
 from utils.log import Logger, zap
@@ -212,15 +211,15 @@ class AgentThread(threading.Thread):
             timeout_retry_delays=self._tool_retry_delays,
             tracer=self._tracer,
         )
-        self._register_rag_tools(registry)
+        self._register_storage_tools(registry)
         return registry
 
-    def _register_rag_tools(self, registry: ToolRegistry) -> None:
+    def _register_storage_tools(self, registry: ToolRegistry) -> None:
         if self._storage_registry is None:
             return
 
-        rag_tool_lines: list[str] = []
         sql_tool_lines: list[str] = []
+        vector_tool_lines: list[str] = []
         for backend_name in self._storage_registry.list_backends():
             storage = self._storage_registry.get(backend_name)
             if backend_name in {"sqlite", "mysql"}:
@@ -236,26 +235,18 @@ class AgentThread(threading.Thread):
                 )
                 sql_tool_lines.append(f"- `{tool_name}`: {description}")
                 continue
-
-            rag_service = RAGService(storage, tracer=self._tracer)
-            tool_name = build_rag_tool_name(backend_name)
-            description = build_rag_tool_description(backend_name)
-            registry.register(
-                RAGTool(
-                    name=tool_name,
-                    description=description,
-                    rag_service=rag_service,
-                    backend_name=backend_name,
+            if backend_name == "chromadb":
+                tool_name = build_vector_search_tool_name(backend_name)
+                description = build_vector_search_tool_description(backend_name)
+                registry.register(
+                    VectorSearchTool(
+                        name=tool_name,
+                        description=description,
+                        storage=storage,
+                        backend_name=backend_name,
+                    )
                 )
-            )
-            rag_tool_lines.append(f"- `{tool_name}`: {description}")
-
-        if rag_tool_lines:
-            self._agent_context.append_system_prompt(
-                "\n\nKnowledge-base tool selection guide:\n"
-                "Choose the most relevant retrieval tool based on how each backend works.\n"
-                f"{'\n'.join(rag_tool_lines)}"
-            )
+                vector_tool_lines.append(f"- `{tool_name}`: {description}")
 
         if sql_tool_lines:
             self._agent_context.append_system_prompt(
@@ -264,6 +255,13 @@ class AgentThread(threading.Thread):
                 "Only send a single SELECT statement, keep values in params instead of string interpolation, "
                 "and inspect schema tables first when you are unsure about available columns.\n"
                 f"{'\n'.join(sql_tool_lines)}"
+            )
+
+        if vector_tool_lines:
+            self._agent_context.append_system_prompt(
+                "\n\nVector search tool guide:\n"
+                "Use vector search tools for semantic retrieval from indexed embeddings instead of exact SQL filtering.\n"
+                f"{'\n'.join(vector_tool_lines)}"
             )
 
     def _build_llm_client(self) -> BaseLLMClient:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from rag.storage import BaseStorage
 from schemas import AgentError, ToolResult, build_error
+from storage import BaseStorage
 from tools.tools import BaseTool, build_tool_output
 
 

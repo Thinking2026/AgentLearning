@@ -4,8 +4,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from rag.storage.storage import BaseStorage
 from schemas import build_error
+from storage.storage import BaseStorage
 
 
 class SQLiteStorage(BaseStorage):

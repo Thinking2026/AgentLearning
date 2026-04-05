@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from rag.storage.storage import BaseStorage
 from schemas import build_error
+from storage.storage import BaseStorage
 
 
 class StorageRegistry:

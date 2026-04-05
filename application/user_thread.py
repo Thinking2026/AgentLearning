@@ -221,8 +221,6 @@ class UserThread(threading.Thread):
         message_source = message.metadata.get("source")
         if message_source == "tool":
             return self._format_tool_message(message)
-        if message_source == "rag":
-            return self._format_rag_message(message)
         return f"Assistant: {message.content}"
 
     def _format_tool_message(self, message: ChatMessage) -> str:
@@ -236,19 +234,6 @@ class UserThread(threading.Thread):
             f"[tool name]: {tool_name} "
             f"[input parameters]: {serialized_parameters}, "
             f"[result]: {serialized_result}"
-        )
-
-    def _format_rag_message(self, message: ChatMessage) -> str:
-        source_name = str(message.metadata.get("rag_source", "unknown"))
-        query = str(message.metadata.get("query", ""))
-        result = message.metadata.get("rag_result", message.content)
-        serialized_result = json.dumps(result, ensure_ascii=False)
-        truncated_result = self._truncate_words(serialized_result, word_limit=32)
-        return (
-            "Assistant: search external datasource, "
-            f"[source]: {source_name}, "
-            f"[query]: {json.dumps(query, ensure_ascii=False)}, "
-            f"[result]: {truncated_result}"
         )
 
     @staticmethod
