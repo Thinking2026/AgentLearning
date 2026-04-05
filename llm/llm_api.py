@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import time
 
+from llm.registry import LLMProviderRegistry
 from schemas import AgentError, ChatMessage, LLMRequest, LLMResponse, build_error
 from tracing import Span, Tracer
 

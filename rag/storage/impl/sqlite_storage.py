@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from rag.storage.storage import BaseStorage
+from schemas import build_error
 
 
 class SQLiteStorage(BaseStorage):
@@ -13,36 +15,19 @@ class SQLiteStorage(BaseStorage):
         self._database_path = Path(database_path)
         self._initialize()
 
-    def search(self, query: str, top_k: int = 3) -> list[dict]:
-        like_query = f"%{query.strip()}%"
+    def query(
+        self,
+        statement: str,
+        params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None,
+        max_rows: int = 100,
+    ) -> list[dict[str, Any]]:
+        normalized_statement = self._validate_select_statement(statement)
+        row_limit = self._normalize_max_rows(max_rows)
         with sqlite3.connect(self._database_path) as connection:
-            rows = connection.execute(
-                """
-                SELECT id, title, content
-                FROM documents
-                WHERE title LIKE ? OR content LIKE ?
-                LIMIT ?
-                """,
-                (like_query, like_query, top_k),
-            ).fetchall()
-        return [
-            {"id": row[0], "title": row[1], "content": row[2]}
-            for row in rows
-        ]
-
-    def get_documents(self) -> list[dict]:
-        with sqlite3.connect(self._database_path) as connection:
-            rows = connection.execute(
-                """
-                SELECT id, title, content
-                FROM documents
-                ORDER BY id
-                """
-            ).fetchall()
-        return [
-            {"id": row[0], "title": row[1], "content": row[2]}
-            for row in rows
-        ]
+            connection.row_factory = sqlite3.Row
+            cursor = connection.execute(normalized_statement, params or ())
+            rows = cursor.fetchmany(row_limit)
+        return [dict(row) for row in rows]
 
     def seed(self, documents: list[dict]) -> None:
         with sqlite3.connect(self._database_path) as connection:
@@ -54,6 +39,26 @@ class SQLiteStorage(BaseStorage):
                 [(doc["id"], doc["title"], doc["content"]) for doc in documents],
             )
             connection.commit()
+
+    @staticmethod
+    def _validate_select_statement(statement: str) -> str:
+        normalized = statement.strip()
+        if not normalized:
+            raise build_error("STORAGE_QUERY_ERROR", "SQL query must not be empty.")
+        compact = normalized.rstrip().rstrip(";").strip()
+        if ";" in compact:
+            raise build_error("STORAGE_QUERY_ERROR", "Only a single SQL statement is allowed.")
+        if not compact.lower().startswith("select"):
+            raise build_error("STORAGE_QUERY_ERROR", "Only SELECT queries are allowed.")
+        return compact
+
+    @staticmethod
+    def _normalize_max_rows(max_rows: int) -> int:
+        try:
+            normalized = int(max_rows)
+        except (TypeError, ValueError):
+            normalized = 100
+        return max(1, min(normalized, 1000))
 
     def _initialize(self) -> None:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)

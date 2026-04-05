@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from rag.storage.storage import BaseStorage
 from schemas import build_error
 
@@ -35,37 +37,39 @@ class MySQLStorage(BaseStorage):
         self._charset = charset
         self._pymysql = self._require_pymysql()
 
-    def search(self, query: str, top_k: int = 3) -> list[dict]:
-        like_query = f"%{query.strip()}%"
-        sql = (
-            f"SELECT id, title, content "
-            f"FROM {self._quote_identifier(self._table_name)} "
-            f"WHERE title LIKE %s OR content LIKE %s "
-            f"LIMIT %s"
-        )
+    def query(
+        self,
+        statement: str,
+        params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None,
+        max_rows: int = 100,
+    ) -> list[dict[str, Any]]:
+        normalized_statement = self._validate_select_statement(statement)
+        row_limit = self._normalize_max_rows(max_rows)
         with self._connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(sql, (like_query, like_query, int(top_k)))
-                rows = cursor.fetchall()
-        return [
-            {"id": row[0], "title": row[1], "content": row[2]}
-            for row in rows
-        ]
+            with connection.cursor(self._pymysql.cursors.DictCursor) as cursor:
+                cursor.execute(normalized_statement, params or ())
+                rows = cursor.fetchmany(row_limit)
+        return list(rows)
 
-    def get_documents(self) -> list[dict]:
-        sql = (
-            f"SELECT id, title, content "
-            f"FROM {self._quote_identifier(self._table_name)} "
-            f"ORDER BY id"
-        )
-        with self._connect() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(sql)
-                rows = cursor.fetchall()
-        return [
-            {"id": row[0], "title": row[1], "content": row[2]}
-            for row in rows
-        ]
+    @staticmethod
+    def _validate_select_statement(statement: str) -> str:
+        normalized = statement.strip()
+        if not normalized:
+            raise build_error("STORAGE_QUERY_ERROR", "SQL query must not be empty.")
+        compact = normalized.rstrip().rstrip(";").strip()
+        if ";" in compact:
+            raise build_error("STORAGE_QUERY_ERROR", "Only a single SQL statement is allowed.")
+        if not compact.lower().startswith("select"):
+            raise build_error("STORAGE_QUERY_ERROR", "Only SELECT queries are allowed.")
+        return compact
+
+    @staticmethod
+    def _normalize_max_rows(max_rows: int) -> int:
+        try:
+            normalized = int(max_rows)
+        except (TypeError, ValueError):
+            normalized = 100
+        return max(1, min(normalized, 1000))
 
     def _connect(self):
         return self._pymysql.connect(

@@ -26,9 +26,12 @@ from schemas import AgentError, ChatMessage, SessionStatus, build_error
 from tracing import Span, Tracer
 from tools import (
     RAGTool,
+    SQLQueryTool,
     ToolRegistry,
     build_rag_tool_description,
     build_rag_tool_name,
+    build_sql_query_tool_description,
+    build_sql_query_tool_name,
     create_default_tool_registry,
 )
 from utils.log import Logger, zap
@@ -216,9 +219,24 @@ class AgentThread(threading.Thread):
         if self._storage_registry is None:
             return
 
-        tool_lines: list[str] = []
+        rag_tool_lines: list[str] = []
+        sql_tool_lines: list[str] = []
         for backend_name in self._storage_registry.list_backends():
             storage = self._storage_registry.get(backend_name)
+            if backend_name in {"sqlite", "mysql"}:
+                tool_name = build_sql_query_tool_name(backend_name)
+                description = build_sql_query_tool_description(backend_name)
+                registry.register(
+                    SQLQueryTool(
+                        name=tool_name,
+                        description=description,
+                        storage=storage,
+                        backend_name=backend_name,
+                    )
+                )
+                sql_tool_lines.append(f"- `{tool_name}`: {description}")
+                continue
+
             rag_service = RAGService(storage, tracer=self._tracer)
             tool_name = build_rag_tool_name(backend_name)
             description = build_rag_tool_description(backend_name)
@@ -230,13 +248,22 @@ class AgentThread(threading.Thread):
                     backend_name=backend_name,
                 )
             )
-            tool_lines.append(f"- `{tool_name}`: {description}")
+            rag_tool_lines.append(f"- `{tool_name}`: {description}")
 
-        if tool_lines:
+        if rag_tool_lines:
             self._agent_context.append_system_prompt(
                 "\n\nKnowledge-base tool selection guide:\n"
                 "Choose the most relevant retrieval tool based on how each backend works.\n"
-                f"{'\n'.join(tool_lines)}"
+                f"{'\n'.join(rag_tool_lines)}"
+            )
+
+        if sql_tool_lines:
+            self._agent_context.append_system_prompt(
+                "\n\nRelational query tool guide:\n"
+                "Use relational query tools for SQLite or MySQL tables with custom schemas.\n"
+                "Only send a single SELECT statement, keep values in params instead of string interpolation, "
+                "and inspect schema tables first when you are unsure about available columns.\n"
+                f"{'\n'.join(sql_tool_lines)}"
             )
 
     def _build_llm_client(self) -> BaseLLMClient:
