@@ -5,6 +5,32 @@ from rag.rag_service import RAGService
 from tools.tools import BaseTool, build_tool_output
 
 
+def build_rag_tool_name(backend_name: str) -> str:
+    return f"search_{backend_name}_knowledge"
+
+
+def build_rag_tool_description(backend_name: str) -> str:
+    if backend_name == "sqlite":
+        return (
+            "Search the SQLite knowledge store. Prefer this for keyword lookup, exact phrases, "
+            "and structured text where literal matches are likely to work well."
+        )
+    if backend_name == "chromadb":
+        return (
+            "Search the vector knowledge store. Prefer this for semantic retrieval, fuzzy wording, "
+            "paraphrases, or conceptually similar content."
+        )
+    if backend_name == "file":
+        return (
+            "Search the local file-based knowledge store. Prefer this for lightweight static notes, "
+            "seed documents, and simple background lookup."
+        )
+    return (
+        f"Search the `{backend_name}` knowledge store for relevant background information. "
+        "Use this when the answer depends on stored facts from that backend."
+    )
+
+
 class RAGTool(BaseTool):
     parameters = {
         "type": "object",

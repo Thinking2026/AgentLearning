@@ -23,7 +23,13 @@ from rag.rag_service import RAGService
 from rag.storage import ChromaDBStorage, FileStorage, SQLiteStorage, StorageRegistry
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
 from tracing import Span, Tracer
-from tools import RAGTool, ToolRegistry, create_default_tool_registry
+from tools import (
+    RAGTool,
+    ToolRegistry,
+    build_rag_tool_description,
+    build_rag_tool_name,
+    create_default_tool_registry,
+)
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
@@ -200,8 +206,8 @@ class AgentThread(threading.Thread):
         for backend_name in self._storage_registry.list_backends():
             storage = self._storage_registry.get(backend_name)
             rag_service = RAGService(storage, tracer=self._tracer)
-            tool_name = self._build_rag_tool_name(backend_name)
-            description = self._build_rag_tool_description(backend_name)
+            tool_name = build_rag_tool_name(backend_name)
+            description = build_rag_tool_description(backend_name)
             registry.register(
                 RAGTool(
                     name=tool_name,
@@ -218,32 +224,6 @@ class AgentThread(threading.Thread):
                 "Choose the most relevant retrieval tool based on how each backend works.\n"
                 f"{'\n'.join(tool_lines)}"
             )
-
-    @staticmethod
-    def _build_rag_tool_name(backend_name: str) -> str:
-        return f"search_{backend_name}_knowledge"
-
-    @staticmethod
-    def _build_rag_tool_description(backend_name: str) -> str:
-        if backend_name == "sqlite":
-            return (
-                "Search the SQLite knowledge store. Prefer this for keyword lookup, exact phrases, "
-                "and structured text where literal matches are likely to work well."
-            )
-        if backend_name == "chromadb":
-            return (
-                "Search the vector knowledge store. Prefer this for semantic retrieval, fuzzy wording, "
-                "paraphrases, or conceptually similar content."
-            )
-        if backend_name == "file":
-            return (
-                "Search the local file-based knowledge store. Prefer this for lightweight static notes, "
-                "seed documents, and simple background lookup."
-            )
-        return (
-            f"Search the `{backend_name}` knowledge store for relevant background information. "
-            "Use this when the answer depends on stored facts from that backend."
-        )
 
     def _build_llm_client(self) -> BaseLLMClient:
         registry = LLMProviderRegistry()

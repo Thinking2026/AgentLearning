@@ -1,6 +1,6 @@
 from .impl.current_time_tool import CurrentTimeTool
 from .impl.file_tool import FileTool
-from .impl.rag_tool import RAGTool
+from .impl.rag_tool import RAGTool, build_rag_tool_description, build_rag_tool_name
 from .impl.shell_tool import ShellTool
 from .registry import ToolRegistry, create_default_tool_registry, discover_tools
 from .tools import BaseTool
@@ -11,6 +11,8 @@ __all__ = [
     "FileTool",
     "RAGTool",
     "ShellTool",
+    "build_rag_tool_description",
+    "build_rag_tool_name",
     "ToolRegistry",
     "create_default_tool_registry",
     "discover_tools",
