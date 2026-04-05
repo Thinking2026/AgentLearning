@@ -14,4 +14,7 @@ dependencies = []
 chromadb = [
     "chromadb>=0.5,<1.0",
 ]
+excel = [
+    "openpyxl>=3.1,<4.0",
+]
 dev = []
