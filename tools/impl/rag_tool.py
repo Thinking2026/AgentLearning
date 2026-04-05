@@ -6,11 +6,6 @@ from tools.tools import BaseTool, build_tool_output
 
 
 class RAGTool(BaseTool):
-    name = "rag_search"
-    description = (
-        "Search the external knowledge base for relevant background information. "
-        "Use this tool when the answer depends on facts that may exist in the configured RAG storage."
-    )
     parameters = {
         "type": "object",
         "properties": {
@@ -30,8 +25,17 @@ class RAGTool(BaseTool):
         "additionalProperties": False,
     }
 
-    def __init__(self, rag_service: RAGService) -> None:
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        rag_service: RAGService,
+        backend_name: str,
+    ) -> None:
+        self.name = name
+        self.description = description
         self._rag_service = rag_service
+        self._backend_name = backend_name
 
     def run(self, arguments: dict[str, object]) -> ToolResult:
         query = str(arguments.get("query", "")).strip()
@@ -74,6 +78,7 @@ class RAGTool(BaseTool):
                     "query": query,
                     "top_k": top_k,
                     "match_count": len(matches),
+                    "backend": self._backend_name,
                     "source": self._rag_service.get_source_name(),
                     "matches": matches,
                 },

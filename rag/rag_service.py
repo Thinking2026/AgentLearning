@@ -17,7 +17,7 @@ class RAGService:
         self._tracer = tracer
 
     def get_source_name(self) -> str:
-        return self._storage.__class__.__name__
+        return self._storage.backend_name
 
     def _start_span(
         self,
@@ -34,7 +34,7 @@ class RAGService:
             attributes={
                 "query": query,
                 "top_k": top_k,
-                "storage_backend": self._storage.__class__.__name__,
+                "storage_backend": self._storage.backend_name,
             },
         ) as span:
             matches = self._retrieve_matches(query, top_k=top_k)

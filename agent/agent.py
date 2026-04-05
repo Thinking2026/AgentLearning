@@ -7,7 +7,6 @@ from context.agent_context import AgentContext
 from context.formatter import MessageFormatter
 from context.session import Session
 from llm import BaseLLMClient
-from rag.rag_service import RAGService
 from schemas import AgentError, ChatMessage, SessionStatus
 from tools import ToolRegistry
 
@@ -27,7 +26,6 @@ class Agent(ABC):
         message_formatter: MessageFormatter,
         llm_client: BaseLLMClient,
         tool_registry: ToolRegistry,
-        rag_service: RAGService,
         max_tool_iterations: int,
     ) -> None:
         self._agent_context = agent_context
@@ -35,7 +33,6 @@ class Agent(ABC):
         self._message_formatter = message_formatter
         self._llm_client = llm_client
         self._tool_registry = tool_registry
-        self._rag_service = rag_service
         self._max_tool_iterations = max_tool_iterations
         self._cur_react_attempt_iterations = 0
 

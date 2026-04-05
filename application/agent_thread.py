@@ -53,8 +53,6 @@ class AgentThread(threading.Thread):
             2.0,
         )
         self._storage_registry: StorageRegistry | None = None
-        self._storage = None
-        self._rag_service: RAGService | None = None
         self._message_formatter: MessageFormatter | None = None
         self._tool_registry: ToolRegistry | None = None
         self._llm_client: BaseLLMClient | None = None
@@ -69,10 +67,9 @@ class AgentThread(threading.Thread):
         try:
             self._tracer = self._build_tracer()
             self._storage_registry = self._build_storage_registry()
-            self._storage = self._build_storage()
-            self._rag_service = self._build_rag_service()
             self._message_formatter = self._build_message_formatter()
             self._tool_registry = self._build_tool_registry()
+            self._base_system_prompt = self._agent_context.get_system_prompt()
             self._llm_client = self._build_llm_client()
             self._agent = self._build_agent()
         except Exception:
@@ -104,8 +101,6 @@ class AgentThread(threading.Thread):
         self._llm_client = None
         self._tool_registry = None
         self._message_formatter = None
-        self._rag_service = None
-        self._storage = None
         self._storage_registry = None
         self._session_span = None
 
@@ -130,13 +125,6 @@ class AgentThread(threading.Thread):
             storages.append(chromadb_storage)
 
         return StorageRegistry(storages)
-
-    def _build_storage(self):
-        backend_name = self._config.get("storage.backend", "file")
-        return self._storage_registry.get(backend_name)
-
-    def _build_rag_service(self) -> RAGService:
-        return RAGService(self._storage, tracer=self._tracer)
 
     def _load_tracing_config(self) -> None:
         self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
@@ -201,9 +189,61 @@ class AgentThread(threading.Thread):
             timeout_retry_delays=self._tool_retry_delays,
             tracer=self._tracer,
         )
-        if self._rag_service is not None:
-            registry.register(RAGTool(self._rag_service))
+        self._register_rag_tools(registry)
         return registry
+
+    def _register_rag_tools(self, registry: ToolRegistry) -> None:
+        if self._storage_registry is None:
+            return
+
+        tool_lines: list[str] = []
+        for backend_name in self._storage_registry.list_backends():
+            storage = self._storage_registry.get(backend_name)
+            rag_service = RAGService(storage, tracer=self._tracer)
+            tool_name = self._build_rag_tool_name(backend_name)
+            description = self._build_rag_tool_description(backend_name)
+            registry.register(
+                RAGTool(
+                    name=tool_name,
+                    description=description,
+                    rag_service=rag_service,
+                    backend_name=backend_name,
+                )
+            )
+            tool_lines.append(f"- `{tool_name}`: {description}")
+
+        if tool_lines:
+            self._agent_context.append_system_prompt(
+                "\n\nKnowledge-base tool selection guide:\n"
+                "Choose the most relevant retrieval tool based on how each backend works.\n"
+                f"{'\n'.join(tool_lines)}"
+            )
+
+    @staticmethod
+    def _build_rag_tool_name(backend_name: str) -> str:
+        return f"search_{backend_name}_knowledge"
+
+    @staticmethod
+    def _build_rag_tool_description(backend_name: str) -> str:
+        if backend_name == "sqlite":
+            return (
+                "Search the SQLite knowledge store. Prefer this for keyword lookup, exact phrases, "
+                "and structured text where literal matches are likely to work well."
+            )
+        if backend_name == "chromadb":
+            return (
+                "Search the vector knowledge store. Prefer this for semantic retrieval, fuzzy wording, "
+                "paraphrases, or conceptually similar content."
+            )
+        if backend_name == "file":
+            return (
+                "Search the local file-based knowledge store. Prefer this for lightweight static notes, "
+                "seed documents, and simple background lookup."
+            )
+        return (
+            f"Search the `{backend_name}` knowledge store for relevant background information. "
+            "Use this when the answer depends on stored facts from that backend."
+        )
 
     def _build_llm_client(self) -> BaseLLMClient:
         registry = LLMProviderRegistry()
@@ -290,7 +330,6 @@ class AgentThread(threading.Thread):
             message_formatter=self._message_formatter,
             llm_client=self._llm_client,
             tool_registry=self._tool_registry,
-            rag_service=self._rag_service,
             max_tool_iterations=self._max_tool_iterations,
         )
 
