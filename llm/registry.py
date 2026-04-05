@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
-from llm.llm_api import BaseLLMClient
 from schemas import build_error
+
+if TYPE_CHECKING:
+    from llm.llm_api import BaseLLMClient
 
 
 class LLMProviderRegistry:
