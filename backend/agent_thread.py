@@ -21,7 +21,8 @@ from llm import (
 )
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import AgentError, ChatMessage, SessionStatus, build_error
-from storage import ChromaDBStorage, FileStorage, MySQLStorage, SQLiteStorage, StorageRegistry
+from storage import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
+from storage.bootstrap_documents import load_seed_documents
 from tracing import Span, Tracer
 from tools import (
     SQLQueryTool,
@@ -114,13 +115,13 @@ class AgentThread(threading.Thread):
         self._session_span = None
 
     def _build_storage_registry(self) -> StorageRegistry:
-        file_storage = FileStorage(
+        seed_documents = load_seed_documents(
             self._config.get("storage.file.path", "runtime/nanoagent_soul.json")
         )
         sqlite_path = self._config.get("storage.sqlite.path", "runtime/nanoagent_local_storage.db")
         sqlite_storage = SQLiteStorage(sqlite_path)
-        sqlite_storage.seed(file_storage.get_documents())
-        storages = [file_storage, sqlite_storage]
+        sqlite_storage.seed(seed_documents)
+        storages = [sqlite_storage]
 
         chromadb_path = self._config.get("storage.chromadb.persist_directory")
         if chromadb_path:
@@ -129,7 +130,7 @@ class AgentThread(threading.Thread):
                 collection_name=self._config.get("storage.chromadb.collection_name", "nanoagent_collection"),
             )
             if not chromadb_storage.get_documents():
-                chromadb_storage.upsert_documents(file_storage.get_documents())
+                chromadb_storage.upsert_documents(seed_documents)
             storages.append(chromadb_storage)
 
         mysql_host = str(self._config.get("storage.mysql.host", "")).strip()

@@ -3,29 +3,63 @@ from __future__ import annotations
 from abc import ABC
 from typing import Any
 
+from storage.contracts import (
+    KeyValueGetRequest,
+    KeyValueSetRequest,
+    SQLQueryRequest,
+    VectorSearchRequest,
+)
+
 
 class BaseStorage(ABC):
     backend_name: str = "base"
 
-    def search(self, query: str, top_k: int = 3) -> list[dict]:
+    def capabilities(self) -> set[str]:
+        return set()
+
+    def describe_schema(self) -> dict[str, Any]:
+        return {
+            "backend_name": self.backend_name,
+            "capabilities": sorted(self.capabilities()),
+        }
+
+    def close(self) -> None:
+        return None
+
+
+class RelationalStorage(BaseStorage):
+    def query(self, request: SQLQueryRequest) -> list[dict[str, Any]]:
         raise NotImplementedError(
-            f"{self.__class__.__name__} does not support document-style search."
+            f"{self.__class__.__name__} does not support relational queries."
         )
 
+
+class VectorStorage(BaseStorage):
+    def search(self, request: VectorSearchRequest) -> list[dict[str, Any]]:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support vector search."
+        )
+
+
+class KeyValueStorage(BaseStorage):
+    def get(self, request: KeyValueGetRequest) -> dict[str, Any] | None:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support key-value reads."
+        )
+
+    def set(self, request: KeyValueSetRequest) -> None:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support key-value writes."
+        )
+
+    def delete(self, key: str) -> bool:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support key-value deletes."
+        )
+
+
+class DocumentStorage(BaseStorage):
     def get_documents(self) -> list[dict]:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support document export."
         )
-
-    def query(
-        self,
-        statement: str,
-        params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None,
-        max_rows: int = 100,
-    ) -> list[dict[str, Any]]:
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support generic SQL queries."
-        )
-
-    def close(self) -> None:
-        return None

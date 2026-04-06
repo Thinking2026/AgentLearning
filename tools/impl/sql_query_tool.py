@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from schemas import AgentError, ToolResult, build_error
-from storage import BaseStorage
+from storage import RelationalStorage, SQLQueryRequest
 from tools.tools import BaseTool, build_tool_output
 
 
@@ -67,7 +67,7 @@ class SQLQueryTool(BaseTool):
         self,
         name: str,
         description: str,
-        storage: BaseStorage,
+        storage: RelationalStorage,
         backend_name: str,
     ) -> None:
         self.name = name
@@ -92,9 +92,11 @@ class SQLQueryTool(BaseTool):
 
         try:
             rows = self._storage.query(
-                statement=statement,
-                params=normalized_params,
-                max_rows=max_rows,
+                SQLQueryRequest(
+                    statement=statement,
+                    params=normalized_params,
+                    max_rows=max_rows,
+                )
             )
         except AgentError as exc:
             return self._error_result(exc)

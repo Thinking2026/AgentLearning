@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from schemas import build_error
-from storage.storage import BaseStorage
+from storage.contracts import VectorSearchRequest
+from storage.storage import DocumentStorage, VectorStorage
 
 
-class ChromaDBStorage(BaseStorage):
+class ChromaDBStorage(VectorStorage, DocumentStorage):
     backend_name = "chromadb"
 
     def __init__(
@@ -23,19 +24,33 @@ class ChromaDBStorage(BaseStorage):
         self._client = chromadb.PersistentClient(path=persist_directory)
         self._collection = self._client.get_or_create_collection(name=collection_name)
 
-    def search(self, query: str, top_k: int = 3) -> list[dict]:
+    def capabilities(self) -> set[str]:
+        return {"vector_search", "document_list", "document_upsert"}
+
+    def describe_schema(self) -> dict[str, object]:
+        return {
+            "backend_name": self.backend_name,
+            "capabilities": sorted(self.capabilities()),
+            "collection_name": self._collection.name,
+        }
+
+    def search(self, request: VectorSearchRequest) -> list[dict]:
         result = self._collection.query(
-            query_texts=[query],
-            n_results=top_k,
+            query_texts=[request.query],
+            n_results=request.top_k,
+            where=request.filters or None,
         )
         ids = result.get("ids", [[]])[0]
         documents = result.get("documents", [[]])[0]
         metadatas = result.get("metadatas", [[]])[0]
+        distances = result.get("distances", [[]])[0]
         return [
             {
                 "id": ids[index],
+                "score": None if index >= len(distances) else distances[index],
                 "title": (metadatas[index] or {}).get("title", ids[index]),
                 "content": documents[index],
+                "metadata": metadatas[index] or {},
             }
             for index in range(len(ids))
         ]

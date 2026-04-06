@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from schemas import AgentError, ToolResult, build_error
-from storage import BaseStorage
+from storage import VectorSearchRequest, VectorStorage
 from tools.tools import BaseTool, build_tool_output
 
 
@@ -42,7 +42,7 @@ class VectorSearchTool(BaseTool):
         self,
         name: str,
         description: str,
-        storage: BaseStorage,
+        storage: VectorStorage,
         backend_name: str,
     ) -> None:
         self.name = name
@@ -61,7 +61,12 @@ class VectorSearchTool(BaseTool):
             return self._error_result(top_k)
 
         try:
-            matches = self._storage.search(query, top_k=top_k)
+            matches = self._storage.search(
+                VectorSearchRequest(
+                    query=query,
+                    top_k=top_k,
+                )
+            )
         except AgentError as exc:
             return self._error_result(exc)
         except Exception as exc:

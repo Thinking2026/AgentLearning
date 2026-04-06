@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
-
 from schemas import build_error
-from storage.storage import BaseStorage
+from storage.contracts import SQLQueryRequest
+from storage.storage import RelationalStorage
 
 
-class MySQLStorage(BaseStorage):
+class MySQLStorage(RelationalStorage):
     backend_name = "mysql"
 
     def __init__(
@@ -37,17 +36,35 @@ class MySQLStorage(BaseStorage):
         self._charset = charset
         self._pymysql = self._require_pymysql()
 
-    def query(
-        self,
-        statement: str,
-        params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None,
-        max_rows: int = 100,
-    ) -> list[dict[str, Any]]:
-        normalized_statement = self._validate_select_statement(statement)
-        row_limit = self._normalize_max_rows(max_rows)
+    def capabilities(self) -> set[str]:
+        return {"sql_query"}
+
+    def describe_schema(self) -> dict[str, object]:
+        tables = self.query(
+            SQLQueryRequest(
+                statement=(
+                    "SELECT table_name "
+                    "FROM information_schema.tables "
+                    "WHERE table_schema = %s "
+                    "ORDER BY table_name"
+                ),
+                params=(self._database,),
+                max_rows=500,
+            )
+        )
+        return {
+            "backend_name": self.backend_name,
+            "capabilities": sorted(self.capabilities()),
+            "database": self._database,
+            "tables": tables,
+        }
+
+    def query(self, request: SQLQueryRequest) -> list[dict[str, object]]:
+        normalized_statement = self._validate_select_statement(request.statement)
+        row_limit = self._normalize_max_rows(request.max_rows)
         with self._connect() as connection:
             with connection.cursor(self._pymysql.cursors.DictCursor) as cursor:
-                cursor.execute(normalized_statement, params or ())
+                cursor.execute(normalized_statement, request.params or ())
                 rows = cursor.fetchmany(row_limit)
         return list(rows)
 
