@@ -3,8 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from schemas import build_error
-from storage.contracts import SQLQueryRequest
+from schemas import SQLQueryRequest, build_error
 from storage.storage import RelationalStorage
 
 

@@ -1,9 +1,9 @@
-from .contracts import KeyValueGetRequest, KeyValueSetRequest, SQLQueryRequest, VectorSearchRequest
 from .bootstrap_documents import default_seed_documents, load_seed_documents, write_seed_documents
 from .impl.chromadb_storage import ChromaDBStorage
 from .impl.mysql_storage import MySQLStorage
 from .impl.sqlite_storage import SQLiteStorage
 from .registry import StorageRegistry
+from schemas import KeyValueGetRequest, KeyValueSetRequest, SQLQueryRequest, VectorSearchRequest
 from .storage import BaseStorage, DocumentStorage, KeyValueStorage, RelationalStorage, VectorStorage
 
 __all__ = [
