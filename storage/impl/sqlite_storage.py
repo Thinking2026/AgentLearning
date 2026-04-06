@@ -12,7 +12,7 @@ class SQLiteStorage(RelationalStorage):
 
     def __init__(self, database_path: str) -> None:
         self._database_path = Path(database_path)
-        self._initialize()
+        self._initialize()#TODO 考虑删掉
 
     def capabilities(self) -> set[str]:
         return {"sql_query", "document_seed"}
