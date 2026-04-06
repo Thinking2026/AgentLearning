@@ -114,7 +114,6 @@ class AgentThread(threading.Thread):
         self._session_span = None
 
     def _build_storage_registry(self) -> StorageRegistry:
-        #TODO 暂时还用不上这里，先把桩代码写了，后续完善
         file_storage = FileStorage(
             self._config.get("storage.file.path", "runtime/nanoagent_soul.json")
         )
@@ -373,8 +372,8 @@ class AgentThread(threading.Thread):
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
-                if incoming_message is None and session_status == SessionStatus.NEW_TASK: #排除法，此时说明收到的停止信号了
-                    continue  # No new user message, loop back and check stop condition or wait again   
+                if incoming_message is None and session_status == SessionStatus.NEW_TASK:
+                    continue
                 if session_status == SessionStatus.NEW_TASK and incoming_message is not None:
                     self._start_session_trace(incoming_message)
                     self._record_user_input_trace(incoming_message, input_type="question")
@@ -398,6 +397,7 @@ class AgentThread(threading.Thread):
                     for message in execution_result.user_messages:
                         self._agent_to_user_queue.send_agent_message(message)
                     if execution_result.error is not None:
+                        self._finish_session_trace(error=execution_result.error)
                         self._logger.error(
                             "Agent execution returned an internal error",
                             zap.any("trace_id", None if self._tracer is None else self._tracer.current_trace_id()),
@@ -475,7 +475,7 @@ class AgentThread(threading.Thread):
     def _wait_for_user_message(
         self,
         session_status: SessionStatus,
-    ) -> ChatMessage | None: #两种情况下会返回None：1. 收到停止信号 2. 任务进行中但没有收到用户消息（此时agent可以继续执行之前的任务）
+    ) -> ChatMessage | None:
         while self._is_running():
             user_message = self._user_to_agent_queue.get_user_message(
                 timeout=self._user_message_wait_timeout_seconds

@@ -1,5 +1,5 @@
-from .agent_thread import AgentThread
 from .application import AgentApplication
-from .user_thread import UserThread
+from CLI import UserThread
+from backend import AgentThread
 
 __all__ = ["AgentApplication", "AgentThread", "UserThread"]

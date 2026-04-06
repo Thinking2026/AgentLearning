@@ -69,6 +69,7 @@
 - 用conversation history统一所有外部调用过程
 - 引入checkpoint机制
 - 通过缓存直接返回答案
+- 将Agent框架分为问题域，约束域和框架域
   
 ## TODO List
 - [TODO]目前的实现感觉只适合一个任务，如果做成个人住手，要处理多会话，以及上下文统一入口

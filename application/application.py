@@ -9,8 +9,8 @@ from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
-from .agent_thread import AgentThread
-from .user_thread import UserThread
+from CLI import UserThread
+from backend import AgentThread
 
 
 class AgentApplication:
