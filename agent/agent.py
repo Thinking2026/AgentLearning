@@ -40,9 +40,12 @@ class Agent(ABC):
         self._cur_react_attempt_iterations = 0
         self._session.begin()
 
-    def reset(self) -> None:
+    def reset(self, archive_current_task: bool = True) -> None:
         self._cur_react_attempt_iterations = 0
-        self._agent_context.archive_current_task()
+        if archive_current_task:
+            self._agent_context.archive_current_task()
+        else:
+            self._agent_context.clear_current_task()
         self._session.reset()
 
     def release_resources(self) -> None:

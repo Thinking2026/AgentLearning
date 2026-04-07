@@ -1,6 +1,6 @@
 {
   "task": {
-    "name": "external_sorting"
+    "name": "engineering_estimation"
   },
   "agent": {
     "max_tool_iterations": 10,
@@ -49,7 +49,7 @@
       "path": "runtime/agent_documents.json"
     },
     "sqlite": {
-      "path": "runtime/agent_storage.db"
+      "path": "runtime/material_price.db"
     },
     "chromadb": {
       "persist_directory": "",

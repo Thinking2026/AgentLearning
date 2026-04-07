@@ -139,15 +139,15 @@ class ReActAgent(Agent):
                 tool_call.arguments,
                 tool_call.llm_raw_tool_call_id,
             )
-            if not result.success:
-                return self._build_tool_error_result(tool_call.name, result)
-
             observation = self._message_formatter.format_tool_observation(
                 tool_name=tool_call.name,
                 output=result.output,
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             )
             self._agent_context.append_conversation_message(observation)
+            if not result.success:
+                return self._build_tool_error_result(tool_call.name, result)
+
             intermediate_messages.append(
                 ChatMessage(
                     role="assistant",

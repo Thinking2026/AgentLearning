@@ -418,7 +418,11 @@ class AgentThread(threading.Thread):
                                 )
                             )
                         self._finish_session_trace(error=execution_result.error)
-                        self.reset()
+                        if self._agent is not None:
+                            self._agent.reset(
+                                archive_current_task=execution_result.error is None
+                            )
+                        self._restore_base_system_prompt()
                 except Exception as exc:
                     normalized_error = self._normalize_error(exc)
                     self._finish_session_trace(error=normalized_error)

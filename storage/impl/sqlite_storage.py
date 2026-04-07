@@ -9,6 +9,14 @@ from storage.storage import RelationalStorage
 
 class SQLiteStorage(RelationalStorage):
     backend_name = "sqlite"
+    _READ_ONLY_PRAGMA_PREFIXES = (
+        "pragma table_info(",
+        "pragma table_xinfo(",
+        "pragma index_list(",
+        "pragma index_info(",
+        "pragma index_xinfo(",
+        "pragma foreign_key_list(",
+    )
 
     def __init__(self, database_path: str) -> None:
         self._database_path = Path(database_path)
@@ -64,9 +72,15 @@ class SQLiteStorage(RelationalStorage):
         compact = normalized.rstrip().rstrip(";").strip()
         if ";" in compact:
             raise build_error("STORAGE_QUERY_ERROR", "Only a single SQL statement is allowed.")
-        if not compact.lower().startswith("select"):
-            raise build_error("STORAGE_QUERY_ERROR", "Only SELECT queries are allowed.")
-        return compact
+        lower_compact = compact.lower()
+        if lower_compact.startswith("select"):
+            return compact
+        if lower_compact.startswith(SQLiteStorage._READ_ONLY_PRAGMA_PREFIXES):
+            return compact
+        raise build_error(
+            "STORAGE_QUERY_ERROR",
+            "Only read-only SELECT queries and safe schema PRAGMA queries are allowed.",
+        )
 
     @staticmethod
     def _normalize_max_rows(max_rows: int) -> int:
