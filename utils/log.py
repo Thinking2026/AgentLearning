@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from utils.timezone import strftime
+from utils.timezone import log_timestamp, strftime
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,7 @@ class Logger:
         description: str,
         entries: list[tuple[str, Any]],
     ) -> str:
-        parts = [f"[{level}]: {description}"]
+        parts = [f"{log_timestamp()} [{level}]: {description}"]
         for key, value in entries:
             parts.append(f"[{key}]: {value}")
         return ", ".join(parts)

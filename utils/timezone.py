@@ -74,3 +74,32 @@ def timestamp_date() -> str:
         格式为 YYYY-MM-DD 的日期字符串
     """
     return strftime("%Y-%m-%d")
+
+
+def timezone_label() -> str:
+    """获取当前配置时区的人类可读标签。
+
+    Returns:
+        形如 UTC+8 / UTC-5 / UTC
+    """
+    offset = now().utcoffset() or timedelta()
+    total_minutes = int(offset.total_seconds() // 60)
+    if total_minutes == 0:
+        return "UTC"
+    sign = "+" if total_minutes >= 0 else "-"
+    abs_minutes = abs(total_minutes)
+    hours, minutes = divmod(abs_minutes, 60)
+    if minutes == 0:
+        return f"UTC{sign}{hours}"
+    return f"UTC{sign}{hours}:{minutes:02d}"
+
+
+def log_timestamp() -> str:
+    """获取日志时间前缀字符串。
+
+    Returns:
+        形如 2026-04-08 12:34:56:789 UTC+8
+    """
+    current = now()
+    milliseconds = current.microsecond // 1000
+    return f"{current.strftime('%Y-%m-%d %H:%M:%S')}:{milliseconds:03d} {timezone_label()}"
