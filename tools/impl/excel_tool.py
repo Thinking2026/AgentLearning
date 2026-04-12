@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from schemas import ToolResult, build_error
 from tools.tools import BaseTool, build_tool_output
+from utils.runtime_env import get_task_runtime_dir
 
 
 class ExcelTool(BaseTool):
@@ -305,9 +305,10 @@ class ExcelTool(BaseTool):
         target_path = Path(path_value).expanduser()
         if target_path.is_absolute():
             return target_path
-        task_runtime_dir = os.environ.get("NANOAGENT_TASK_RUNTIME_DIR")
-        if task_runtime_dir:
-            return Path(task_runtime_dir).expanduser() / target_path
+        try:
+            return get_task_runtime_dir() / target_path
+        except RuntimeError:
+            pass
         return target_path
 
     @staticmethod

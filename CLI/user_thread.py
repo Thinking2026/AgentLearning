@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import select
 import sys
 import threading
@@ -13,6 +12,12 @@ from config import ConfigValueReader, JsonConfig
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
 from utils.log import Logger, zap
+from utils.runtime_env import (
+    get_project_root,
+    get_task_prompt_file,
+    get_task_runtime_dir,
+    get_task_source_dir,
+)
 from utils.thread_event import ThreadEvent
 
 
@@ -55,24 +60,15 @@ class UserThread(threading.Thread):
             2.0,
         )
         self._task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
-        self._project_root = Path(__file__).resolve().parent.parent
-        self._task_source_dir = Path(
-            os.environ.get(
-                "NANOAGENT_TASK_SOURCE_DIR",
-                self._project_root / "testing" / "tasks" / self._task_name,
-            )
+        self._project_root = get_project_root()
+        self._task_source_dir = get_task_source_dir(
+            self._project_root / "testing" / "tasks" / self._task_name
         )
-        self._task_runtime_dir = Path(
-            os.environ.get(
-                "NANOAGENT_TASK_RUNTIME_DIR",
-                self._project_root / "runtime" / self._task_name,
-            )
+        self._task_runtime_dir = get_task_runtime_dir(
+            self._project_root / "runtime" / self._task_name
         )
-        self._prompt_file_path = Path(
-            os.environ.get(
-                "NANOAGENT_TASK_PROMPT_FILE",
-                self._task_source_dir / "prompt.txt",
-            )
+        self._prompt_file_path = get_task_prompt_file(
+            self._task_source_dir / "prompt.txt"
         )
         self._ui_session_status = SessionStatus.NEW_TASK
         self._last_prompt_status: SessionStatus | None = None

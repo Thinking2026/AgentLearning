@@ -7,10 +7,11 @@ from pathlib import Path
 from application import AgentApplication
 from utils.env_loader import load_dotenv
 from utils.log import Logger, zap
+from utils.runtime_env import set_project_root
 
 
 def main() -> None:
-    project_root = Path(__file__).resolve().parent
+    project_root = set_project_root(Path(__file__).resolve().parent)
     os.chdir(project_root)
     load_dotenv(project_root / ".env")
     config_path = project_root / "config.json"

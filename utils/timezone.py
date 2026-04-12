@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone, timedelta
+
+from utils.runtime_env import get_timezone_name
 
 
 def get_timezone() -> timezone:
@@ -13,7 +14,7 @@ def get_timezone() -> timezone:
     Returns:
         timezone对象
     """
-    tz_name = os.environ.get("NANOAGENT_TIMEZONE", "shanghai").lower().strip()
+    tz_name = get_timezone_name("shanghai").lower().strip()
 
     tz_map = {
         "shanghai": timezone(timedelta(hours=8)),

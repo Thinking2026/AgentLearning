@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import os
 import threading
 from pathlib import Path
 
 from config import ConfigValueReader, JsonConfig, load_config
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from utils.log import Logger, zap
+from utils.runtime_env import (
+    get_project_root,
+    set_task_environment,
+    set_timezone_name,
+)
 from utils.thread_event import ThreadEvent
 
 from CLI import UserThread
@@ -129,18 +133,20 @@ class AgentApplication:
                 "Config not loaded, skipping task environment preparation")
             return
 
-        project_root = self._config_path.resolve().parent
+        project_root = get_project_root()
         task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
         task_source_dir = project_root / "testing" / "tasks" / task_name
         task_runtime_dir = project_root / "runtime" / task_name
         task_runtime_dir.mkdir(parents=True, exist_ok=True)
-        os.environ["NANOAGENT_TASK_NAME"] = task_name
-        os.environ["NANOAGENT_TASK_SOURCE_DIR"] = str(task_source_dir)
-        os.environ["NANOAGENT_TASK_RUNTIME_DIR"] = str(task_runtime_dir)
-        os.environ["NANOAGENT_TASK_PROMPT_FILE"] = str(task_source_dir / "prompt.txt")
+        set_task_environment(
+            task_name=task_name,
+            task_source_dir=task_source_dir,
+            task_runtime_dir=task_runtime_dir,
+            task_prompt_file=task_source_dir / "prompt.txt",
+        )
 
         timezone = self._config.get("time.timezone", "shanghai")
-        os.environ["NANOAGENT_TIMEZONE"] = timezone
+        set_timezone_name(str(timezone))
 
     @property
     def _thread_join_timeout_seconds(self) -> float:

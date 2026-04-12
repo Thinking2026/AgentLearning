@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
 from schemas import ToolResult, build_error
 from tools.tools import BaseTool, build_tool_output
+from utils.runtime_env import get_project_root, get_task_runtime_dir
 
 
 class ShellTool(BaseTool):
@@ -95,9 +95,9 @@ class ShellTool(BaseTool):
 
     @staticmethod
     def _working_directory() -> Path:
-        task_runtime_dir = os.environ.get("NANOAGENT_TASK_RUNTIME_DIR")
-        if task_runtime_dir:
-            path = Path(task_runtime_dir).expanduser()
+        try:
+            path = get_task_runtime_dir()
             path.mkdir(parents=True, exist_ok=True)
             return path
-        return Path.cwd()
+        except RuntimeError:
+            return get_project_root()
