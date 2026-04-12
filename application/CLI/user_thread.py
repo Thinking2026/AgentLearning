@@ -52,7 +52,7 @@ class UserThread(threading.Thread):
         )
         self._agent_message_poll_timeout_seconds = self._config_value_reader.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds",
-            0.1,
+            1.0,
         )
         self._progress_notice_interval_seconds = self._config_value_reader.positive_float(
             "agent.latency.user_progress_notice_interval_seconds",
