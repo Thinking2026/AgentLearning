@@ -5,7 +5,6 @@ import select
 import sys
 import threading
 import time
-from pathlib import Path
 from typing import Callable
 
 from config import ConfigValueReader, JsonConfig

@@ -260,74 +260,66 @@ class AgentThread(threading.Thread):
         if vector_tool_lines:
             self._agent_context.append_system_prompt(
                 "\n\nVector search tool guide:\n"
-                "Use vector search tools for semantic retrieval from indexed embeddings instead of exact SQL filtering.\n"
+                "Use vector search tools for semantic retrieval from indexed text collections.\n"
+                "Prefer them when the task needs fuzzy matching, semantic lookup, or concept-level retrieval.\n"
                 f"{'\n'.join(vector_tool_lines)}"
             )
 
+    def _restore_base_system_prompt(self) -> None:
+        if self._agent_context.get_system_prompt() == self._base_system_prompt:
+            return
+        self._agent_context.release()
+        self._agent_context = self._build_agent_context()
+        self._agent_context.append_system_prompt(self._base_system_prompt)
+
     def _build_llm_client(self) -> BaseLLMClient:
+        provider_priority = self._config.get("llm.provider_priority", ["deepseek"])
+        if not isinstance(provider_priority, list) or not provider_priority:
+            provider_priority = ["deepseek"]
+
         registry = LLMProviderRegistry()
-        default_provider_name = self._config.get("llm.provider", "openai")
-        enable_provider_fallback = bool(
-            self._config.get("llm.enable_provider_fallback", False)
-        )
-        configured_priority = self._config.get("llm.priority_chain")
-        provider_priority: list[str]
-        if enable_provider_fallback and isinstance(configured_priority, list) and configured_priority:
-            provider_priority = [str(item) for item in configured_priority if str(item).strip()]
-        else:
-            provider_priority = [default_provider_name]
-
-        provider_settings = self._config.get("llm.provider_settings", {})
-        if not isinstance(provider_settings, dict):
-            provider_settings = {}
-
         for provider_name in provider_priority:
-            overrides = provider_settings.get(provider_name, {})
-            if not isinstance(overrides, dict):
-                overrides = {}
-            provider = self._create_llm_provider(provider_name, overrides)
-            provider.set_tracer(self._tracer)
-            registry.register(provider)
-
+            registry.register(provider_name, self._build_provider(provider_name))
         return FallbackLLMClient(
             registry=registry,
             provider_priority=provider_priority,
             max_attempts=self._llm_retry_max_attempts,
             retry_delays=self._llm_retry_delays,
-            enable_provider_fallback=enable_provider_fallback,
-        )
+            enable_provider_fallback=bool(self._config.get("llm.enable_provider_fallback", False)),
+        ).set_tracer(self._tracer)
 
-    def _create_llm_provider(
-        self,
-        provider_name: str,
-        overrides: dict,
-    ) -> BaseLLMClient:
-        global_timeout = float(self._config.get("llm.timeout", 60.0))
-
-        api_key = None
-        timeout = float(overrides.get("timeout", global_timeout))
+    def _build_provider(self, provider_name: str) -> BaseLLMClient:
+        providers = self._config.get("llm.providers", {})
+        if not isinstance(providers, dict):
+            providers = {}
+        provider_settings = providers.get(provider_name, {})
+        if not isinstance(provider_settings, dict):
+            provider_settings = {}
+        overrides = dict(provider_settings)
+        api_key = overrides.get("api_key")
+        timeout = float(overrides.get("timeout", self._config.get("llm.timeout", 60.0)))
 
         if provider_name == "openai":
             return OpenAILLMClient.from_settings(
                 api_key=api_key,
-                model=overrides.get("model", self._config.get("llm.model", "gpt-4.1-mini")),
-                base_url=overrides.get("base_url", self._config.get("llm.base_url", "https://api.openai.com/v1")),
+                model=overrides.get("model", "gpt-4o-mini"),
+                base_url=overrides.get("base_url", "https://api.openai.com/v1"),
                 timeout=timeout,
-            )
+            ).set_tracer(self._tracer)
         if provider_name == "qwen":
             return QwenLLMClient.from_settings(
                 api_key=api_key,
                 model=overrides.get("model", "qwen-plus"),
                 base_url=overrides.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
                 timeout=timeout,
-            )
+            ).set_tracer(self._tracer)
         if provider_name == "deepseek":
             return DeepSeekLLMClient.from_settings(
                 api_key=api_key,
                 model=overrides.get("model", "deepseek-chat"),
                 base_url=overrides.get("base_url", "https://api.deepseek.com/v1"),
                 timeout=timeout,
-            )
+            ).set_tracer(self._tracer)
         if provider_name == "claude":
             return ClaudeLLMClient.from_settings(
                 api_key=api_key,
@@ -339,7 +331,7 @@ class AgentThread(threading.Thread):
                     "anthropic_version",
                     self._config.get("llm.anthropic_version", "2023-06-01"),
                 ),
-            )
+            ).set_tracer(self._tracer)
         raise build_error("LLM_PROVIDER_NOT_FOUND", f"Unsupported LLM provider: {provider_name}")
 
     def _build_agent(self) -> Agent:
@@ -475,34 +467,26 @@ class AgentThread(threading.Thread):
                 "content": user_message.content,
             },
         ):
-            return None
+            return
 
     def _wait_for_user_message(
         self,
         session_status: SessionStatus,
     ) -> ChatMessage | None:
-        while self._is_running():
-            user_message = self._user_to_agent_queue.get_user_message(
-                timeout=self._user_message_wait_timeout_seconds
-            )
-            if user_message is not None:
-                return user_message
-            if session_status == SessionStatus.IN_PROGRESS:
-                return None
-        return None
+        if session_status == SessionStatus.NEW_TASK:
+            return self._user_to_agent_queue.get_user_message(timeout=None)
+        return self._user_to_agent_queue.get_user_message(
+            timeout=self._user_message_wait_timeout_seconds
+        )
+
+    @staticmethod
+    def _normalize_error(exc: Exception | AgentError) -> AgentError:
+        if isinstance(exc, AgentError):
+            return exc
+        return build_error("AGENT_THREAD_ERROR", str(exc))
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
 
     def _is_any_queue_closed(self) -> bool:
         return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
-
-    def _restore_base_system_prompt(self) -> None:
-        with self._agent_context._lock:
-            self._agent_context._system_prompt = self._base_system_prompt
-
-    @staticmethod
-    def _normalize_error(exc: Exception) -> AgentError:
-        if isinstance(exc, AgentError):
-            return exc
-        return build_error("UNEXPECTED_ERROR", f"Agent encountered an unexpected error: {exc}")
