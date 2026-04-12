@@ -56,7 +56,7 @@ class UserThread(threading.Thread):
         )
         self._progress_notice_interval_seconds = self._config_value_reader.positive_float(
             "agent.latency.user_progress_notice_interval_seconds",
-            2.0,
+            8.0,
         )
         self._task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
         self._project_root = get_project_root()

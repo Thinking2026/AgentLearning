@@ -273,13 +273,13 @@ class AgentThread(threading.Thread):
         self._agent_context.append_system_prompt(self._base_system_prompt)
 
     def _build_llm_client(self) -> BaseLLMClient:
-        provider_priority = self._config.get("llm.provider_priority", ["deepseek"])
+        provider_priority = self._config.get("llm.priority_chain", ["deepseek"])
         if not isinstance(provider_priority, list) or not provider_priority:
             provider_priority = ["deepseek"]
 
         registry = LLMProviderRegistry()
         for provider_name in provider_priority:
-            registry.register(provider_name, self._build_provider(provider_name))
+            registry.register(self._build_provider(provider_name))
         return FallbackLLMClient(
             registry=registry,
             provider_priority=provider_priority,
