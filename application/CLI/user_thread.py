@@ -80,43 +80,46 @@ class UserThread(threading.Thread):
     def release_resources(self) -> None:
         return None
 
-    def run(self) -> None:
+    def run(self) -> None:#先支持单任务处理，而不是连续任务处理。单任务处理过程中允许用户输入辅助hint
         try:
+            displayed_any_message = False 
+            self._last_progress_notice_at = time.monotonic()
             while self._is_running():
-                self._print_prompt_if_needed()
-                displayed_any_message = self._drain_agent_messages()
-                if not self._is_running():
+                if not self._is_running():#判断是否有其他线程的终止信号
                     break
-                if self._should_finish():
-                    print("Task finished, bye")
-                    break
-
+                self._print_prompt_if_needed(displayed_any_message)#只有转折才会打印提示语
                 user_input = self._wait_for_user_input()
                 need_quit = self._handle_user_input(user_input)
-                if need_quit:
+                if need_quit:#用户主动退出
                     break
-
-                self._print_progress_notice_if_needed(displayed_any_message)
+                displayed_any_message = self._drain_agent_messages()
+                if displayed_any_message and self._ui_session_status == SessionStatus.NEW_TASK:
+                    print("Task finished, bye")
+                    break
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
         finally:
             self.release_resources()
             self.stop()
 
-    def _print_prompt_if_needed(self) -> None:
+    def _print_prompt_if_needed(self, displayed_any_message: bool) -> None:
         status = self._ui_session_status
         if status == self._last_prompt_status:
+            now = time.monotonic()
+            if not displayed_any_message and now - self._last_progress_notice_at >= self._progress_notice_interval_seconds:
+                print("Assistant: Task in progress, you can input supplementary information to assist the AI")
+                self._last_progress_notice_at = now
             return
         if status == SessionStatus.NEW_TASK:
-            print(f"Assistant: loading task `{self._task_name}` from {self._prompt_file_path}")
+            print(f"Assistant: Loading task `{self._task_name}` from {self._prompt_file_path}")
         else:
-            print("Assistant: task is in progress, you can input a hint at any time")
+            print("Assistant: Task in progress, you can input supplementary information to assist the AI")
         self._last_prompt_status = status
 
     def _drain_agent_messages(self) -> bool:
         displayed_any_message = False
         while self._is_running():
-            message = self._agent_to_user_queue.get_agent_message(
+            message = self._agent_to_user_queue.get_agent_message(#agent要去兜底，给CLI端的信息都是解决问题的有效步骤或者结论消息
                 timeout=self._agent_message_poll_timeout_seconds
             )
             if message is None:
@@ -126,7 +129,6 @@ class UserThread(threading.Thread):
                 continue
             print(self._format_agent_message(message))
             displayed_any_message = True
-            self._last_progress_notice_at = time.monotonic()
         return displayed_any_message
 
     def _poll_user_input(self, timeout: float) -> str | None:
@@ -138,8 +140,10 @@ class UserThread(threading.Thread):
         return None
 
     def _wait_for_user_input(self) -> str | None:
-        if self._ui_session_status == SessionStatus.NEW_TASK:
-            return self._load_question_from_file()
+        if self._task_started == False:
+            question = self._load_question_from_file()
+            self._task_started = True
+            return question
         return self._wait_for_hint_command()
 
     def _load_question_from_file(self) -> str | None:
@@ -180,7 +184,7 @@ class UserThread(threading.Thread):
         if stripped.lower() != "wait":
             return user_input
 
-        print("Assistant: hint mode enabled, please input your hint within 60 seconds")
+        print("Assistant: waiting for hint input......")
         return self._poll_user_input(timeout=self._hint_input_timeout_seconds)
 
     def _handle_user_input(self, user_input: str | None) -> bool:
@@ -196,21 +200,8 @@ class UserThread(threading.Thread):
             )
             return True
         message = ChatMessage(role="user", content=stripped)
-        if self._ui_session_status == SessionStatus.NEW_TASK:
-            self._task_started = True
         self._user_to_agent_queue.send_user_message(message)
         return False
-
-    def _print_progress_notice_if_needed(self, displayed_any_message: bool) -> None:
-        if self._ui_session_status != SessionStatus.IN_PROGRESS:
-            return
-        now = time.monotonic()
-        if displayed_any_message:
-            return
-        if now - self._last_progress_notice_at < self._progress_notice_interval_seconds:
-            return
-        print("Assistant: thinking and solving...")
-        self._last_progress_notice_at = now
 
     def _format_agent_message(self, message: ChatMessage) -> str:
         message_source = message.metadata.get("source")
@@ -242,9 +233,6 @@ class UserThread(threading.Thread):
         session_status = message.metadata.get("session_status")
         if session_status != self._ui_session_status:
             self._ui_session_status = session_status
-
-    def _should_finish(self) -> bool:
-        return self._task_started and self._ui_session_status == SessionStatus.NEW_TASK
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()

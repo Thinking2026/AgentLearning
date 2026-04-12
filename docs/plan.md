@@ -87,6 +87,7 @@
 - [TODO]trace优化，发现有一些冗余不合理的东西，不确定是打印问题还是流程问题
 - [TODO]存储里有多个库和表该如何统筹
 - [TODO]失败返回引发session reset，引发的整个session流程要看一下
+- [TODO]线程之间的交互方式，每个子线程都可以抛出异常，但抛出异常就意味着无法容忍的错误，子线程要捕获，然后通知所有人清理资源和退出；UserThread开始一个New Task，然后等待agent thread将状态设置为in progress并sync回User Thread；如果agent thread能解决掉需要回传user thread任务完成，user thread打印信息并退出；如果agent thread无法解决任务走异常路径，让全部线程退出
 
 ## 实践过程中的问题
 ### 问题
