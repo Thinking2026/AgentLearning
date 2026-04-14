@@ -1,3 +1,4 @@
+from .impl.calculator_tool import CalculatorTool
 from .impl.current_time_tool import CurrentTimeTool
 from .impl.excel_tool import ExcelTool
 from .impl.file_tool import FileTool
@@ -13,6 +14,7 @@ from .tools import BaseTool
 
 __all__ = [
     "BaseTool",
+    "CalculatorTool",
     "CurrentTimeTool",
     "ExcelTool",
     "FileTool",

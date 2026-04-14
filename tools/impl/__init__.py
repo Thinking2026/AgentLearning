@@ -1,3 +1,4 @@
+from .calculator_tool import CalculatorTool
 from .current_time_tool import CurrentTimeTool
 from .excel_tool import ExcelTool
 from .file_tool import FileTool
@@ -10,6 +11,7 @@ from .vector_search_tool import (
 )
 
 __all__ = [
+    "CalculatorTool",
     "CurrentTimeTool",
     "ExcelTool",
     "FileTool",
