@@ -97,7 +97,7 @@ class AgentThread(threading.Thread):
     def reset(self) -> None:
         self._finish_session_trace()
         if self._agent is not None:
-            self._agent.reset()
+            self._agent.reset(archive_current_task=False)
         self._restore_base_system_prompt()
 
     def release_resources(self) -> None:
@@ -170,7 +170,7 @@ class AgentThread(threading.Thread):
     def _load_agent_config(self) -> None:
         self._max_tool_iterations = int(self._config.get("agent.max_tool_iterations", 3))
         self._max_react_attempt_iterations = int(
-            self._config.get("agent.max_react_attempt_iterations", 20)
+            self._config.get("agent.max_react_attempt_iterations", 60)
         )
 
     def _load_llm_config(self) -> None:
@@ -353,23 +353,25 @@ class AgentThread(threading.Thread):
                     session_status == SessionStatus.IN_PROGRESS
                     and self._agent is not None
                     and self._agent.get_react_attempt_iterations() > self._max_react_attempt_iterations
-                ):
+                ):#有限处理，防止无限循环
                     self._agent_to_user_queue.send_agent_message(
                         ChatMessage(
                             role="assistant",
                             content="Sorry, this question is too hard, i can not solve",
-                            metadata={"session_status": SessionStatus.NEW_TASK},
+                            metadata={
+                                "session_status": SessionStatus.NEW_TASK,
+                                "task_completed": False,
+                            },
                         )
                     )
-                    self.reset()
+                    self.reset()#reset会清除当前任务历史，不存档
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
-                if incoming_message is None and session_status == SessionStatus.NEW_TASK:
+                if incoming_message is None and session_status == SessionStatus.NEW_TASK:#被关闭事件唤醒
                     continue
                 if session_status == SessionStatus.NEW_TASK and incoming_message is not None:
                     self._start_session_trace(incoming_message)
-                    self._record_user_input_trace(incoming_message, input_type="question")
                     self._agent.begin_session()
                     self._agent_to_user_queue.send_agent_message(
                         ChatMessage(
@@ -378,11 +380,12 @@ class AgentThread(threading.Thread):
                             metadata={
                                 "control": True,
                                 "session_status": SessionStatus.IN_PROGRESS,
+                                "task_completed": False,
                             },
                         )
                     )
                     session_status = self._session.get_status()
-                elif incoming_message is not None:
+                elif incoming_message is not None:#In_progress状态收到用户消息，视为hint
                     self._record_user_input_trace(incoming_message, input_type="hint")
 
                 try:
@@ -406,13 +409,14 @@ class AgentThread(threading.Thread):
                                     metadata={
                                         "control": True,
                                         "session_status": SessionStatus.NEW_TASK,
+                                        "task_completed": False,
                                     },
                                 )
                             )
                         self._finish_session_trace(error=execution_result.error)
                         if self._agent is not None:
                             self._agent.reset(
-                                archive_current_task=execution_result.error is None
+                                archive_current_task=execution_result.task_completed
                             )
                         self._restore_base_system_prompt()
                 except Exception as exc:

@@ -118,6 +118,7 @@ class ReActAgent(Agent):
         return AgentExecutionResult(
             user_messages=[self._format_final_conclusion(response)],
             should_reset=True,
+            task_completed=True,
         )
 
     @staticmethod
@@ -128,6 +129,7 @@ class ReActAgent(Agent):
             metadata={
                 **response.assistant_message.metadata,
                 "session_status": SessionStatus.NEW_TASK,
+                "task_completed": True,
             },
         )
 

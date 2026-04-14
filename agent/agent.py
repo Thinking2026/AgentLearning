@@ -16,6 +16,7 @@ class AgentExecutionResult:
     user_messages: list[ChatMessage] = field(default_factory=list)
     error: AgentError | None = None
     should_reset: bool = False
+    task_completed: bool = False
 
 
 class Agent(ABC):
@@ -40,7 +41,7 @@ class Agent(ABC):
         self._cur_react_attempt_iterations = 0
         self._session.begin()
 
-    def reset(self, archive_current_task: bool = True) -> None:
+    def reset(self, archive_current_task: bool = False) -> None:
         self._cur_react_attempt_iterations = 0
         if archive_current_task:
             self._agent_context.archive_current_task()
@@ -49,7 +50,7 @@ class Agent(ABC):
         self._session.reset()
 
     def release_resources(self) -> None:
-        self.reset()
+        self.reset(archive_current_task=False)
 
     def get_react_attempt_iterations(self) -> int:
         return self._cur_react_attempt_iterations
