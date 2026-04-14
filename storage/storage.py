@@ -17,10 +17,14 @@ class BaseStorage(ABC):
     def capabilities(self) -> set[str]:
         return set()
 
+    def list_resources(self) -> list[str]:
+        return []
+
     def describe_schema(self) -> dict[str, Any]:
         return {
             "backend_name": self.backend_name,
             "capabilities": sorted(self.capabilities()),
+            "resources": self.list_resources(),
         }
 
     def close(self) -> None:
@@ -33,11 +37,26 @@ class RelationalStorage(BaseStorage):
             f"{self.__class__.__name__} does not support relational queries."
         )
 
+    def inspect_schema(
+        self,
+        *,
+        database: str | None = None,
+        table: str | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support schema inspection."
+        )
+
 
 class VectorStorage(BaseStorage):
     def search(self, request: VectorSearchRequest) -> list[dict[str, Any]]:
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support vector search."
+        )
+
+    def inspect_schema(self, collection: str | None = None) -> dict[str, Any]:
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support vector schema inspection."
         )
 
 

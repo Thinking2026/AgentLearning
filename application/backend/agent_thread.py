@@ -26,12 +26,18 @@ from storage.bootstrap_documents import load_seed_documents
 from tracing import Span, Tracer
 from tools import (
     SQLQueryTool,
+    SQLSchemaTool,
     ToolRegistry,
     VectorSearchTool,
+    VectorSchemaTool,
     build_sql_query_tool_description,
     build_sql_query_tool_name,
+    build_sql_schema_tool_description,
+    build_sql_schema_tool_name,
     build_vector_search_tool_description,
     build_vector_search_tool_name,
+    build_vector_schema_tool_description,
+    build_vector_schema_tool_name,
     create_default_tool_registry,
 )
 from utils.log import Logger, zap
@@ -118,19 +124,21 @@ class AgentThread(threading.Thread):
         seed_documents = load_seed_documents(
             self._config.get("storage.file.path", "runtime/nanoagent_soul.json")
         )
-        sqlite_path = self._config.get("storage.sqlite.path", "runtime/nanoagent_local_storage.db")
-        sqlite_storage = SQLiteStorage(sqlite_path)
-        sqlite_storage.seed(seed_documents)
+        sqlite_databases = self._build_sqlite_databases()
+        sqlite_storage = SQLiteStorage(sqlite_databases)
         storages = [sqlite_storage]
 
         chromadb_path = self._config.get("storage.chromadb.persist_directory")
         if chromadb_path:
+            chromadb_collections = self._build_chromadb_collections()
             chromadb_storage = ChromaDBStorage(
                 persist_directory=chromadb_path,
-                collection_name=self._config.get("storage.chromadb.collection_name", "nanoagent_collection"),
+                collections=chromadb_collections,
             )
-            if not chromadb_storage.get_documents():
-                chromadb_storage.upsert_documents(seed_documents)
+            bootstrap_collection = self._config.get("storage.chromadb.bootstrap_collection")
+            if isinstance(bootstrap_collection, str) and bootstrap_collection.strip():
+                if not chromadb_storage.get_documents(bootstrap_collection):
+                    chromadb_storage.upsert_documents(bootstrap_collection, seed_documents)
             storages.append(chromadb_storage)
 
         mysql_host = str(self._config.get("storage.mysql.host", "")).strip()
@@ -140,13 +148,71 @@ class AgentThread(threading.Thread):
                 port=int(self._config.get("storage.mysql.port", 3306)),
                 user=os.getenv("MYSQL_USER", ""),
                 password=os.getenv("MYSQL_PASSWORD", ""),
-                database=str(self._config.get("storage.mysql.database", "")),
-                table_name=str(self._config.get("storage.mysql.table_name", "documents")),
+                allowed_databases=self._build_mysql_databases(),
                 charset=str(self._config.get("storage.mysql.charset", "utf8mb4")),
             )
             storages.append(mysql_storage)
 
         return StorageRegistry(storages)
+
+    def _build_sqlite_databases(self) -> dict[str, str]:
+        sqlite_config = self._config.get("storage.sqlite", {})
+        if not isinstance(sqlite_config, dict):
+            sqlite_config = {}
+        configured = sqlite_config.get("allowed_databases")
+        if configured is None:
+            configured = sqlite_config.get("databases")
+        databases: dict[str, str] = {}
+        if isinstance(configured, dict):
+            for name, path in configured.items():
+                if str(name).strip() and str(path).strip():
+                    databases[str(name).strip()] = str(path).strip()
+        fallback_path = str(sqlite_config.get("path", "")).strip()
+        if fallback_path:
+            databases.setdefault(self._derive_sqlite_alias(fallback_path), fallback_path)
+        if not databases:
+            databases["local_storage"] = "runtime/nanoagent_local_storage.db"
+        return databases
+
+    def _build_mysql_databases(self) -> list[str]:
+        mysql_config = self._config.get("storage.mysql", {})
+        if not isinstance(mysql_config, dict):
+            mysql_config = {}
+        configured = mysql_config.get("allowed_databases")
+        if isinstance(configured, list):
+            databases = [str(database).strip() for database in configured if str(database).strip()]
+            if databases:
+                return databases
+        fallback_database = str(mysql_config.get("database", "")).strip()
+        if fallback_database:
+            return [fallback_database]
+        raise build_error(
+            "STORAGE_CONFIG_ERROR",
+            "MySQL storage requires `storage.mysql.allowed_databases` or `storage.mysql.database`.",
+        )
+
+    def _build_chromadb_collections(self) -> list[str]:
+        chromadb_config = self._config.get("storage.chromadb", {})
+        if not isinstance(chromadb_config, dict):
+            chromadb_config = {}
+        configured = chromadb_config.get("allowed_collections")
+        if configured is None:
+            configured = chromadb_config.get("collections")
+        if isinstance(configured, list):
+            collections = [str(collection).strip() for collection in configured if str(collection).strip()]
+            if collections:
+                return collections
+        fallback_collection = str(chromadb_config.get("collection_name", "")).strip()
+        if fallback_collection:
+            return [fallback_collection]
+        return ["agent_documents"]
+
+    @staticmethod
+    def _derive_sqlite_alias(path_value: str) -> str:
+        path = str(path_value).strip()
+        if path.endswith(".db"):
+            path = path[:-3]
+        return path.rsplit("/", 1)[-1] or "sqlite"
 
     def _load_tracing_config(self) -> None:
         self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
@@ -223,6 +289,16 @@ class AgentThread(threading.Thread):
         for backend_name in self._storage_registry.list_backends():
             storage = self._storage_registry.get(backend_name)
             if backend_name in {"sqlite", "mysql"}:
+                schema_tool_name = build_sql_schema_tool_name(backend_name)
+                schema_description = build_sql_schema_tool_description(backend_name)
+                registry.register(
+                    SQLSchemaTool(
+                        name=schema_tool_name,
+                        description=schema_description,
+                        storage=storage,
+                        backend_name=backend_name,
+                    )
+                )
                 tool_name = build_sql_query_tool_name(backend_name)
                 description = build_sql_query_tool_description(backend_name)
                 registry.register(
@@ -233,9 +309,25 @@ class AgentThread(threading.Thread):
                         backend_name=backend_name,
                     )
                 )
-                sql_tool_lines.append(f"- `{tool_name}`: {description}")
+                resources = ", ".join(storage.list_resources()) or "<none>"
+                sql_tool_lines.append(
+                    f"- `{schema_tool_name}`: {schema_description} Available databases: {resources}"
+                )
+                sql_tool_lines.append(
+                    f"- `{tool_name}`: {description} Available databases: {resources}"
+                )
                 continue
             if backend_name == "chromadb":
+                schema_tool_name = build_vector_schema_tool_name(backend_name)
+                schema_description = build_vector_schema_tool_description(backend_name)
+                registry.register(
+                    VectorSchemaTool(
+                        name=schema_tool_name,
+                        description=schema_description,
+                        storage=storage,
+                        backend_name=backend_name,
+                    )
+                )
                 tool_name = build_vector_search_tool_name(backend_name)
                 description = build_vector_search_tool_description(backend_name)
                 registry.register(
@@ -246,14 +338,21 @@ class AgentThread(threading.Thread):
                         backend_name=backend_name,
                     )
                 )
-                vector_tool_lines.append(f"- `{tool_name}`: {description}")
+                resources = ", ".join(storage.list_resources()) or "<none>"
+                vector_tool_lines.append(
+                    f"- `{schema_tool_name}`: {schema_description} Available collections: {resources}"
+                )
+                vector_tool_lines.append(
+                    f"- `{tool_name}`: {description} Available collections: {resources}"
+                )
 
         if sql_tool_lines:
             self._agent_context.append_system_prompt(
                 "\n\nRelational query tool guide:\n"
                 "Use relational query tools for SQLite or MySQL tables with custom schemas.\n"
-                "Only send a single SELECT statement, keep values in params instead of string interpolation, "
-                "and inspect schema tables first when you are unsure about available columns.\n"
+                "Choose the correct authorized database for the task.\n"
+                "When you are unsure about available tables or columns, use the dedicated schema inspection tool first.\n"
+                "For SQL query tools, send only a single SELECT statement and keep values in params instead of string interpolation.\n"
                 f"{'\n'.join(sql_tool_lines)}"
             )
 
@@ -261,6 +360,8 @@ class AgentThread(threading.Thread):
             self._agent_context.append_system_prompt(
                 "\n\nVector search tool guide:\n"
                 "Use vector search tools for semantic retrieval from indexed text collections.\n"
+                "When you are unsure which collection to use, inspect the available collections first.\n"
+                "Choose the most relevant authorized collection for the task.\n"
                 "Prefer them when the task needs fuzzy matching, semantic lookup, or concept-level retrieval.\n"
                 f"{'\n'.join(vector_tool_lines)}"
             )

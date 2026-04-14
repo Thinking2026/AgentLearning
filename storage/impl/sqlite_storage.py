@@ -18,51 +18,94 @@ class SQLiteStorage(RelationalStorage):
         "pragma foreign_key_list(",
     )
 
-    def __init__(self, database_path: str) -> None:
-        self._database_path = Path(database_path)
-        self._initialize()#TODO 考虑删掉
+    def __init__(self, databases: dict[str, str]) -> None:
+        if not databases:
+            raise build_error("STORAGE_CONFIG_ERROR", "SQLite storage requires at least one database.")
+        self._databases = {
+            self._normalize_database_name(name): Path(path).expanduser()
+            for name, path in databases.items()
+            if str(name).strip() and str(path).strip()
+        }
+        if not self._databases:
+            raise build_error("STORAGE_CONFIG_ERROR", "SQLite storage requires valid database mappings.")
+        for database_path in self._databases.values():
+            database_path.parent.mkdir(parents=True, exist_ok=True)
 
     def capabilities(self) -> set[str]:
-        return {"sql_query", "document_seed"}
+        return {"sql_query"}
+
+    def list_resources(self) -> list[str]:
+        return sorted(self._databases)
 
     def describe_schema(self) -> dict[str, object]:
-        tables = self.query(
-            SQLQueryRequest(
-                statement=(
-                    "SELECT name, sql FROM sqlite_master "
-                    "WHERE type = ? AND name NOT LIKE ? "
-                    "ORDER BY name"
-                ),
-                params=("table", "sqlite_%"),
-                max_rows=200,
-            )
-        )
         return {
             "backend_name": self.backend_name,
             "capabilities": sorted(self.capabilities()),
-            "database_path": str(self._database_path),
-            "tables": tables,
+            "databases": {
+                name: str(path)
+                for name, path in sorted(self._databases.items())
+            },
         }
 
+    def inspect_schema(
+        self,
+        *,
+        database: str | None = None,
+        table: str | None = None,
+    ) -> dict[str, object]:
+        database_name = self._resolve_database_name(database)
+        database_path = self._databases[database_name]
+        with sqlite3.connect(database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            if table is None or not str(table).strip():
+                rows = connection.execute(
+                    """
+                    SELECT name, type, sql
+                    FROM sqlite_master
+                    WHERE name NOT LIKE 'sqlite_%'
+                    ORDER BY type, name
+                    """
+                ).fetchall()
+                return {
+                    "backend": self.backend_name,
+                    "database": database_name,
+                    "table": None,
+                    "tables": [dict(row) for row in rows],
+                }
+
+            table_name = str(table).strip()
+            table_rows = connection.execute(
+                "SELECT name, type, sql FROM sqlite_master WHERE name = ? LIMIT 1",
+                (table_name,),
+            ).fetchall()
+            if not table_rows:
+                available = ", ".join(self._list_table_names(connection)) or "<none>"
+                raise build_error(
+                    "STORAGE_RESOURCE_NOT_FOUND",
+                    f"Unknown SQLite table `{table_name}` in database `{database_name}`. "
+                    f"Available tables: {available}",
+                )
+            column_rows = connection.execute(
+                f"PRAGMA table_info({self._quote_identifier(table_name)})"
+            ).fetchall()
+            return {
+                "backend": self.backend_name,
+                "database": database_name,
+                "table": table_name,
+                "table_info": dict(table_rows[0]),
+                "columns": [dict(row) for row in column_rows],
+            }
+
     def query(self, request: SQLQueryRequest) -> list[dict[str, object]]:
+        database_name = self._resolve_database_name(request.database)
+        database_path = self._databases[database_name]
         normalized_statement = self._validate_select_statement(request.statement)
         row_limit = self._normalize_max_rows(request.max_rows)
-        with sqlite3.connect(self._database_path) as connection:
+        with sqlite3.connect(database_path) as connection:
             connection.row_factory = sqlite3.Row
             cursor = connection.execute(normalized_statement, request.params or ())
             rows = cursor.fetchmany(row_limit)
         return [dict(row) for row in rows]
-
-    def seed(self, documents: list[dict]) -> None:
-        with sqlite3.connect(self._database_path) as connection:
-            connection.executemany(
-                """
-                INSERT OR REPLACE INTO documents(id, title, content)
-                VALUES (?, ?, ?)
-                """,
-                [(doc["id"], doc["title"], doc["content"]) for doc in documents],
-            )
-            connection.commit()
 
     @staticmethod
     def _validate_select_statement(statement: str) -> str:
@@ -90,16 +133,38 @@ class SQLiteStorage(RelationalStorage):
             normalized = 100
         return max(1, min(normalized, 1000))
 
-    def _initialize(self) -> None:
-        self._database_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self._database_path) as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS documents (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    content TEXT NOT NULL
-                )
-                """
+    def _resolve_database_name(self, database_name: str | None) -> str:
+        if database_name is not None and str(database_name).strip():
+            normalized = self._normalize_database_name(database_name)
+            if normalized in self._databases:
+                return normalized
+            available = ", ".join(sorted(self._databases)) or "<none>"
+            raise build_error(
+                "STORAGE_RESOURCE_NOT_FOUND",
+                f"Unknown SQLite database `{database_name}`. Available databases: {available}",
             )
-            connection.commit()
+        if len(self._databases) == 1:
+            return next(iter(self._databases))
+        available = ", ".join(sorted(self._databases)) or "<none>"
+        raise build_error(
+            "STORAGE_RESOURCE_REQUIRED",
+            f"SQLite database is required. Available databases: {available}",
+        )
+
+    @staticmethod
+    def _normalize_database_name(value: str) -> str:
+        normalized = str(value).strip()
+        if normalized.endswith(".db"):
+            normalized = normalized[:-3]
+        return normalized
+
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        return '"' + identifier.replace('"', '""') + '"'
+
+    @staticmethod
+    def _list_table_names(connection: sqlite3.Connection) -> list[str]:
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        return [str(row[0]) for row in rows]

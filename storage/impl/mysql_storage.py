@@ -13,68 +13,144 @@ class MySQLStorage(RelationalStorage):
         port: int,
         user: str,
         password: str,
-        database: str,
-        table_name: str = "documents",
+        allowed_databases: list[str],
         charset: str = "utf8mb4",
     ) -> None:
         if not host.strip():
             raise build_error("STORAGE_CONFIG_ERROR", "MySQL storage requires a non-empty host.")
         if not user.strip():
             raise build_error("STORAGE_CONFIG_ERROR", "MySQL storage requires a non-empty user.")
-        if not database.strip():
-            raise build_error("STORAGE_CONFIG_ERROR", "MySQL storage requires a non-empty database.")
-        if not table_name.strip():
-            raise build_error("STORAGE_CONFIG_ERROR", "MySQL storage requires a non-empty table_name.")
+        normalized_databases = [database.strip() for database in allowed_databases if str(database).strip()]
+        if not normalized_databases:
+            raise build_error("STORAGE_CONFIG_ERROR", "MySQL storage requires at least one allowed database.")
 
         self._host = host
         self._port = int(port)
         self._user = user
         self._password = password
-        self._database = database
-        self._table_name = table_name
+        self._allowed_databases = normalized_databases
         self._charset = charset
         self._pymysql = self._require_pymysql()
 
     def capabilities(self) -> set[str]:
         return {"sql_query"}
 
+    def list_resources(self) -> list[str]:
+        return sorted(self._allowed_databases)
+
     def describe_schema(self) -> dict[str, object]:
-        tables = self.query(
-            SQLQueryRequest(
-                statement=(
-                    "SELECT table_name "
-                    "FROM information_schema.tables "
-                    "WHERE table_schema = %s "
-                    "ORDER BY table_name"
-                ),
-                params=(self._database,),
-                max_rows=500,
-            )
-        )
         return {
             "backend_name": self.backend_name,
             "capabilities": sorted(self.capabilities()),
-            "database": self._database,
-            "tables": tables,
+            "databases": sorted(self._allowed_databases),
         }
 
+    def inspect_schema(
+        self,
+        *,
+        database: str | None = None,
+        table: str | None = None,
+    ) -> dict[str, object]:
+        database_name = self._resolve_database_name(database)
+        with self._connect(database_name) as connection:
+            with connection.cursor(self._pymysql.cursors.DictCursor) as cursor:
+                if table is None or not str(table).strip():
+                    cursor.execute(
+                        """
+                        SELECT table_name, table_type
+                        FROM information_schema.tables
+                        WHERE table_schema = %s
+                        ORDER BY table_name
+                        """,
+                        (database_name,),
+                    )
+                    return {
+                        "backend": self.backend_name,
+                        "database": database_name,
+                        "table": None,
+                        "tables": list(cursor.fetchall()),
+                    }
+
+                table_name = str(table).strip()
+                cursor.execute(
+                    """
+                    SELECT table_name, table_type
+                    FROM information_schema.tables
+                    WHERE table_schema = %s AND table_name = %s
+                    LIMIT 1
+                    """,
+                    (database_name, table_name),
+                )
+                table_info = cursor.fetchone()
+                if table_info is None:
+                    cursor.execute(
+                        """
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = %s
+                        ORDER BY table_name
+                        """,
+                        (database_name,),
+                    )
+                    available = ", ".join(row["table_name"] for row in cursor.fetchall()) or "<none>"
+                    raise build_error(
+                        "STORAGE_RESOURCE_NOT_FOUND",
+                        f"Unknown MySQL table `{table_name}` in database `{database_name}`. "
+                        f"Available tables: {available}",
+                    )
+                cursor.execute(
+                    """
+                    SELECT column_name, data_type, is_nullable, column_key, column_default, extra
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s
+                    ORDER BY ordinal_position
+                    """,
+                    (database_name, table_name),
+                )
+                return {
+                    "backend": self.backend_name,
+                    "database": database_name,
+                    "table": table_name,
+                    "table_info": table_info,
+                    "columns": list(cursor.fetchall()),
+                }
+
     def query(self, request: SQLQueryRequest) -> list[dict[str, object]]:
+        database_name = self._resolve_database_name(request.database)
         normalized_statement = self._validate_select_statement(request.statement)
         row_limit = self._normalize_max_rows(request.max_rows)
-        with self._connect() as connection:
+        with self._connect(database_name) as connection:
             with connection.cursor(self._pymysql.cursors.DictCursor) as cursor:
                 cursor.execute(normalized_statement, request.params or ())
                 rows = cursor.fetchmany(row_limit)
         return list(rows)
 
-    def _connect(self):
+    def _connect(self, database_name: str):
         return self._pymysql.connect(
             host=self._host,
             port=self._port,
             user=self._user,
             password=self._password,
-            database=self._database,
+            database=database_name,
             charset=self._charset,
+        )
+
+    def _resolve_database_name(self, database_name: str | None) -> str:
+        if database_name is not None and str(database_name).strip():
+            normalized = str(database_name).strip()
+            if normalized in self._allowed_databases:
+                return normalized
+            available = ", ".join(sorted(self._allowed_databases)) or "<none>"
+            raise build_error(
+                "STORAGE_RESOURCE_NOT_FOUND",
+                f"Unknown MySQL database `{database_name}`. Available databases: {available}",
+            )
+        if len(self._allowed_databases) == 1:
+            return self._allowed_databases[0]
+        available = ", ".join(sorted(self._allowed_databases)) or "<none>"
+        raise build_error(
+            "STORAGE_RESOURCE_REQUIRED",
+            f"MySQL database is required. Available databases: {available}",
         )
 
     @staticmethod

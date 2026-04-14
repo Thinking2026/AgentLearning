@@ -61,6 +61,7 @@ class LLMResponse:
 @dataclass(slots=True)
 class SQLQueryRequest:
     statement: str
+    database: str | None = None
     params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None
     max_rows: int = 100
 
@@ -68,6 +69,7 @@ class SQLQueryRequest:
 @dataclass(slots=True)
 class VectorSearchRequest:
     query: str
+    collection: str | None = None
     top_k: int = 3
     filters: dict[str, Any] = field(default_factory=dict)
 

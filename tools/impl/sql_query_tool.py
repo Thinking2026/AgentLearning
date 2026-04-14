@@ -16,13 +16,13 @@ def build_sql_query_tool_description(backend_name: str) -> str:
         return (
             "Run a single read-only SELECT query against the SQLite database. "
             "Use this for relational tables with custom schemas. "
-            "Provide SQL plus parameters, and inspect schema first when needed."
+            "Provide a database alias, SQL plus parameters, and inspect schema first when needed."
         )
     if backend_name == "mysql":
         return (
             "Run a single read-only SELECT query against the MySQL database. "
             "Use this for relational tables with custom schemas. "
-            "Provide SQL plus parameters, and inspect schema first when needed."
+            "Provide a database name, SQL plus parameters, and inspect schema first when needed."
         )
     return (
         f"Run a single read-only SELECT query against the `{backend_name}` relational backend. "
@@ -34,6 +34,10 @@ class SQLQueryTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
+            "database": {
+                "type": "string",
+                "description": "Authorized database alias or database name to query.",
+            },
             "statement": {
                 "type": "string",
                 "description": (
@@ -76,6 +80,9 @@ class SQLQueryTool(BaseTool):
         self._backend_name = backend_name
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
+        database = self._normalize_database(arguments.get("database"))
+        if isinstance(database, AgentError):
+            return self._error_result(database)
         statement = str(arguments.get("statement", "")).strip()
         if not statement:
             error = build_error("TOOL_ARGUMENT_ERROR", "SQL query tool requires a non-empty statement.")
@@ -93,6 +100,7 @@ class SQLQueryTool(BaseTool):
         try:
             rows = self._storage.query(
                 SQLQueryRequest(
+                    database=database,
                     statement=statement,
                     params=normalized_params,
                     max_rows=max_rows,
@@ -110,6 +118,7 @@ class SQLQueryTool(BaseTool):
                 success=True,
                 data={
                     "backend": self._backend_name,
+                    "database": database,
                     "statement": statement,
                     "row_count": len(rows),
                     "columns": columns,
@@ -133,6 +142,15 @@ class SQLQueryTool(BaseTool):
             "TOOL_ARGUMENT_ERROR",
             "SQL query tool params must be an array, an object, or omitted.",
         )
+
+    @staticmethod
+    def _normalize_database(value: Any) -> str | None | AgentError:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+        return normalized
 
     @staticmethod
     def _normalize_max_rows(value: Any) -> int | AgentError:

@@ -22,6 +22,10 @@ class VectorSearchTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
+            "collection": {
+                "type": "string",
+                "description": "Authorized collection name to search.",
+            },
             "query": {
                 "type": "string",
                 "description": "Semantic search query text.",
@@ -51,6 +55,9 @@ class VectorSearchTool(BaseTool):
         self._backend_name = backend_name
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
+        collection = self._normalize_collection(arguments.get("collection"))
+        if isinstance(collection, AgentError):
+            return self._error_result(collection)
         query = str(arguments.get("query", "")).strip()
         if not query:
             error = build_error("TOOL_ARGUMENT_ERROR", "Vector search tool requires a non-empty query.")
@@ -63,6 +70,7 @@ class VectorSearchTool(BaseTool):
         try:
             matches = self._storage.search(
                 VectorSearchRequest(
+                    collection=collection,
                     query=query,
                     top_k=top_k,
                 )
@@ -78,6 +86,7 @@ class VectorSearchTool(BaseTool):
                 success=True,
                 data={
                     "backend": self._backend_name,
+                    "collection": collection,
                     "query": query,
                     "top_k": top_k,
                     "match_count": len(matches),
@@ -96,6 +105,15 @@ class VectorSearchTool(BaseTool):
         if top_k < 1 or top_k > 20:
             return build_error("TOOL_ARGUMENT_ERROR", "Vector search tool top_k must be between 1 and 20.")
         return top_k
+
+    @staticmethod
+    def _normalize_collection(value: object) -> str | None | AgentError:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+        return normalized
 
     @staticmethod
     def _error_result(error: AgentError) -> ToolResult:
