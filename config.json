@@ -78,7 +78,7 @@
   "tracing": {
     "enabled": true,
     "output_path": "runtime/tracing/traces.jsonl",
-    "capture_payloads": true,
+    "payload_redaction_enabled": false,
     "max_content_length": 2048
   },
   "time": {

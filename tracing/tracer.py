@@ -77,13 +77,13 @@ class Tracer:
         self,
         enabled: bool = True,
         output_path: str | Path = "runtime",
-        capture_payloads: bool = False,
+        payload_redaction_enabled: bool = True,
         max_content_length: int = 1000,
     ) -> None:
         self._enabled = enabled
         self._output_dir = self._resolve_output_dir(output_path)
-        self._capture_payloads = capture_payloads
-        self._max_content_length = max(64, int(max_content_length))
+        self._payload_redaction_enabled = payload_redaction_enabled
+        self._max_content_length = max(1024, int(max_content_length))
         self._lock = threading.Lock()
         self._local = threading.local()
         if self._enabled:
@@ -224,9 +224,9 @@ class Tracer:
         if value is None or isinstance(value, (bool, int, float)):
             return value
         if isinstance(value, str):
-            if self._capture_payloads:
-                return value[:self._max_content_length]
-            return f"<str len={len(value)}>"
+            if self._payload_redaction_enabled:
+                return f"<str len={len(value)}>"
+            return value[:self._max_content_length]
         if isinstance(value, dict):
             return {
                 str(key): self._normalize_value(nested_value)

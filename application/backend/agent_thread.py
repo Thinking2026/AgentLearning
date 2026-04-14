@@ -217,8 +217,11 @@ class AgentThread(threading.Thread):
     def _load_tracing_config(self) -> None:
         self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
         self._tracing_output_path = self._config.get("tracing.output_path", "runtime/tracing/traces.jsonl")
-        self._tracing_capture_payloads = bool(
-            self._config.get("tracing.capture_payloads", False)
+        self._tracing_payload_redaction_enabled = bool(
+            self._config.get(
+                "tracing.payload_redaction_enabled",
+                not bool(self._config.get("tracing.capture_payloads", False)),
+            )
         )
         self._tracing_max_content_length = self._config_value_reader.positive_int(
             "tracing.max_content_length",
@@ -229,7 +232,7 @@ class AgentThread(threading.Thread):
         return Tracer(
             enabled=self._tracing_enabled,
             output_path=self._tracing_output_path,
-            capture_payloads=self._tracing_capture_payloads,
+            payload_redaction_enabled=self._tracing_payload_redaction_enabled,
             max_content_length=self._tracing_max_content_length,
         )
 
