@@ -478,7 +478,7 @@ class AgentThread(threading.Thread):
                     self._complete_current_task(
                         archive_current_task=False,
                     )
-                    break
+                    continue
 
                 incoming_message = self._wait_for_user_message(session_status)
                 if not self._is_running():
@@ -524,7 +524,7 @@ class AgentThread(threading.Thread):
                             archive_current_task=execution_result.error is None,
                             error=execution_result.error,
                         )
-                        break
+                        continue
 
                     if execution_result.error is not None:
                         self._logger.error(
