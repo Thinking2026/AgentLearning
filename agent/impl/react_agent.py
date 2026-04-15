@@ -41,10 +41,10 @@ class ReActAgent(Agent):
         session_status: SessionStatus,
         user_message: ChatMessage | None,
     ) -> tuple[LLMRequest | None, None]:
-        conversation = self._agent_context.get_conversation_history()
         if user_message is not None and user_message.content.strip():
             message = ChatMessage(role="user", content=user_message.content.strip())
-            conversation.append(message)
+            self._agent_context.append_conversation_message(message)
+        conversation = self._agent_context.get_conversation_history()
 
         return (
             self._message_formatter.build_request(
@@ -150,22 +150,6 @@ class ReActAgent(Agent):
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             )
             self._agent_context.append_conversation_message(observation)
-            if not result.success:
-                intermediate_messages.append(
-                    ChatMessage(
-                        role="assistant",
-                        content=f"[tool:{tool_call.name}] {result.output}",
-                        metadata={
-                            "source": "tool",
-                            "tool_name": tool_call.name,
-                            "tool_arguments": tool_call.arguments,
-                            "tool_result": result.output,
-                            "tool_success": False,
-                        },
-                    )
-                )
-                return AgentExecutionResult(user_messages=intermediate_messages)
-
             intermediate_messages.append(
                 ChatMessage(
                     role="assistant",
@@ -175,7 +159,7 @@ class ReActAgent(Agent):
                         "tool_name": tool_call.name,
                         "tool_arguments": tool_call.arguments,
                         "tool_result": result.output,
-                        "tool_success": True,
+                        "tool_success": result.success,
                     },
                 )
             )

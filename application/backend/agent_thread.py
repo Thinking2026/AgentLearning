@@ -507,14 +507,6 @@ class AgentThread(threading.Thread):
                     for message in execution_result.user_messages:
                         self._agent_to_user_queue.send_agent_message(message)
 
-                    if execution_result.error is not None:
-                        self._logger.error(
-                            "Agent execution returned an internal error",
-                            zap.any("trace_id", None if self._tracer is None else self._tracer.current_trace_id()),
-                            zap.any("span_id", None if self._tracer is None else self._tracer.current_span_id()),
-                            zap.any("error", execution_result.error),
-                        )
-
                     if execution_result.task_completed:
                         self._agent_to_user_queue.send_agent_message(
                             ChatMessage(
@@ -533,9 +525,17 @@ class AgentThread(threading.Thread):
                         )
                         break
 
-                    if self._is_hard_error(execution_result.error):
-                        self._finish_session_trace(error=execution_result.error)
-                        break
+                    if execution_result.error is not None:
+                        self._logger.error(
+                            "Agent execution returned an internal error",
+                            zap.any("trace_id", None if self._tracer is None else self._tracer.current_trace_id()),
+                            zap.any("span_id", None if self._tracer is None else self._tracer.current_span_id()),
+                            zap.any("error", execution_result.error),
+                        )
+                        if self._is_hard_error(execution_result.error):
+                            self._finish_session_trace(error=execution_result.error)
+                            break
+
                 except Exception as exc:
                     normalized_error = self._normalize_error(exc)
                     self._finish_session_trace(error=normalized_error)

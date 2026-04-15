@@ -60,4 +60,11 @@ class MessageFormatter:
             return list(conversation)
         if len(conversation) <= max_messages:
             return list(conversation)
-        return list(conversation[-max_messages:])
+        trimmed = list(conversation[-max_messages:])
+        # A tail-trim may leave orphaned tool results at the start: the assistant
+        # message that issued the tool_calls was cut off, but the tool role messages
+        # that follow it were kept. OpenAI/Claude APIs reject this. Drop leading
+        # tool messages until we reach a user or assistant message.
+        while trimmed and trimmed[0].role == "tool":
+            trimmed.pop(0)
+        return trimmed
