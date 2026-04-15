@@ -6,7 +6,7 @@ from typing import Any, Literal
 from schemas.errors import AgentError
 from utils.timezone import isoformat
 
-ChatRole = Literal["user", "assistant", "conversation"]
+ChatRole = Literal["user", "assistant", "tool"]
 
 @dataclass(slots=True)
 class ChatMessage:
@@ -15,7 +15,7 @@ class ChatMessage:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        valid_roles = {"user", "assistant", "conversation"}
+        valid_roles = {"user", "assistant", "tool"}
         if self.role not in valid_roles:
             raise ValueError(f"Unsupported chat role: {self.role}")
 

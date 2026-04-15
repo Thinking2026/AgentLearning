@@ -200,10 +200,10 @@ class Tracer:
             ensure_ascii=False,
         )
         with self._lock:
-            with self._build_log_path().open("a", encoding="utf-8") as file_handle:
+            with self._build_tracing_log_path().open("a", encoding="utf-8") as file_handle:
                 file_handle.write(serialized + "\n")
 
-    def _build_log_path(self) -> Path:
+    def _build_tracing_log_path(self) -> Path:
         timestamp = strftime("%Y%m%d%H")
         return self._output_dir / f"{timestamp}_trace.jsonl"
 

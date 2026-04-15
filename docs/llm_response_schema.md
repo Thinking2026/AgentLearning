@@ -33,7 +33,7 @@ class LLMResponse:
 ```python
 @dataclass(slots=True)
 class ChatMessage:
-    role: Literal["user", "assistant", "conversation"]
+    role: Literal["user", "assistant", "tool"]
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
 ```

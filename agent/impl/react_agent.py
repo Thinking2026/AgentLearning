@@ -115,7 +115,7 @@ class ReActAgent(Agent):
                 should_reset=tool_result.should_reset,
             )
 
-        return AgentExecutionResult(
+        return AgentExecutionResult(#TODO 不需要调用工具就可以认为是任务完成了吗？
             user_messages=[self._format_final_conclusion(response)],
             should_reset=True,
             task_completed=True,

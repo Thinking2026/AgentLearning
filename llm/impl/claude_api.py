@@ -162,7 +162,7 @@ class ClaudeLLMClient(BaseLLMClient):
                     )
                 return {"role": "assistant", "content": content}
             return {"role": "assistant", "content": message.content}
-        if message.metadata.get("conversation_source") == "tool":
+        if message.role == "tool":
             tool_call_id = message.metadata.get("llm_raw_tool_call_id")
             if not tool_call_id:
                 return {"role": "user", "content": message.content}
@@ -176,7 +176,7 @@ class ClaudeLLMClient(BaseLLMClient):
                     }
                 ],
             }
-        return {"role": "assistant", "content": message.content}
+        return None
 
     @staticmethod
     def _serialize_tools(tools: list[dict]) -> list[dict[str, object]]:

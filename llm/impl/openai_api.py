@@ -116,28 +116,19 @@ class OpenAILLMClient(BaseLLMClient):
     def _serialize_messages(request: LLMRequest) -> list[dict]:
         serialized_messages: list[dict] = [{"role": "system", "content": request.system_prompt}]
         for message in request.messages:
-            role = OpenAILLMClient._map_message_role(message)
-            serialized = {"role": role, "content": message.content}
-            if role == "assistant":
+            serialized = {"role": message.role, "content": message.content}
+            if message.role == "assistant":
                 tool_calls = message.metadata.get("tool_calls")
                 if isinstance(tool_calls, list) and tool_calls:
                     serialized["tool_calls"] = OpenAILLMClient._serialize_assistant_tool_calls(
                         tool_calls
                     )
-            if role == "tool":
+            if message.role == "tool":
                 tool_call_id = message.metadata.get("llm_raw_tool_call_id")
                 if tool_call_id:
                     serialized["tool_call_id"] = tool_call_id
             serialized_messages.append(serialized)
         return serialized_messages
-
-    @staticmethod
-    def _map_message_role(message: ChatMessage) -> str:
-        if message.role == "conversation" and message.metadata.get("conversation_source") == "tool":
-            return "tool"
-        if message.role == "conversation":
-            return "assistant"
-        return message.role
 
     @staticmethod
     def _serialize_tools(tools: list[dict]) -> list[dict]:

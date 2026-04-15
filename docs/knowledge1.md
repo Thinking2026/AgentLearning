@@ -87,7 +87,7 @@
 
 - `user`
 - `assistant`
-- `conversation`
+- `tool`
 
 
 ### 3.2 映射规则
@@ -96,8 +96,8 @@
 
 - `user` -> OpenAI `user`
 - `assistant` -> OpenAI `assistant`
-- `conversation` 且 `metadata["conversation_source"] == "tool"` -> OpenAI `tool`
-- 其他 `conversation` -> OpenAI `assistant`
+- `tool` -> OpenAI `tool`
+- `assistant` -> OpenAI `assistant`
 
 
 ### 3.3 小图
@@ -110,8 +110,8 @@ ChatMessage(role="assistant")
     -> OpenAI message { role: "assistant", content: ... }
 
 ChatMessage(
-    role="conversation",
-    metadata={"conversation_source": "tool", "llm_raw_tool_call_id": "..."}
+    role="tool",
+    metadata={"llm_raw_tool_call_id": "..."}
 )
     -> OpenAI message {
          role: "tool",
@@ -119,7 +119,7 @@ ChatMessage(
          content: ...
        }
 
-ChatMessage(role="conversation", metadata={...but no conversation_source="tool"...})
+ChatMessage(role="assistant", metadata={...})
     -> OpenAI message { role: "assistant", content: ... }
 ```
 
@@ -130,7 +130,7 @@ ChatMessage(role="conversation", metadata={...but no conversation_source="tool".
 1. LLM 返回 assistant message + tool_calls
 2. Agent 执行工具
 3. Agent 生成 tool observation
-4. tool observation 作为 ChatMessage(role="conversation", conversation_source="tool")
+4. tool observation 作为 ChatMessage(role="tool")
 5. OpenAI 客户端把它序列化成 role="tool" 的 message
 6. 下一轮 LLM 才能合法继续
 ```

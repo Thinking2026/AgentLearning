@@ -40,12 +40,11 @@ class MessageFormatter:
         llm_raw_tool_call_id: str | None = None,
     ) -> ChatMessage:
         return ChatMessage(
-            role="conversation",
+            role="tool",
             content=output,
             metadata={
                 "tool_name": tool_name,
                 "llm_raw_tool_call_id": llm_raw_tool_call_id,
-                "conversation_source": "tool",
             },
         )
 

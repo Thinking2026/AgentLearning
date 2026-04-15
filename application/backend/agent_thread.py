@@ -493,10 +493,10 @@ class AgentThread(threading.Thread):
                     self._record_user_input_trace(incoming_message, input_type="hint")
 
                 try:
-                    execution_result = self._agent.run(session_status, incoming_message)
+                    execution_result = self._agent.run(session_status, incoming_message)#什么时候会出来，回到循环这里
                     for message in execution_result.user_messages:
                         self._agent_to_user_queue.send_agent_message(message)
-                    if execution_result.error is not None:
+                    if execution_result.error is not None:#TODO错误处理
                         self._finish_session_trace(error=execution_result.error)
                         self._logger.error(
                             "Agent execution returned an internal error",
@@ -504,7 +504,7 @@ class AgentThread(threading.Thread):
                             zap.any("span_id", None if self._tracer is None else self._tracer.current_span_id()),
                             zap.any("error", execution_result.error),
                         )
-                    if execution_result.should_reset:
+                    if execution_result.should_reset:#TODO 1 完美解决 2 无法解决了
                         if not execution_result.user_messages:
                             self._agent_to_user_queue.send_agent_message(
                                 ChatMessage(
