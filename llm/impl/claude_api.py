@@ -65,15 +65,16 @@ class ClaudeLLMClient(BaseLLMClient):
         )
 
     def generate(self, request: LLMRequest) -> LLMResponse:
+        last_user_message = next(
+            (m.content for m in reversed(request.messages) if m.role == "user"), ""
+        )
         with self._start_span(
             "llm.generate",
             attributes={
                 "provider": self.provider_name,
                 "model": self._model,
                 "message_count": len(request.messages),
-                "tool_schema_count": len(request.tools),
-                "tools": self._trace_tools(request.tools),
-                "max_tokens": self._max_tokens,
+                "last_user_message": last_user_message,
             },
         ) as span:
             payload: dict[str, object] = {
@@ -90,24 +91,18 @@ class ClaudeLLMClient(BaseLLMClient):
 
             response_data = self._post_json("/v1/messages", payload)
             response = self._parse_message_response(response_data)
+            usage = response_data.get("usage") or {}
             span.add_attributes(
                 {
                     "finish_reason": response.finish_reason,
                     "tool_calls_count": len(response.tool_calls),
+                    "tool_call_names": [tc.name for tc in response.tool_calls],
+                    "prompt_tokens": usage.get("input_tokens"),
+                    "completion_tokens": usage.get("output_tokens"),
+                    "response_text": response.assistant_message.content,
                 }
             )
             return response
-
-    @staticmethod
-    def _trace_tools(tools: list[dict]) -> list[dict]:
-        return [
-            {
-                "name": tool.get("name"),
-                "description": tool.get("description"),
-                "parameters": tool.get("parameters"),
-            }
-            for tool in tools
-        ]
 
     def _post_json(self, path: str, payload: dict[str, object]) -> dict:
         http_request = urllib.request.Request(
