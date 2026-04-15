@@ -61,22 +61,17 @@ class ReActAgent(Agent):
         try:
             self._cur_react_attempt_iterations += 1
             return self._llm_client.generate(request), None
-        except TimeoutError as exc: #TODO 如何fallback需要想方案
-            return None, self._build_error_result(
-                f"LLM call timed out. Temporary timeout strategy applied: {exc}"
-            )
         except AgentError as exc:
             if exc.code == "LLM_ALL_PROVIDERS_FAILED":
-                return None, self._build_error_result("Can not get response from llm")
-            if exc.code == "LLM_TIMEOUT":
-                return None, self._build_error_result(
-                    f"LLM call timed out. Temporary timeout strategy applied: {exc}"
+                return None, AgentExecutionResult(error=exc)
+            return None, AgentExecutionResult(error=build_error("AGENT_EXECUTION_ERROR", str(exc)))
+        except TimeoutError as exc: #TODO 如何fallback需要想方案
+            return None, AgentExecutionResult(
+                error=build_error(
+                    "AGENT_EXECUTION_ERROR",
+                    f"LLM call timed out unexpectedly outside fallback handling: {exc}",
                 )
-            if exc.code in {"LLM_RESPONSE_PARSE_ERROR", "LLM_RESPONSE_ERROR"}:
-                return None, self._build_error_result(
-                    f"LLM returned a response that could not be parsed: {exc}"
-                )
-            return None, self._build_error_result(f"LLM call failed: {exc}")
+            )
 
     def _parse_llm_api_response(
         self,
@@ -112,13 +107,19 @@ class ReActAgent(Agent):
             tool_result = self._handle_tool_calls(response)
             return AgentExecutionResult(
                 user_messages=[*llm_messages, *tool_result.user_messages],
-                should_reset=tool_result.should_reset,
+                error=tool_result.error,
+                task_completed=tool_result.task_completed,
             )
 
         return AgentExecutionResult(#TODO 不需要调用工具就可以认为是任务完成了吗？
             user_messages=[self._format_final_conclusion(response)],
-            should_reset=True,
             task_completed=True,
+        )
+
+    @staticmethod
+    def _build_error_result(content: str) -> AgentExecutionResult:
+        return AgentExecutionResult(
+            error=build_error("AGENT_EXECUTION_ERROR", content),
         )
 
     @staticmethod
@@ -148,7 +149,20 @@ class ReActAgent(Agent):
             )
             self._agent_context.append_conversation_message(observation)
             if not result.success:
-                return self._build_tool_error_result(tool_call.name, result)
+                intermediate_messages.append(
+                    ChatMessage(
+                        role="assistant",
+                        content=f"[tool:{tool_call.name}] {result.output}",
+                        metadata={
+                            "source": "tool",
+                            "tool_name": tool_call.name,
+                            "tool_arguments": tool_call.arguments,
+                            "tool_result": result.output,
+                            "tool_success": False,
+                        },
+                    )
+                )
+                return AgentExecutionResult(user_messages=intermediate_messages)
 
             intermediate_messages.append(
                 ChatMessage(
@@ -159,26 +173,8 @@ class ReActAgent(Agent):
                         "tool_name": tool_call.name,
                         "tool_arguments": tool_call.arguments,
                         "tool_result": result.output,
+                        "tool_success": True,
                     },
                 )
             )
         return AgentExecutionResult(user_messages=intermediate_messages)
-
-    def _build_tool_error_result(self, tool_name: str, result: ToolResult) -> AgentExecutionResult:
-        error = result.error
-        if error is None:
-            error = build_error("TOOL_EXECUTION_ERROR", f"Tool `{tool_name}` failed with an unknown error.")
-        return AgentExecutionResult(
-            error=build_error(
-                error.code,
-                f"Tool `{tool_name}` failed: {error.message}",
-            ),
-            should_reset=True,
-        )
-
-    @staticmethod
-    def _build_error_result(content: str) -> AgentExecutionResult:
-        return AgentExecutionResult(
-            error=build_error("AGENT_EXECUTION_ERROR", content),
-            should_reset=True,
-        )

@@ -15,7 +15,6 @@ from tools import ToolRegistry
 class AgentExecutionResult:
     user_messages: list[ChatMessage] = field(default_factory=list)
     error: AgentError | None = None
-    should_reset: bool = False
     task_completed: bool = False
 
 

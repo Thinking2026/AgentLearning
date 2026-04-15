@@ -452,77 +452,81 @@ class AgentThread(threading.Thread):
         try:
             while self._is_running():
                 session_status = self._session.get_status()
-
                 if (
                     session_status == SessionStatus.IN_PROGRESS
                     and self._agent is not None
                     and self._agent.get_react_attempt_iterations() > self._max_react_attempt_iterations
                 ):#有限处理，防止无限循环
-                    self._agent_to_user_queue.send_agent_message(
-                        ChatMessage(
-                            role="assistant",
-                            content="Sorry, this question is too hard, i can not solve",
-                            metadata={
-                                "session_status": SessionStatus.NEW_TASK,
-                                "task_completed": False,
-                            },
-                        )
+                    completion_message = ChatMessage(
+                        role="assistant",
+                        content="Sorry, this question is too hard, i can not solve",
+                        metadata={
+                            "session_status": SessionStatus.NEW_TASK,
+                            "task_completed": True,
+                        },
                     )
-                    self.reset()#reset会清除当前任务历史，不存档
-                    continue
+                    self._agent_to_user_queue.send_agent_message(completion_message)
+                    self._complete_current_task(
+                        archive_current_task=False,
+                    )
+                    break
 
                 incoming_message = self._wait_for_user_message(session_status)
-                if incoming_message is None and session_status == SessionStatus.NEW_TASK:#被关闭事件唤醒
-                    continue
-                if session_status == SessionStatus.NEW_TASK and incoming_message is not None:
-                    self._start_session_trace(incoming_message)
-                    self._agent.begin_session()
-                    self._agent_to_user_queue.send_agent_message(
-                        ChatMessage(
-                            role="assistant",
-                            content="",
-                            metadata={
-                                "control": True,
-                                "session_status": SessionStatus.IN_PROGRESS,
-                                "task_completed": False,
-                            },
+                if not self._is_running():
+                    break
+                if incoming_message is not None:
+                    if session_status == SessionStatus.NEW_TASK: 
+                        self._start_session_trace(incoming_message)
+                        self._agent.begin_session()
+                        self._agent_to_user_queue.send_agent_message(
+                            ChatMessage(
+                                role="assistant",
+                                content="",
+                                metadata={
+                                    "control": True,
+                                    "session_status": SessionStatus.IN_PROGRESS,
+                                    "task_completed": False,
+                                },
+                            )
                         )
-                    )
-                    session_status = self._session.get_status()
-                elif incoming_message is not None:#In_progress状态收到用户消息，视为hint
-                    self._record_user_input_trace(incoming_message, input_type="hint")
+                        session_status = self._session.get_status()
+                    else:
+                        self._record_user_input_trace(incoming_message, input_type="hint")
 
                 try:
-                    execution_result = self._agent.run(session_status, incoming_message)#什么时候会出来，回到循环这里
+                    execution_result = self._agent.run(session_status, incoming_message)
                     for message in execution_result.user_messages:
                         self._agent_to_user_queue.send_agent_message(message)
-                    if execution_result.error is not None:#TODO错误处理
-                        self._finish_session_trace(error=execution_result.error)
+
+                    if execution_result.error is not None:
                         self._logger.error(
                             "Agent execution returned an internal error",
                             zap.any("trace_id", None if self._tracer is None else self._tracer.current_trace_id()),
                             zap.any("span_id", None if self._tracer is None else self._tracer.current_span_id()),
                             zap.any("error", execution_result.error),
                         )
-                    if execution_result.should_reset:#TODO 1 完美解决 2 无法解决了
-                        if not execution_result.user_messages:
-                            self._agent_to_user_queue.send_agent_message(
-                                ChatMessage(
-                                    role="assistant",
-                                    content="",
-                                    metadata={
-                                        "control": True,
-                                        "session_status": SessionStatus.NEW_TASK,
-                                        "task_completed": False,
-                                    },
-                                )
+
+                    if execution_result.task_completed:
+                        self._agent_to_user_queue.send_agent_message(
+                            ChatMessage(
+                                role="assistant",
+                                content="",
+                                metadata={
+                                    "control": True,
+                                    "session_status": SessionStatus.NEW_TASK,
+                                    "task_completed": True,
+                                },
                             )
+                        )
+                        self._complete_current_task(
+                            archive_current_task=execution_result.error is None,
+                            error=execution_result.error,
+                        )
+                        break
+
+                    if self._is_hard_error(execution_result.error):
                         self._finish_session_trace(error=execution_result.error)
-                        if self._agent is not None:
-                            self._agent.reset(
-                                archive_current_task=execution_result.task_completed
-                            )
-                        self._restore_base_system_prompt()
+                        break
                 except Exception as exc:
                     normalized_error = self._normalize_error(exc)
                     self._finish_session_trace(error=normalized_error)
@@ -559,6 +563,16 @@ class AgentThread(threading.Thread):
         self._session_span.finish(status=status, error=error)
         self._session_span = None
 
+    def _complete_current_task(
+        self,
+        archive_current_task: bool,
+        error: Exception | AgentError | None = None,
+    ) -> None:
+        self._finish_session_trace(error=error)
+        if self._agent is not None:
+            self._agent.reset(archive_current_task=archive_current_task)
+        self._restore_base_system_prompt()
+
     def _record_user_input_trace(
         self,
         user_message: ChatMessage,
@@ -592,6 +606,10 @@ class AgentThread(threading.Thread):
         if isinstance(exc, AgentError):
             return exc
         return build_error("AGENT_THREAD_ERROR", str(exc))
+
+    @staticmethod
+    def _is_hard_error(error: AgentError | None) -> bool:
+        return error is not None and error.code == "LLM_ALL_PROVIDERS_FAILED"
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
