@@ -162,15 +162,19 @@ class OpenAILLMClient(BaseLLMClient):
         for tool_call in tool_calls:
             if not isinstance(tool_call, dict):
                 continue
-            llm_raw_tool_call_id = tool_call.get("llm_raw_tool_call_id") or tool_call.get("id")
-            function_payload = tool_call.get("function")
-            if not isinstance(llm_raw_tool_call_id, str) or not isinstance(function_payload, dict):
+            tool_call_id = tool_call.get("llm_raw_tool_call_id")
+            tool_name = tool_call.get("name")
+            arguments = tool_call.get("arguments") or {}
+            if not isinstance(tool_call_id, str) or not isinstance(tool_name, str):
                 continue
             serialized_tool_calls.append(
                 {
-                    "id": llm_raw_tool_call_id,
+                    "id": tool_call_id,
                     "type": "function",
-                    "function": function_payload,
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(arguments, ensure_ascii=False),
+                    },
                 }
             )
         return serialized_tool_calls
@@ -204,13 +208,9 @@ class OpenAILLMClient(BaseLLMClient):
                     "tool_calls_count": len(tool_calls),
                     "tool_calls": [
                         {
-                            "id": tool_call.llm_raw_tool_call_id,
+                            "name": tool_call.name,
                             "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.name,
-                                "arguments": json.dumps(tool_call.arguments, ensure_ascii=False),
-                            },
+                            "arguments": tool_call.arguments,
                         }
                         for tool_call in tool_calls
                     ],
