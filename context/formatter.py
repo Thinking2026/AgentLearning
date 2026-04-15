@@ -18,7 +18,6 @@ class MessageFormatter:
         system_prompt: str,
         conversation: list[ChatMessage],
         tools: list[dict[str, Any]],
-        context: list[dict[str, Any]],
         max_messages: int | None = None,
     ) -> LLMRequest:
         effective_max_messages = self._max_messages if max_messages is None else max_messages
@@ -30,7 +29,6 @@ class MessageFormatter:
             system_prompt=system_prompt,
             messages=trimmed_conversation,
             tools=tools,
-            context=context,
         )
 
     def format_tool_observation(

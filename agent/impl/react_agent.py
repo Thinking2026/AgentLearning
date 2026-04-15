@@ -52,7 +52,6 @@ class ReActAgent(Agent):
                 system_prompt=self._agent_context.get_system_prompt(),
                 conversation=conversation,
                 tools=self._tool_registry.get_tool_schemas(),
-                context=[],
             ),
             None,
         )

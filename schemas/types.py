@@ -47,7 +47,6 @@ class LLMRequest:
     system_prompt: str
     messages: list[ChatMessage]
     tools: list[dict[str, Any]]
-    context: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)

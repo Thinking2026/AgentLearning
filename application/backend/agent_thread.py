@@ -499,6 +499,7 @@ class AgentThread(threading.Thread):
                             )
                         )
                         session_status = self._session.get_status()
+                        self._record_user_input_trace(incoming_message, input_type="new task")
                     else:
                         self._record_user_input_trace(incoming_message, input_type="hint")
 

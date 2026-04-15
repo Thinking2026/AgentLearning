@@ -153,7 +153,6 @@ class FallbackLLMClient(BaseLLMClient):
             system_prompt=request.system_prompt,
             messages=[*request.messages, ChatMessage(role="user", content=repair_prompt)],
             tools=request.tools,
-            context=request.context,
         )
         try:
             return provider.generate(repaired_request)
