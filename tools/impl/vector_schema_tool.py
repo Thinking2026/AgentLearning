@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import AgentError, ToolResult, build_error
+from schemas import AgentError, ToolResult, VECTOR_SCHEMA_TOOL_ERROR, build_error
 from storage import VectorStorage
 from tools.tools import BaseTool, build_tool_output
 
@@ -56,7 +56,7 @@ class VectorSchemaTool(BaseTool):
         except AgentError as exc:
             return self._error_result(exc)
         except Exception as exc:
-            error = build_error("VECTOR_SCHEMA_TOOL_ERROR", f"Vector schema tool failed unexpectedly: {exc}")
+            error = build_error(VECTOR_SCHEMA_TOOL_ERROR, f"Vector schema tool failed unexpectedly: {exc}")
             return self._error_result(error)
 
         return ToolResult(

@@ -4,7 +4,17 @@ from abc import ABC, abstractmethod
 import time
 from typing import TYPE_CHECKING
 
-from schemas import AgentError, ChatMessage, LLMRequest, LLMResponse, build_error
+from schemas import (
+    AgentError,
+    ChatMessage,
+    LLMRequest,
+    LLMResponse,
+    LLM_ALL_PROVIDERS_FAILED,
+    LLM_CONFIG_ERROR,
+    LLM_RESPONSE_ERROR,
+    LLM_RESPONSE_PARSE_ERROR,
+    build_error,
+)
 from tracing import Span, Tracer
 
 if TYPE_CHECKING:
@@ -65,9 +75,9 @@ class FallbackLLMClient(BaseLLMClient):
         enable_provider_fallback: bool = False,
     ) -> None:
         if not provider_priority:
-            raise build_error("LLM_CONFIG_ERROR", "provider_priority cannot be empty")
+            raise build_error(LLM_CONFIG_ERROR, "provider_priority cannot be empty")
         if max_attempts <= 0:
-            raise build_error("LLM_CONFIG_ERROR", "max_attempts must be greater than 0")
+            raise build_error(LLM_CONFIG_ERROR, "max_attempts must be greater than 0")
         self._registry = registry
         self._provider_priority = provider_priority
         self._max_attempts = max_attempts
@@ -105,7 +115,7 @@ class FallbackLLMClient(BaseLLMClient):
                         time.sleep(self._retry_delays[attempt_idx])
 
         raise build_error(
-            "LLM_ALL_PROVIDERS_FAILED",
+            LLM_ALL_PROVIDERS_FAILED,
             "All attempted LLM providers failed. " + " | ".join(failure_messages),
         )
 
@@ -130,7 +140,7 @@ class FallbackLLMClient(BaseLLMClient):
         request: LLMRequest,
         error: AgentError,
     ) -> LLMResponse | None:
-        if error.code not in {"LLM_RESPONSE_PARSE_ERROR", "LLM_RESPONSE_ERROR"}:
+        if error.code not in {LLM_RESPONSE_PARSE_ERROR, LLM_RESPONSE_ERROR}:
             return None
 
         repair_prompt = (

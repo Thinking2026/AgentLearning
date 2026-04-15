@@ -20,7 +20,16 @@ from llm import (
     QwenLLMClient,
 )
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
-from schemas import AgentError, ChatMessage, SessionStatus, build_error
+from schemas import (
+    AGENT_THREAD_ERROR,
+    AgentError,
+    ChatMessage,
+    LLM_ALL_PROVIDERS_FAILED,
+    LLM_PROVIDER_NOT_FOUND,
+    STORAGE_CONFIG_ERROR,
+    SessionStatus,
+    build_error,
+)
 from storage import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from storage.bootstrap_documents import load_seed_documents
 from tracing import Span, Tracer
@@ -187,7 +196,7 @@ class AgentThread(threading.Thread):
         if fallback_database:
             return [fallback_database]
         raise build_error(
-            "STORAGE_CONFIG_ERROR",
+            STORAGE_CONFIG_ERROR,
             "MySQL storage requires `storage.mysql.allowed_databases` or `storage.mysql.database`.",
         )
 
@@ -436,7 +445,7 @@ class AgentThread(threading.Thread):
                     self._config.get("llm.anthropic_version", "2023-06-01"),
                 ),
             ).set_tracer(self._tracer)
-        raise build_error("LLM_PROVIDER_NOT_FOUND", f"Unsupported LLM provider: {provider_name}")
+        raise build_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}")
 
     def _build_agent(self) -> Agent:
         return ReActAgent(
@@ -605,11 +614,11 @@ class AgentThread(threading.Thread):
     def _normalize_error(exc: Exception | AgentError) -> AgentError:
         if isinstance(exc, AgentError):
             return exc
-        return build_error("AGENT_THREAD_ERROR", str(exc))
+        return build_error(AGENT_THREAD_ERROR, str(exc))
 
     @staticmethod
     def _is_hard_error(error: AgentError | None) -> bool:
-        return error is not None and error.code == "LLM_ALL_PROVIDERS_FAILED"
+        return error is not None and error.code == LLM_ALL_PROVIDERS_FAILED
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()

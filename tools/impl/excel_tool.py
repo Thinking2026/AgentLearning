@@ -3,7 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from schemas import ToolResult, build_error
+from schemas import (
+    EXCEL_TOOL_DEPENDENCY_ERROR,
+    EXCEL_TOOL_ERROR,
+    EXCEL_TOOL_FILE_NOT_FOUND,
+    EXCEL_TOOL_SHEET_EXISTS,
+    EXCEL_TOOL_SHEET_NOT_FOUND,
+    TOOL_ARGUMENT_ERROR,
+    ToolResult,
+    build_error,
+)
 from tools.tools import BaseTool, build_tool_output
 from utils.runtime_env import get_task_runtime_dir
 
@@ -61,12 +70,12 @@ class ExcelTool(BaseTool):
 
         if action not in {"inspect", "read_sheet", "write_sheet", "append_rows"}:
             error = build_error(
-                "TOOL_ARGUMENT_ERROR",
+                TOOL_ARGUMENT_ERROR,
                 "Excel tool action must be inspect, read_sheet, write_sheet, or append_rows.",
             )
             return self._error_result(error)
         if not path_value:
-            error = build_error("TOOL_ARGUMENT_ERROR", "Excel tool requires a non-empty path.")
+            error = build_error(TOOL_ARGUMENT_ERROR, "Excel tool requires a non-empty path.")
             return self._error_result(error)
 
         path = self._resolve_target_path(path_value)
@@ -92,7 +101,7 @@ class ExcelTool(BaseTool):
 
             return self._append_rows(path, sheet_name=sheet_name, rows=rows)
         except Exception as exc:
-            error = build_error("EXCEL_TOOL_ERROR", f"Excel tool failed: {exc}")
+            error = build_error(EXCEL_TOOL_ERROR, f"Excel tool failed: {exc}")
             return self._error_result(error)
 
     def _inspect_workbook(self, path: Path) -> ToolResult:
@@ -173,7 +182,7 @@ class ExcelTool(BaseTool):
                 sheet = workbook.create_sheet(title=target_sheet_name)
             elif target_sheet_name in workbook.sheetnames:
                 error = build_error(
-                    "EXCEL_TOOL_SHEET_EXISTS",
+                    EXCEL_TOOL_SHEET_EXISTS,
                     f"Excel sheet already exists: {target_sheet_name}. Set replace_sheet=true to overwrite it.",
                 )
                 return self._error_result(error)
@@ -248,7 +257,7 @@ class ExcelTool(BaseTool):
     def _normalize_rows(self, value: object) -> list[list[Any]] | ToolResult:
         if not isinstance(value, list) or not value:
             error = build_error(
-                "TOOL_ARGUMENT_ERROR",
+                TOOL_ARGUMENT_ERROR,
                 "Excel tool requires a non-empty rows array for write_sheet and append_rows.",
             )
             return self._error_result(error)
@@ -256,7 +265,7 @@ class ExcelTool(BaseTool):
         for row in value:
             if not isinstance(row, list):
                 error = build_error(
-                    "TOOL_ARGUMENT_ERROR",
+                    TOOL_ARGUMENT_ERROR,
                     "Excel tool rows must be an array of row arrays.",
                 )
                 return self._error_result(error)
@@ -271,7 +280,7 @@ class ExcelTool(BaseTool):
 
     def _load_workbook(self, path: Path, *, read_only: bool) -> Any:
         if not path.exists():
-            raise build_error("EXCEL_TOOL_FILE_NOT_FOUND", f"Excel workbook not found: {path}")
+            raise build_error(EXCEL_TOOL_FILE_NOT_FOUND, f"Excel workbook not found: {path}")
         openpyxl = self._require_openpyxl()
         return openpyxl.load_workbook(path, read_only=read_only, data_only=True)
 
@@ -296,7 +305,7 @@ class ExcelTool(BaseTool):
         except KeyError as exc:
             available = ", ".join(workbook.sheetnames) or "<none>"
             raise build_error(
-                "EXCEL_TOOL_SHEET_NOT_FOUND",
+                EXCEL_TOOL_SHEET_NOT_FOUND,
                 f"Unknown Excel sheet: {sheet_name}. Available sheets: {available}",
             ) from exc
 
@@ -317,7 +326,7 @@ class ExcelTool(BaseTool):
             import openpyxl
         except ModuleNotFoundError as exc:
             raise build_error(
-                "EXCEL_TOOL_DEPENDENCY_ERROR",
+                EXCEL_TOOL_DEPENDENCY_ERROR,
                 "Excel tool requires the `openpyxl` package to be installed.",
             ) from exc
         return openpyxl

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import AgentError, ToolResult, build_error
+from schemas import AGENT_EXECUTION_ERROR, AgentError, SQL_QUERY_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_error
 from storage import RelationalStorage, SQLQueryRequest
 from tools.tools import BaseTool, build_tool_output
 
@@ -85,7 +85,7 @@ class SQLQueryTool(BaseTool):
             return self._error_result(database)
         statement = str(arguments.get("statement", "")).strip()
         if not statement:
-            error = build_error("TOOL_ARGUMENT_ERROR", "SQL query tool requires a non-empty statement.")
+            error = build_error(TOOL_ARGUMENT_ERROR, "SQL query tool requires a non-empty statement.")
             return self._error_result(error)
 
         params = arguments.get("params")
@@ -109,7 +109,7 @@ class SQLQueryTool(BaseTool):
         except AgentError as exc:
             return self._error_result(exc)
         except Exception as exc:
-            error = build_error("SQL_QUERY_TOOL_ERROR", f"SQL query tool failed unexpectedly: {exc}")
+            error = build_error(SQL_QUERY_TOOL_ERROR, f"SQL query tool failed unexpectedly: {exc}")
             return self._error_result(error)
 
         columns = list(rows[0].keys()) if rows else []
@@ -139,7 +139,7 @@ class SQLQueryTool(BaseTool):
         if isinstance(params, dict):
             return params
         return build_error(
-            "TOOL_ARGUMENT_ERROR",
+            TOOL_ARGUMENT_ERROR,
             "SQL query tool params must be an array, an object, or omitted.",
         )
 
@@ -157,9 +157,9 @@ class SQLQueryTool(BaseTool):
         try:
             max_rows = int(value)
         except (TypeError, ValueError):
-            return build_error("TOOL_ARGUMENT_ERROR", "SQL query tool max_rows must be an integer.")
+            return build_error(TOOL_ARGUMENT_ERROR, "SQL query tool max_rows must be an integer.")
         if max_rows < 1 or max_rows > 1000:
-            return build_error("TOOL_ARGUMENT_ERROR", "SQL query tool max_rows must be between 1 and 1000.")
+            return build_error(TOOL_ARGUMENT_ERROR, "SQL query tool max_rows must be between 1 and 1000.")
         return max_rows
 
     @staticmethod

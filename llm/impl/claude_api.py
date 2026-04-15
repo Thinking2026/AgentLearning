@@ -6,7 +6,19 @@ import urllib.error
 import urllib.request
 
 from llm.llm_api import BaseLLMClient
-from schemas import ChatMessage, LLMRequest, LLMResponse, ToolCall, build_error
+from schemas import (
+    ChatMessage,
+    LLMRequest,
+    LLMResponse,
+    LLM_CONFIG_ERROR,
+    LLM_HTTP_ERROR,
+    LLM_NETWORK_ERROR,
+    LLM_RESPONSE_ERROR,
+    LLM_RESPONSE_PARSE_ERROR,
+    LLM_TIMEOUT,
+    ToolCall,
+    build_error,
+)
 
 
 class ClaudeLLMClient(BaseLLMClient):
@@ -42,7 +54,7 @@ class ClaudeLLMClient(BaseLLMClient):
     ) -> "ClaudeLLMClient":
         resolved_api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not resolved_api_key:
-            raise build_error("LLM_CONFIG_ERROR", "Missing API key for Claude client.")
+            raise build_error(LLM_CONFIG_ERROR, "Missing API key for Claude client.")
         return cls(
             api_key=resolved_api_key,
             model=model,
@@ -114,16 +126,16 @@ class ClaudeLLMClient(BaseLLMClient):
                 body = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            raise build_error("LLM_HTTP_ERROR", f"Claude API HTTP {exc.code}: {body}") from exc
+            raise build_error(LLM_HTTP_ERROR, f"Claude API HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
-            raise build_error("LLM_NETWORK_ERROR", f"Claude API request failed: {exc.reason}") from exc
+            raise build_error(LLM_NETWORK_ERROR, f"Claude API request failed: {exc.reason}") from exc
         except TimeoutError as exc:
-            raise build_error("LLM_TIMEOUT", f"Claude API request timed out: {exc}") from exc
+            raise build_error(LLM_TIMEOUT, f"Claude API request timed out: {exc}") from exc
 
         try:
             return json.loads(body)
         except json.JSONDecodeError as exc:
-            raise build_error("LLM_RESPONSE_PARSE_ERROR", f"Claude API returned invalid JSON: {exc}") from exc
+            raise build_error(LLM_RESPONSE_PARSE_ERROR, f"Claude API returned invalid JSON: {exc}") from exc
 
     @staticmethod
     def _serialize_messages(request: LLMRequest) -> list[dict[str, object]]:
@@ -194,7 +206,7 @@ class ClaudeLLMClient(BaseLLMClient):
         content_blocks = response_data.get("content")
         if not isinstance(content_blocks, list):
             raise build_error(
-                "LLM_RESPONSE_ERROR",
+                LLM_RESPONSE_ERROR,
                 f"Claude API returned invalid content blocks: {response_data}",
             )
 
@@ -220,7 +232,7 @@ class ClaudeLLMClient(BaseLLMClient):
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     raise build_error(
-                        "LLM_RESPONSE_PARSE_ERROR",
+                        LLM_RESPONSE_PARSE_ERROR,
                         f"Claude API returned an invalid tool use payload: {exc}",
                     ) from exc
 

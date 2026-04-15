@@ -6,7 +6,19 @@ import urllib.error
 import urllib.request
 
 from llm.llm_api import BaseLLMClient
-from schemas import ChatMessage, LLMRequest, LLMResponse, ToolCall, build_error
+from schemas import (
+    ChatMessage,
+    LLMRequest,
+    LLMResponse,
+    LLM_CONFIG_ERROR,
+    LLM_HTTP_ERROR,
+    LLM_NETWORK_ERROR,
+    LLM_RESPONSE_ERROR,
+    LLM_RESPONSE_PARSE_ERROR,
+    LLM_TIMEOUT,
+    ToolCall,
+    build_error,
+)
 
 
 class OpenAILLMClient(BaseLLMClient):
@@ -36,7 +48,7 @@ class OpenAILLMClient(BaseLLMClient):
     ) -> "OpenAILLMClient":
         resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not resolved_api_key:
-            raise build_error("LLM_CONFIG_ERROR", "Missing API key for OpenAI client.")
+            raise build_error(LLM_CONFIG_ERROR, "Missing API key for OpenAI client.")
         return cls(
             api_key=resolved_api_key,
             model=model,
@@ -101,16 +113,16 @@ class OpenAILLMClient(BaseLLMClient):
                 body = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            raise build_error("LLM_HTTP_ERROR", f"OpenAI API HTTP {exc.code}: {body}") from exc
+            raise build_error(LLM_HTTP_ERROR, f"OpenAI API HTTP {exc.code}: {body}") from exc
         except urllib.error.URLError as exc:
-            raise build_error("LLM_NETWORK_ERROR", f"OpenAI API request failed: {exc.reason}") from exc
+            raise build_error(LLM_NETWORK_ERROR, f"OpenAI API request failed: {exc.reason}") from exc
         except TimeoutError as exc:
-            raise build_error("LLM_TIMEOUT", f"OpenAI API request timed out: {exc}") from exc
+            raise build_error(LLM_TIMEOUT, f"OpenAI API request timed out: {exc}") from exc
 
         try:
             return json.loads(body)
         except json.JSONDecodeError as exc:
-            raise build_error("LLM_RESPONSE_PARSE_ERROR", f"OpenAI API returned invalid JSON: {exc}") from exc
+            raise build_error(LLM_RESPONSE_PARSE_ERROR, f"OpenAI API returned invalid JSON: {exc}") from exc
 
     @staticmethod
     def _serialize_messages(request: LLMRequest) -> list[dict]:
@@ -167,7 +179,7 @@ class OpenAILLMClient(BaseLLMClient):
     def _parse_chat_completion(cls, response_data: dict) -> LLMResponse:
         choices = response_data.get("choices") or []
         if not choices:
-            raise build_error("LLM_RESPONSE_ERROR", f"OpenAI API returned no choices: {response_data}")
+            raise build_error(LLM_RESPONSE_ERROR, f"OpenAI API returned no choices: {response_data}")
         first_choice = choices[0]
         message = first_choice.get("message") or {}
         try:
@@ -181,7 +193,7 @@ class OpenAILLMClient(BaseLLMClient):
             ]
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise build_error(
-                "LLM_RESPONSE_PARSE_ERROR",
+                LLM_RESPONSE_PARSE_ERROR,
                 f"OpenAI API returned an invalid tool call payload: {exc}",
             ) from exc
         return LLMResponse(

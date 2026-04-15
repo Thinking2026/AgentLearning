@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from schemas import VectorSearchRequest, build_error
+from schemas import STORAGE_CONFIG_ERROR, STORAGE_DEPENDENCY_ERROR, VectorSearchRequest, build_error
 from storage.storage import DocumentStorage, VectorStorage
 
 
@@ -16,13 +16,13 @@ class ChromaDBStorage(VectorStorage, DocumentStorage):
             import chromadb
         except ModuleNotFoundError as exc:
             raise build_error(
-                "STORAGE_DEPENDENCY_ERROR",
+                STORAGE_DEPENDENCY_ERROR,
                 "ChromaDB storage requires the `chromadb` package to be installed.",
             ) from exc
 
         normalized_collections = [collection.strip() for collection in collections if str(collection).strip()]
         if not normalized_collections:
-            raise build_error("STORAGE_CONFIG_ERROR", "ChromaDB storage requires at least one collection.")
+            raise build_error(STORAGE_CONFIG_ERROR, "ChromaDB storage requires at least one collection.")
         self._client = chromadb.PersistentClient(path=persist_directory)
         self._collections = {
             name: self._client.get_or_create_collection(name=name)

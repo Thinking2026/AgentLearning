@@ -4,10 +4,12 @@ from typing import Any
 
 from agent.agent import Agent, AgentExecutionResult
 from schemas import (
+    AGENT_EXECUTION_ERROR,
     AgentError,
     ChatMessage,
     LLMRequest,
     LLMResponse,
+    LLM_ALL_PROVIDERS_FAILED,
     SessionStatus,
     ToolResult,
     build_error,
@@ -62,13 +64,13 @@ class ReActAgent(Agent):
             self._cur_react_attempt_iterations += 1
             return self._llm_client.generate(request), None
         except AgentError as exc:
-            if exc.code == "LLM_ALL_PROVIDERS_FAILED":
+            if exc.code == LLM_ALL_PROVIDERS_FAILED:
                 return None, AgentExecutionResult(error=exc)
-            return None, AgentExecutionResult(error=build_error("AGENT_EXECUTION_ERROR", str(exc)))
+            return None, AgentExecutionResult(error=build_error(AGENT_EXECUTION_ERROR, str(exc)))
         except TimeoutError as exc: #TODO 如何fallback需要想方案
             return None, AgentExecutionResult(
                 error=build_error(
-                    "AGENT_EXECUTION_ERROR",
+                    AGENT_EXECUTION_ERROR,
                     f"LLM call timed out unexpectedly outside fallback handling: {exc}",
                 )
             )
@@ -119,7 +121,7 @@ class ReActAgent(Agent):
     @staticmethod
     def _build_error_result(content: str) -> AgentExecutionResult:
         return AgentExecutionResult(
-            error=build_error("AGENT_EXECUTION_ERROR", content),
+            error=build_error(AGENT_EXECUTION_ERROR, content),
         )
 
     @staticmethod

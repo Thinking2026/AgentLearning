@@ -8,7 +8,15 @@ from abc import ABC, abstractmethod
 from types import ModuleType
 from typing import Any, Optional
 
-from schemas import AgentError, ToolCall, ToolResult, build_error
+from schemas import (
+    TOOL_EXECUTION_ERROR,
+    TOOL_NOT_FOUND,
+    TOOL_TIMEOUT,
+    AgentError,
+    ToolCall,
+    ToolResult,
+    build_error,
+)
 from tracing import Span, Tracer
 from tools.tools import BaseTool
 
@@ -123,7 +131,7 @@ class BaseToolHandler(ABC):
             output="",
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
-            error=build_error("TOOL_NOT_FOUND", f"Unknown tool: {tool_call.name}"),
+            error=build_error(TOOL_NOT_FOUND, f"Unknown tool: {tool_call.name}"),
         )
 
     @abstractmethod
@@ -166,7 +174,7 @@ class ToolHandlerNode(BaseToolHandler):
                     llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                     success=False,
                     error=build_error(
-                        "TOOL_TIMEOUT",
+                        TOOL_TIMEOUT,
                         (
                             f"Tool `{tool_call.name}` timed out after {total_attempts} attempts: {exc}"
                         ),
@@ -188,7 +196,7 @@ class ToolHandlerNode(BaseToolHandler):
                     llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                     success=False,
                     error=build_error(
-                        "TOOL_EXECUTION_ERROR",
+                        TOOL_EXECUTION_ERROR,
                         f"Tool `{tool_call.name}` failed unexpectedly: {exc}",
                     ),
                 )
@@ -196,7 +204,7 @@ class ToolHandlerNode(BaseToolHandler):
             output="",
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
-            error=build_error("TOOL_TIMEOUT", f"Tool `{tool_call.name}` timed out."),
+            error=build_error(TOOL_TIMEOUT, f"Tool `{tool_call.name}` timed out."),
         )
 
 
@@ -209,7 +217,7 @@ class FallbackToolHandler(BaseToolHandler):
             output="",
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
-            error=build_error("TOOL_NOT_FOUND", f"Unknown tool: {tool_call.name}"),
+            error=build_error(TOOL_NOT_FOUND, f"Unknown tool: {tool_call.name}"),
         )
 
 

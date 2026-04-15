@@ -3,7 +3,14 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from schemas import ToolResult, build_error
+from schemas import (
+    SHELL_COMMAND_FAILED,
+    SHELL_EXECUTION_ERROR,
+    SHELL_TIMEOUT,
+    TOOL_ARGUMENT_ERROR,
+    ToolResult,
+    build_error,
+)
 from tools.tools import BaseTool, build_tool_output
 from utils.runtime_env import get_project_root, get_task_runtime_dir
 
@@ -35,7 +42,7 @@ class ShellTool(BaseTool):
     def run(self, arguments: dict[str, object]) -> ToolResult:
         command = str(arguments.get("command", "")).strip()
         if not command:
-            error = build_error("TOOL_ARGUMENT_ERROR", "Shell tool requires a non-empty command.")
+            error = build_error(TOOL_ARGUMENT_ERROR, "Shell tool requires a non-empty command.")
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,
@@ -54,14 +61,14 @@ class ShellTool(BaseTool):
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired:
-            error = build_error("SHELL_TIMEOUT", f"Shell command timed out after {timeout} seconds.")
+            error = build_error(SHELL_TIMEOUT, f"Shell command timed out after {timeout} seconds.")
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
             )
         except Exception as exc:
-            error = build_error("SHELL_EXECUTION_ERROR", f"Shell command failed to start: {exc}")
+            error = build_error(SHELL_EXECUTION_ERROR, f"Shell command failed to start: {exc}")
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,
@@ -72,7 +79,7 @@ class ShellTool(BaseTool):
         error_output = completed.stderr.strip()
         if completed.returncode != 0:
             message = error_output or output or f"Command exited with code {completed.returncode}"
-            error = build_error("SHELL_COMMAND_FAILED", message)
+            error = build_error(SHELL_COMMAND_FAILED, message)
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,

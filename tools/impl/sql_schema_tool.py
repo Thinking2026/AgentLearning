@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import AgentError, ToolResult, build_error
+from schemas import AgentError, SQL_SCHEMA_TOOL_ERROR, ToolResult, build_error
 from storage import RelationalStorage
 from tools.tools import BaseTool, build_tool_output
 
@@ -72,7 +72,7 @@ class SQLSchemaTool(BaseTool):
         except AgentError as exc:
             return self._error_result(exc)
         except Exception as exc:
-            error = build_error("SQL_SCHEMA_TOOL_ERROR", f"SQL schema tool failed unexpectedly: {exc}")
+            error = build_error(SQL_SCHEMA_TOOL_ERROR, f"SQL schema tool failed unexpectedly: {exc}")
             return self._error_result(error)
 
         return ToolResult(
