@@ -10,6 +10,7 @@ from schemas import (
     LLMRequest,
     LLMResponse,
     LLM_ALL_PROVIDERS_FAILED,
+    LLM_RESPONSE_TRUNCATED,
     SessionStatus,
     ToolResult,
     build_error,
@@ -103,6 +104,16 @@ class ReActAgent(Agent):
                     content=llm_content,
                     metadata={"source": "llm"},
                 )
+            )
+
+        if response.finish_reason == "length":
+            return AgentExecutionResult(
+                user_messages=llm_messages,
+                error=build_error(
+                    LLM_RESPONSE_TRUNCATED,
+                    "LLM response was truncated because it hit the token limit.",
+                ),
+                task_completed=False,
             )
 
         if response.tool_calls:
