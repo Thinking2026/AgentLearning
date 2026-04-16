@@ -561,8 +561,7 @@ class AgentThread(threading.Thread):
             "session",
             attributes={
                 "thread": self.name,
-                "session_status": self._session.get_status(),
-                "user_message": user_message.content,
+                "task": user_message.content,
             },
         )
 
