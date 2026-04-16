@@ -96,7 +96,7 @@ class UserThread(threading.Thread):
                 if self._task_completed:
                     print("Task finished, bye")
                     break
-            if not need_quit and not self._task_completed:
+            if not need_quit:
                 # Loop exited via _is_running() (e.g. agent called stop() on error).
                 # Drain any messages that arrived before the queue was closed.
                 self._drain_agent_messages()
