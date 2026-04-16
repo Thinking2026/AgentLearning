@@ -20,7 +20,7 @@ from .backend import AgentThread
 class AgentApplication:
     def __init__(self, config_path: str | Path) -> None:
         self._config_path = Path(config_path)
-        self._logger = Logger()
+        self._logger = Logger.get_instance()
         self._config: JsonConfig | None = None
         self._config_value_reader: ConfigValueReader | None = None
         self._user_to_agent_queue: UserToAgentQueue | None = None

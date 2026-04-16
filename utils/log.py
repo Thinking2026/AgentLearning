@@ -22,16 +22,30 @@ class zap:
 
 
 class Logger:
+    _instance: Logger | None = None
+    _instance_lock: Lock = Lock()
+
     def __init__(self, log_dir: str | Path = "logs") -> None:
         self._log_dir = Path(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
+
+    @classmethod
+    def get_instance(cls, log_dir: str | Path = "logs") -> "Logger":
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls(log_dir)
+        return cls._instance
 
     def info(self, description: str, *fields: LogField, **named_fields: Any) -> None:
         self._write("INFO", description, *fields, **named_fields)
 
     def error(self, description: str, *fields: LogField, **named_fields: Any) -> None:
         self._write("ERR", description, *fields, **named_fields)
+
+    def warning(self, description: str, *fields: LogField, **named_fields: Any) -> None:
+        self._write("WARN", description, *fields, **named_fields)
 
     def _write(
         self,
@@ -89,7 +103,7 @@ class Logger:
             caller = frame.f_back
             while caller is not None:
                 code_name = caller.f_code.co_name
-                if code_name not in {"_get_caller_location", "_write", "info", "error"}:
+                if code_name not in {"_get_caller_location", "_write", "info", "error", "warning"}:
                     return (Path(caller.f_code.co_filename).name, caller.f_lineno)
                 caller = caller.f_back
             return ("<unknown>", 0)

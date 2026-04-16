@@ -38,7 +38,7 @@ class ToolRegistry:
             timeout_retry_max_attempts,
         )
         self._tracer = tracer
-        self._logger = logger
+        self._logger = logger or Logger.get_instance()
         self._router = ToolChainRouter(
             self._tools.values(),
             timeout_retry_max_attempts=self._timeout_retry_max_attempts,
