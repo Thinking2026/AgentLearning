@@ -57,9 +57,7 @@ class OpenAILLMClient(BaseLLMClient):
         )
 
     def generate(self, request: LLMRequest) -> LLMResponse:
-        last_user_message = next(
-            (m.content for m in reversed(request.messages) if m.role == "user"), ""
-        )
+        last_user_message = request.messages[-1].content if request.messages else ""
         with self._start_span(
             "llm.generate",
             attributes={

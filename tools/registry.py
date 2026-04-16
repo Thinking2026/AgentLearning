@@ -85,6 +85,7 @@ class ToolRegistry:
                 {
                     "success": result.success,
                     "error_code": None if result.error is None else result.error.code,
+                    "error_message": None if result.error is None else result.error.message,
                 }
             )
             return result
