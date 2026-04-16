@@ -57,14 +57,14 @@ class OpenAILLMClient(BaseLLMClient):
         )
 
     def generate(self, request: LLMRequest) -> LLMResponse:
-        last_user_message = request.messages[-1].content if request.messages else ""
+        last_message = request.messages[-1].content if request.messages else ""
         with self._start_span(
             "llm.generate",
             attributes={
                 "provider": self.provider_name,
                 "model": self._model,
                 "message_count": len(request.messages),
-                "last_user_message": last_user_message,
+                "last_user_message": last_message,
             },
         ) as span:
             payload = {
@@ -82,7 +82,10 @@ class OpenAILLMClient(BaseLLMClient):
                 {
                     "finish_reason": response.finish_reason,
                     "tool_calls_count": len(response.tool_calls),
-                    "tool_call_names": [tc.name for tc in response.tool_calls],
+                    "tool_calls": [
+                        {"name": tc.name, "llm_raw_tool_call_id": tc.llm_raw_tool_call_id}
+                        for tc in response.tool_calls
+                    ],
                     "prompt_tokens": usage.get("prompt_tokens"),
                     "completion_tokens": usage.get("completion_tokens"),
                     "response_text": response.assistant_message.content,
