@@ -287,6 +287,7 @@ class AgentThread(threading.Thread):
             timeout_retry_max_attempts=self._tool_retry_max_attempts,
             timeout_retry_delays=self._tool_retry_delays,
             tracer=self._tracer,
+            logger=self._logger,
         )
         self._register_storage_tools(registry)
         return registry

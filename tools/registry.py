@@ -19,6 +19,7 @@ from schemas import (
 )
 from tracing import Span, Tracer
 from tools.tools import BaseTool
+from utils.log import Logger, zap
 
 
 class ToolRegistry:
@@ -28,6 +29,7 @@ class ToolRegistry:
         timeout_retry_max_attempts: int = 3,
         timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         tracer: Tracer | None = None,
+        logger: Logger | None = None,
     ) -> None:
         self._tools = {tool.name: tool for tool in (tools or [])}
         self._timeout_retry_max_attempts = timeout_retry_max_attempts
@@ -36,6 +38,7 @@ class ToolRegistry:
             timeout_retry_max_attempts,
         )
         self._tracer = tracer
+        self._logger = logger
         self._router = ToolChainRouter(
             self._tools.values(),
             timeout_retry_max_attempts=self._timeout_retry_max_attempts,
@@ -88,6 +91,14 @@ class ToolRegistry:
                     "error_message": None if result.error is None else result.error.message,
                 }
             )
+            if not result.success and result.error is not None and self._logger is not None:
+                self._logger.error(
+                    "Tool call failed",
+                    zap.any("tool_name", name),
+                    zap.any("error_code", result.error.code),
+                    zap.any("error_message", result.error.message),
+                    zap.any("arguments", arguments),
+                )
             return result
 
     def _start_span(
@@ -301,11 +312,13 @@ def create_default_tool_registry(
     timeout_retry_max_attempts: int = 4,
     timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
     tracer: Tracer | None = None,
+    logger: Logger | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(
         timeout_retry_max_attempts=timeout_retry_max_attempts,
         timeout_retry_delays=timeout_retry_delays,
         tracer=tracer,
+        logger=logger,
     )
     registry.auto_register(module_names=module_names, package_name=package_name)
     return registry
