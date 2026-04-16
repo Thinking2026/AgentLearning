@@ -73,6 +73,7 @@ class UserThread(threading.Thread):
         self._last_prompt_status: SessionStatus | None = None
         self._last_progress_notice_at = 0.0
         self._task_started = False
+        self._task_completed = False
 
     def stop(self) -> None:
         self._stop_callback(self.name)
@@ -93,7 +94,7 @@ class UserThread(threading.Thread):
                 if need_quit:#用户主动退出
                     break
                 displayed_any_message = self._drain_agent_messages()
-                if displayed_any_message and self._ui_session_status == SessionStatus.NEW_TASK:
+                if self._task_completed:
                     print("Task finished, bye")
                     break
         except Exception as exc:
@@ -118,7 +119,7 @@ class UserThread(threading.Thread):
 
     def _drain_agent_messages(self) -> bool:
         displayed_any_message = False
-        while self._is_running():
+        while not self._stop_event.is_set():
             message = self._agent_to_user_queue.get_agent_message(#agent要去兜底，给CLI端的信息都是解决问题的有效步骤或者结论消息
                 timeout=self._agent_message_poll_timeout_seconds
             )
@@ -233,6 +234,8 @@ class UserThread(threading.Thread):
         session_status = message.metadata.get("session_status")
         if session_status != self._ui_session_status:
             self._ui_session_status = session_status
+        if message.metadata.get("task_completed"):
+            self._task_completed = True
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()

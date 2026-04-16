@@ -92,6 +92,7 @@
 - [TODO]喂给LLM API的conversation使用摘要技术，保存system prompt, 用户目标和前面的摘要
 - [TODO]正反馈路径，类似问题的处理存到RAG里
 - [TODO]工具不能每次全量，考虑工具过滤，工具选择等技术方案
+- [TODO]同一个模型provider都可以使用不同的model，比如claude的sonnet降级到haiku
 
 ## 实践过程中的问题
 ### 问题

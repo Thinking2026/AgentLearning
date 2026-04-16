@@ -109,6 +109,10 @@ class AgentApplication:
         while not self._stop_event.is_set():
             self._safe_join(self._user_thread, timeout=self._thread_join_timeout_seconds)
             self._safe_join(self._agent_thread, timeout=self._thread_join_timeout_seconds)
+        # stop_event is set; wait for threads to actually finish in the required order:
+        # user_thread first (must finish displaying all messages), then agent_thread.
+        self._safe_join(self._user_thread)
+        self._safe_join(self._agent_thread)
 
     def _stop_threads(self) -> None:
         self.request_stop(source="AgentApplication.stop_threads")
