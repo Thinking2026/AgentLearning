@@ -99,7 +99,6 @@ class AgentThread(threading.Thread):
             self._agent = self._build_agent()
         except Exception:
             self.release_resources()
-            self.stop()
             raise
 
     @staticmethod

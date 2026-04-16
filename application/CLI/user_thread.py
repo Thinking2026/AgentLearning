@@ -83,11 +83,10 @@ class UserThread(threading.Thread):
 
     def run(self) -> None:#先支持单任务处理，而不是连续任务处理。单任务处理过程中允许用户输入辅助hint
         try:
-            displayed_any_message = False 
+            displayed_any_message = False
+            need_quit = False
             self._last_progress_notice_at = time.monotonic()
             while self._is_running():
-                if not self._is_running():#判断是否有其他线程的终止信号
-                    break
                 self._print_prompt_if_needed(displayed_any_message)#只有转折才会打印提示语
                 user_input = self._wait_for_user_input()
                 need_quit = self._handle_user_input(user_input)
@@ -97,6 +96,12 @@ class UserThread(threading.Thread):
                 if self._task_completed:
                     print("Task finished, bye")
                     break
+            if not need_quit and not self._task_completed:
+                # Loop exited via _is_running() (e.g. agent called stop() on error).
+                # Drain any messages that arrived before the queue was closed.
+                self._drain_agent_messages()
+                if self._task_completed:
+                    print("Task finished, bye")
         except Exception as exc:
             self._logger.error("User thread crashed", zap.any("error", exc))
         finally:
@@ -119,7 +124,7 @@ class UserThread(threading.Thread):
 
     def _drain_agent_messages(self) -> bool:
         displayed_any_message = False
-        while not self._stop_event.is_set():
+        while True:
             message = self._agent_to_user_queue.get_agent_message(#agent要去兜底，给CLI端的信息都是解决问题的有效步骤或者结论消息
                 timeout=self._agent_message_poll_timeout_seconds
             )
