@@ -24,15 +24,22 @@ class VectorSearchTool(BaseTool):
         "properties": {
             "collection": {
                 "type": "string",
-                "description": "Authorized collection name to search.",
+                "description": (
+                    "Collection name to search. "
+                    "Optional when only one collection is available; "
+                    "use inspect schema first if unsure which collection to use."
+                ),
             },
             "query": {
                 "type": "string",
-                "description": "Semantic search query text.",
+                "description": (
+                    "Natural language query text for semantic similarity search. "
+                    "The query is embedded and matched against stored vectors by concept similarity."
+                ),
             },
             "top_k": {
                 "type": "integer",
-                "description": "Maximum number of matches to return.",
+                "description": "Maximum number of closest matches to return. Defaults to 3, must be between 1 and 20.",
                 "default": 3,
                 "minimum": 1,
                 "maximum": 20,

@@ -36,19 +36,26 @@ class SQLQueryTool(BaseTool):
         "properties": {
             "database": {
                 "type": "string",
-                "description": "Authorized database alias or database name to query.",
+                "description": (
+                    "Authorized database alias or database name to query. "
+                    "Optional when only one database is available."
+                ),
             },
             "statement": {
                 "type": "string",
                 "description": (
-                    "A single read-only SELECT statement. "
-                    "Use placeholders instead of interpolating user values directly."
+                    "A single SELECT statement. "
+                    "Only read-only SELECT queries are permitted by convention; "
+                    "the tool does not enforce this but non-SELECT statements may be rejected by the backend. "
+                    "Use placeholders (? or :name) instead of interpolating values directly."
                 ),
             },
             "params": {
                 "description": (
-                    "Query parameters passed separately from the SQL statement. "
-                    "Use an array for positional parameters or an object for named parameters."
+                    "Query parameters bound to the placeholders in the statement. "
+                    "Use an array for positional placeholders (?), "
+                    "or an object for named placeholders (:name). "
+                    "Omit when the statement has no placeholders."
                 ),
                 "oneOf": [
                     {"type": "array", "items": {}},
@@ -57,7 +64,7 @@ class SQLQueryTool(BaseTool):
             },
             "max_rows": {
                 "type": "integer",
-                "description": "Maximum number of rows to return.",
+                "description": "Maximum number of rows to return. Defaults to 50, must be between 1 and 1000.",
                 "default": 50,
                 "minimum": 1,
                 "maximum": 1000,

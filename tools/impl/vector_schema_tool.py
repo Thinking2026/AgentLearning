@@ -26,7 +26,9 @@ class VectorSchemaTool(BaseTool):
                 "type": "string",
                 "description": (
                     "Optional collection name to inspect. "
-                    "When omitted, the tool returns the available collections."
+                    "When omitted, returns the list of available collections. "
+                    "When provided, returns the metadata and field definitions for that collection "
+                    "(field names, types, and vector dimensions if applicable)."
                 ),
             },
         },

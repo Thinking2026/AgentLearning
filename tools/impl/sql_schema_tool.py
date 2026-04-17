@@ -33,13 +33,18 @@ class SQLSchemaTool(BaseTool):
         "properties": {
             "database": {
                 "type": "string",
-                "description": "Authorized database alias or database name to inspect.",
+                "description": (
+                    "Authorized database alias or database name to inspect. "
+                    "Optional when only one database is available."
+                ),
             },
             "table": {
                 "type": "string",
                 "description": (
                     "Optional table name to inspect. "
-                    "When omitted, the tool returns the available tables for the database."
+                    "When omitted, returns the list of available tables in the database. "
+                    "When provided, returns the column definitions for that table "
+                    "(column names, data types, and constraints)."
                 ),
             },
         },
