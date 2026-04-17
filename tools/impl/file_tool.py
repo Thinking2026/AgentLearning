@@ -10,25 +10,44 @@ from utils.runtime_env import get_task_runtime_dir
 class FileTool(BaseTool):
     name = "file"
     description = (
-        "Read, write, or append a local file. "
-        "Use this tool when you need to inspect file contents or modify a file in the workspace. "
-        "The write and append actions change filesystem state."
+        "Read, write, or append a UTF-8 text file. "
+        "Supports three actions: "
+        "(1) read — return the full file contents as a string; fails if the file does not exist; "
+        "only UTF-8 encoded text files are supported, binary files will cause an error; "
+        "(2) write — write content to a file, completely overwriting any existing content; "
+        "parent directories are created automatically if they do not exist; "
+        "(3) append — append content to the end of a file, creating it if it does not exist; "
+        "parent directories are created automatically. "
+        "Relative paths are resolved inside the current task workspace directory."
     )
     parameters = {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "description": "The file operation to perform.",
+                "description": (
+                    "The file operation to perform. "
+                    "read: return file contents (UTF-8 only, file must exist). "
+                    "write: overwrite the file with new content (creates file and parent dirs if absent). "
+                    "append: add content to the end of the file (creates file and parent dirs if absent)."
+                ),
                 "enum": ["read", "write", "append"],
             },
             "path": {
                 "type": "string",
-                "description": "The local filesystem path to the target file.",
+                "description": (
+                    "Path to the target file. "
+                    "Relative paths are resolved inside the task workspace directory. "
+                    "Absolute paths are used as-is."
+                ),
             },
             "content": {
                 "type": "string",
-                "description": "The text content to write or append. Required when action is write or append.",
+                "description": (
+                    "The text content to write or append. "
+                    "Required when action is write or append. "
+                    "Ignored for read."
+                ),
             },
         },
         "required": ["action", "path"],

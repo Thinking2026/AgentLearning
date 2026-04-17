@@ -18,20 +18,31 @@ from utils.runtime_env import get_project_root, get_task_runtime_dir
 class ShellTool(BaseTool):
     name = "shell"
     description = (
-        "Run a shell command in the local environment and return the command output. "
-        "Use this tool when information or file changes require command-line execution. "
-        "The command may read files, modify files, or affect local system state."
+        "Run a shell command and return its output. "
+        "Commands execute in the task workspace directory (not the project root). "
+        "The command is run via the system shell (shell=True), so pipes, redirects, and "
+        "environment variables work as expected. "
+        "If the command exits with a non-zero return code the call is treated as a failure; "
+        "stderr is used as the error message when available. "
+        "Long-running or interactive commands should be avoided; use the timeout parameter to cap execution time."
     )
     parameters = {
         "type": "object",
         "properties": {
             "command": {
                 "type": "string",
-                "description": "The shell command to execute.",
+                "description": (
+                    "The shell command to execute. "
+                    "Runs in the task workspace directory. "
+                    "Non-zero exit code is treated as failure."
+                ),
             },
             "timeout": {
                 "type": "integer",
-                "description": "The maximum number of seconds to wait before stopping the command.",
+                "description": (
+                    "Maximum seconds to wait before killing the command. "
+                    "Defaults to 15. Increase for commands known to be slow."
+                ),
                 "default": 15,
             },
         },
