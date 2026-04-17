@@ -21,7 +21,7 @@
     "model": "deepseek-chat",
     "base_url": "https://api.deepseek.com/v1",
     "timeout": 120.0,
-    "priority_chain": ["deepseek", "claude"],
+    "priority_chain": ["deepseek", "claude", "openai"],
     "context_trimming": {
       "enabled": true,
       "max_messages": 60
@@ -40,6 +40,10 @@
       "deepseek": {
         "model": "deepseek-chat",
         "base_url": "https://api.deepseek.com/v1"
+      },
+      "openai": {
+        "model": "gpt-4o",
+        "base_url": "https://api.openai.com/v1"
       }
     }
   },
