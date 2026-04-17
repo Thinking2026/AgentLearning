@@ -10,14 +10,16 @@ from utils.runtime_env import get_task_runtime_dir
 class FileTool(BaseTool):
     name = "file"
     description = (
-        "Read, write, or append a UTF-8 text file. "
-        "Supports three actions: "
+        "Read, write, append a UTF-8 text file, or list a directory. "
+        "Supports four actions: "
         "(1) read — return the full file contents as a string; fails if the file does not exist; "
         "only UTF-8 encoded text files are supported, binary files will cause an error; "
         "(2) write — write content to a file, completely overwriting any existing content; "
         "parent directories are created automatically if they do not exist; "
         "(3) append — append content to the end of a file, creating it if it does not exist; "
-        "parent directories are created automatically. "
+        "parent directories are created automatically; "
+        "(4) list_dir — list the entries in a directory, returning each entry's name, type (file or directory), "
+        "and size in bytes (for files); fails if the path does not exist or is not a directory. "
         "Relative paths are resolved inside the current task workspace directory."
     )
     parameters = {
@@ -29,9 +31,10 @@ class FileTool(BaseTool):
                     "The file operation to perform. "
                     "read: return file contents (UTF-8 only, file must exist). "
                     "write: overwrite the file with new content (creates file and parent dirs if absent). "
-                    "append: add content to the end of the file (creates file and parent dirs if absent)."
+                    "append: add content to the end of the file (creates file and parent dirs if absent). "
+                    "list_dir: list entries in a directory (name, type, size)."
                 ),
-                "enum": ["read", "write", "append"],
+                "enum": ["read", "write", "append", "list_dir"],
             },
             "path": {
                 "type": "string",
@@ -59,8 +62,8 @@ class FileTool(BaseTool):
         path_value = str(arguments.get("path", "")).strip()
         content = str(arguments.get("content", ""))
 
-        if action not in {"read", "write", "append"}:
-            error = build_error(TOOL_ARGUMENT_ERROR, "File tool action must be read, write, or append.")
+        if action not in {"read", "write", "append", "list_dir"}:
+            error = build_error(TOOL_ARGUMENT_ERROR, "File tool action must be read, write, append, or list_dir.")
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,
@@ -76,6 +79,40 @@ class FileTool(BaseTool):
 
         target_path = self._resolve_target_path(path_value)
         try:
+            if action == "list_dir":
+                if not target_path.exists():
+                    error = build_error(FILE_TOOL_ERROR, f"File tool list_dir failed: path does not exist: {target_path}")
+                    return ToolResult(
+                        output=build_tool_output(success=False, error=error),
+                        success=False,
+                        error=error,
+                    )
+                if not target_path.is_dir():
+                    error = build_error(FILE_TOOL_ERROR, f"File tool list_dir failed: path is not a directory: {target_path}")
+                    return ToolResult(
+                        output=build_tool_output(success=False, error=error),
+                        success=False,
+                        error=error,
+                    )
+                entries = []
+                for entry in sorted(target_path.iterdir()):
+                    if entry.is_dir():
+                        entries.append({"name": entry.name, "type": "directory"})
+                    else:
+                        entries.append({"name": entry.name, "type": "file", "size": entry.stat().st_size})
+                return ToolResult(
+                    output=build_tool_output(
+                        success=True,
+                        data={
+                            "action": action,
+                            "path": str(target_path),
+                            "entry_count": len(entries),
+                            "entries": entries,
+                        },
+                    ),
+                    success=True,
+                )
+
             if action == "read":
                 content = target_path.read_text(encoding="utf-8")
                 return ToolResult(
