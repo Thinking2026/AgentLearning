@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import random
 import time
 from typing import TYPE_CHECKING
 
@@ -70,19 +71,26 @@ class FallbackLLMClient(BaseLLMClient):
         self,
         registry: LLMProviderRegistry,
         provider_priority: list[str],
-        max_attempts: int = 4,
-        retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         enable_provider_fallback: bool = False,
+        retry_base: float = 0.5,
+        retry_max_delay: float = 60.0,
+        retry_max_attempts: int = 5,
     ) -> None:
         if not provider_priority:
             raise build_error(LLM_CONFIG_ERROR, "provider_priority cannot be empty")
-        if max_attempts <= 0:
-            raise build_error(LLM_CONFIG_ERROR, "max_attempts must be greater than 0")
+        if retry_max_attempts <= 0:
+            raise build_error(LLM_CONFIG_ERROR, "retry_max_attempts must be greater than 0")
         self._registry = registry
         self._provider_priority = provider_priority
-        self._max_attempts = max_attempts
-        self._retry_delays = self._normalize_retry_delays(retry_delays, max_attempts)
         self._enable_provider_fallback = enable_provider_fallback
+        self._retry_base = retry_base
+        self._retry_max_delay = retry_max_delay
+        self._retry_max_attempts = retry_max_attempts
+
+    def _backoff_delay(self, attempt_idx: int) -> float:
+        """Full jitter: wait = random(0, min(base * 2^n, max_delay))"""
+        cap = min(self._retry_base * (2 ** attempt_idx), self._retry_max_delay)
+        return random.uniform(0, cap)
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         failure_messages: list[str] = []
@@ -94,7 +102,7 @@ class FallbackLLMClient(BaseLLMClient):
 
         for provider_name in provider_names:
             provider = self._registry.get(provider_name)
-            for attempt_idx in range(self._max_attempts):
+            for attempt_idx in range(self._retry_max_attempts):
                 try:
                     return provider.generate(request)
                 except AgentError as exc:
@@ -103,36 +111,21 @@ class FallbackLLMClient(BaseLLMClient):
                         return repaired
 
                     failure_messages.append(
-                        f"{provider_name}[attempt {attempt_idx + 1}/{self._max_attempts}]: {exc}"
+                        f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: {exc}"
                     )
-                    if attempt_idx < self._max_attempts - 1:
-                        time.sleep(self._retry_delays[attempt_idx])
+                    if attempt_idx < self._retry_max_attempts - 1:
+                        time.sleep(self._backoff_delay(attempt_idx))
                 except Exception as exc:
                     failure_messages.append(
-                        f"{provider_name}[attempt {attempt_idx + 1}/{self._max_attempts}]: {exc}"
+                        f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: {exc}"
                     )
-                    if attempt_idx < self._max_attempts - 1:
-                        time.sleep(self._retry_delays[attempt_idx])
+                    if attempt_idx < self._retry_max_attempts - 1:
+                        time.sleep(self._backoff_delay(attempt_idx))
 
         raise build_error(
             LLM_ALL_PROVIDERS_FAILED,
             "All attempted LLM providers failed. " + " | ".join(failure_messages),
         )
-
-    @staticmethod
-    def _normalize_retry_delays(
-        retry_delays: tuple[float, ...],
-        max_attempts: int,
-    ) -> tuple[float, ...]:
-        target_length = max(0, max_attempts - 1)
-        if target_length == 0:
-            return ()
-        delays = [delay for delay in retry_delays if delay > 0]
-        if not delays:
-            delays = [1.0]
-        while len(delays) < target_length:
-            delays.append(delays[-1] * 2)
-        return tuple(delays[:target_length])
 
     def _try_parse_error_self_repair(
         self,

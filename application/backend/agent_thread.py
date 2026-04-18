@@ -251,10 +251,9 @@ class AgentThread(threading.Thread):
         )
 
     def _load_llm_config(self) -> None:
-        self._llm_retry_max_attempts = int(self._config.get("llm.retry.max_attempts", 4))
-        self._llm_retry_delays = self._config_value_reader.retry_delays(
-            "llm.retry.backoff_seconds",
-        )
+        self._llm_retry_base = float(self._config.get("llm.retry.base", 0.5))
+        self._llm_retry_max_delay = float(self._config.get("llm.retry.max_delay", 60.0))
+        self._llm_retry_max_attempts = int(self._config.get("llm.retry.max_attempts", 5))
         self._llm_context_trimming_enabled = bool(
             self._config.get("llm.context_trimming.enabled", True)
         )
@@ -396,9 +395,10 @@ class AgentThread(threading.Thread):
         return FallbackLLMClient(
             registry=registry,
             provider_priority=provider_priority,
-            max_attempts=self._llm_retry_max_attempts,
-            retry_delays=self._llm_retry_delays,
             enable_provider_fallback=bool(self._config.get("llm.enable_provider_fallback", False)),
+            retry_base=self._llm_retry_base,
+            retry_max_delay=self._llm_retry_max_delay,
+            retry_max_attempts=self._llm_retry_max_attempts,
         ).set_tracer(self._tracer)
 
     def _build_provider(self, provider_name: str) -> BaseLLMClient:
