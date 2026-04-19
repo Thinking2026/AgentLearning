@@ -113,7 +113,8 @@ class RunPythonTool(BaseTool):
                 "description": (
                     "Variable names to extract after execution and save into the session context. "
                     "Saved variables are automatically available in all future calls. "
-                    "Non-JSON-serialisable values are converted to str."
+                    "Callable objects (functions, classes, lambdas) are NOT saved — only data values. "
+                    "Non-JSON-serialisable values are converted to repr()."
                 ),
             },
             "timeout": {
@@ -268,7 +269,7 @@ def _subprocess_worker(
 
         extracted: dict[str, Any] = {}
         for var in context_vars:
-            if var in namespace:
+            if var in namespace and not callable(namespace[var]):
                 extracted[var] = _to_serialisable(namespace[var])
 
         conn.send({"ok": True, "output": output, "context": extracted})
@@ -337,4 +338,4 @@ def _to_serialisable(value: Any) -> Any:
         json.dumps(value)
         return value
     except (TypeError, ValueError):
-        return str(value)
+        return repr(value)
