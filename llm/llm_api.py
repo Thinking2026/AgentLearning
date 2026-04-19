@@ -17,6 +17,7 @@ from schemas import (
     build_error,
 )
 from tracing import Span, Tracer
+from utils.http_client import HttpClient
 
 if TYPE_CHECKING:
     from llm.registry import LLMProviderRegistry
@@ -24,6 +25,18 @@ if TYPE_CHECKING:
 
 class BaseLLMClient(ABC):
     provider_name: str = "base"
+
+    def _init_http(
+        self,
+        base_url: str,
+        default_headers: dict[str, str],
+        timeout: float,
+    ) -> None:
+        self._http = HttpClient(
+            base_url=base_url,
+            default_headers=default_headers,
+            timeout=timeout,
+        )
 
     def set_tracer(self, tracer: Tracer | None) -> "BaseLLMClient":
         self._tracer = tracer

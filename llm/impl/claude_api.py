@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.request
 
 from llm.llm_api import BaseLLMClient
 from schemas import (
@@ -11,11 +8,8 @@ from schemas import (
     LLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
-    LLM_HTTP_ERROR,
-    LLM_NETWORK_ERROR,
     LLM_RESPONSE_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
-    LLM_TIMEOUT,
     ToolCall,
     build_error,
 )
@@ -34,13 +28,18 @@ class ClaudeLLMClient(BaseLLMClient):
         anthropic_version: str = "2023-06-01",
         extra_headers: dict[str, str] | None = None,
     ) -> None:
-        self._api_key = api_key
         self._model = model
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
         self._max_tokens = max_tokens
         self._anthropic_version = anthropic_version
-        self._extra_headers = extra_headers or {}
+        self._init_http(
+            base_url=base_url,
+            default_headers={
+                "x-api-key": api_key,
+                "anthropic-version": anthropic_version,
+                **(extra_headers or {}),
+            },
+            timeout=timeout,
+        )
 
     @classmethod
     def from_settings(
@@ -106,32 +105,7 @@ class ClaudeLLMClient(BaseLLMClient):
             return response
 
     def _post_json(self, path: str, payload: dict[str, object]) -> dict:
-        http_request = urllib.request.Request(
-            f"{self._base_url}{path}",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "content-type": "application/json",
-                "x-api-key": self._api_key,
-                "anthropic-version": self._anthropic_version,
-                **self._extra_headers,
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(http_request, timeout=self._timeout) as response:
-                body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise build_error(LLM_HTTP_ERROR, f"Claude API HTTP {exc.code}: {body}") from exc
-        except urllib.error.URLError as exc:
-            raise build_error(LLM_NETWORK_ERROR, f"Claude API request failed: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise build_error(LLM_TIMEOUT, f"Claude API request timed out: {exc}") from exc
-
-        try:
-            return json.loads(body)
-        except json.JSONDecodeError as exc:
-            raise build_error(LLM_RESPONSE_PARSE_ERROR, f"Claude API returned invalid JSON: {exc}") from exc
+        return self._http.post_json(path, payload)
 
     @staticmethod
     def _serialize_messages(request: LLMRequest) -> list[dict[str, object]]:

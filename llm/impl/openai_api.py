@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.error
-import urllib.request
 
 from llm.llm_api import BaseLLMClient
 from schemas import (
@@ -11,11 +9,8 @@ from schemas import (
     LLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
-    LLM_HTTP_ERROR,
-    LLM_NETWORK_ERROR,
     LLM_RESPONSE_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
-    LLM_TIMEOUT,
     ToolCall,
     build_error,
 )
@@ -32,11 +27,15 @@ class OpenAILLMClient(BaseLLMClient):
         timeout: float = 60.0,
         extra_headers: dict[str, str] | None = None,
     ) -> None:
-        self._api_key = api_key
         self._model = model
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-        self._extra_headers = extra_headers or {}
+        self._init_http(
+            base_url=base_url,
+            default_headers={
+                "Authorization": f"Bearer {api_key}",
+                **(extra_headers or {}),
+            },
+            timeout=timeout,
+        )
 
     @classmethod
     def from_settings(
@@ -94,32 +93,7 @@ class OpenAILLMClient(BaseLLMClient):
             return response
 
     def _post_json(self, path: str, payload: dict) -> dict:
-        request_url = f"{self._base_url}{path}"
-        http_request = urllib.request.Request(
-            request_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                **self._extra_headers,
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(http_request, timeout=self._timeout) as response:
-                body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise build_error(LLM_HTTP_ERROR, f"OpenAI API HTTP {exc.code}: {body}") from exc
-        except urllib.error.URLError as exc:
-            raise build_error(LLM_NETWORK_ERROR, f"OpenAI API request failed: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise build_error(LLM_TIMEOUT, f"OpenAI API request timed out: {exc}") from exc
-
-        try:
-            return json.loads(body)
-        except json.JSONDecodeError as exc:
-            raise build_error(LLM_RESPONSE_PARSE_ERROR, f"OpenAI API returned invalid JSON: {exc}") from exc
+        return self._http.post_json(path, payload)
 
     @staticmethod
     def _serialize_messages(request: LLMRequest) -> list[dict]:
