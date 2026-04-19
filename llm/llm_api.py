@@ -12,15 +12,66 @@ from schemas import (
     LLMResponse,
     LLM_ALL_PROVIDERS_FAILED,
     LLM_CONFIG_ERROR,
+    LLM_CONTEXT_TOO_LONG,
+    LLM_HTTP_ERROR,
+    LLM_NETWORK_ERROR,
+    LLM_RATE_LIMITED,
     LLM_RESPONSE_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
+    LLM_TIMEOUT,
     build_error,
 )
 from tracing import Span, Tracer
-from utils.http_client import HttpClient
+from utils.http_client import HttpClient, HttpError
 
 if TYPE_CHECKING:
     from llm.registry import LLMProviderRegistry
+
+# ---------------------------------------------------------------------------
+# Error classification
+# ---------------------------------------------------------------------------
+_RETRYABLE_CODES = {LLM_NETWORK_ERROR, LLM_TIMEOUT, LLM_RATE_LIMITED, LLM_HTTP_ERROR}
+
+_RETRYABLE_HTTP_STATUS = {500, 502, 503, 504}
+
+# Keywords in the error body that indicate context-too-long (400 subtype)
+_CONTEXT_TOO_LONG_HINTS = (
+    "context_length_exceeded",
+    "context too long",
+    "maximum context length",
+    "reduce the length",
+    "too many tokens",
+)
+
+# Keywords that mark a 400 as a hard invalid-request (not context length)
+_INVALID_REQUEST_HINTS = (
+    "invalid_request_error",
+    "content_filter",
+    "content filter",
+)
+
+
+def _classify_http_error(exc: HttpError) -> str:
+    """Return an error code that describes how to handle this HTTP error."""
+    body_lower = exc.body.lower()
+    if exc.status == 429:
+        return LLM_RATE_LIMITED
+    if exc.status in _RETRYABLE_HTTP_STATUS:
+        return LLM_HTTP_ERROR
+    if exc.status == 400:
+        if any(hint in body_lower for hint in _CONTEXT_TOO_LONG_HINTS):
+            return LLM_CONTEXT_TOO_LONG
+    return LLM_HTTP_ERROR
+
+
+def _is_fatal_http(exc: HttpError) -> bool:
+    """True when retrying would be pointless (auth errors, hard invalid requests)."""
+    if exc.status in {401, 403}:
+        return True
+    if exc.status == 400:
+        body_lower = exc.body.lower()
+        return any(hint in body_lower for hint in _INVALID_REQUEST_HINTS)
+    return False
 
 
 class BaseLLMClient(ABC):
@@ -115,29 +166,71 @@ class FallbackLLMClient(BaseLLMClient):
 
         for provider_name in provider_names:
             provider = self._registry.get(provider_name)
-            for attempt_idx in range(self._retry_max_attempts):
+            current_request = request
+            attempt_idx = 0
+            while attempt_idx < self._retry_max_attempts:
                 try:
-                    return provider.generate(request)
+                    return provider.generate(current_request)
+                except HttpError as exc:
+                    if _is_fatal_http(exc):
+                        raise build_error(LLM_HTTP_ERROR, f"{provider_name}: HTTP {exc.status}: {exc.body}") from exc
+
+                    code = _classify_http_error(exc)
+
+                    if code == LLM_CONTEXT_TOO_LONG:
+                        trimmed = self._try_trim_context(current_request)
+                        if trimmed is None:
+                            raise build_error(LLM_CONTEXT_TOO_LONG, f"{provider_name}: context too long and cannot be trimmed") from exc
+                        current_request = trimmed
+                        # context trim does not count as a retry attempt
+                        failure_messages.append(f"{provider_name}[trim]: context trimmed and retrying")
+                        continue
+
+                    failure_messages.append(f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: HTTP {exc.status}")
+                    if attempt_idx < self._retry_max_attempts - 1:
+                        if code == LLM_RATE_LIMITED and exc.retry_after is not None:
+                            time.sleep(exc.retry_after)
+                        elif code in _RETRYABLE_CODES:
+                            time.sleep(self._backoff_delay(attempt_idx))
+                    attempt_idx += 1
+
                 except AgentError as exc:
-                    repaired = self._try_parse_error_self_repair(provider, request, exc)
+                    repaired = self._try_parse_error_self_repair(provider, current_request, exc)
                     if repaired is not None:
                         return repaired
 
-                    failure_messages.append(
-                        f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: {exc}"
-                    )
+                    failure_messages.append(f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: {exc}")
                     if attempt_idx < self._retry_max_attempts - 1:
-                        time.sleep(self._backoff_delay(attempt_idx))
+                        if exc.code in _RETRYABLE_CODES:
+                            time.sleep(self._backoff_delay(attempt_idx))
+                        else:
+                            break  # fatal AgentError — stop retrying this provider
+                    attempt_idx += 1
+
                 except Exception as exc:
-                    failure_messages.append(
-                        f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: {exc}"
-                    )
+                    failure_messages.append(f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: {exc}")
                     if attempt_idx < self._retry_max_attempts - 1:
                         time.sleep(self._backoff_delay(attempt_idx))
+                    attempt_idx += 1
 
         raise build_error(
             LLM_ALL_PROVIDERS_FAILED,
             "All attempted LLM providers failed. " + " | ".join(failure_messages),
+        )
+
+    def _try_trim_context(self, request: LLMRequest) -> LLMRequest | None:
+        """Drop the oldest non-system messages to reduce context size.
+
+        Returns a new request with fewer messages, or None if the context
+        is already too small to trim further (fewer than 2 messages).
+        """
+        if len(request.messages) < 2:
+            return None
+        trimmed_messages = request.messages[2:]
+        return LLMRequest(
+            system_prompt=request.system_prompt,
+            messages=trimmed_messages,
+            tools=request.tools,
         )
 
     def _try_parse_error_self_repair(

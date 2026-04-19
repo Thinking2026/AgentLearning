@@ -5,7 +5,6 @@ import urllib.error
 import urllib.request
 
 from schemas import (
-    LLM_HTTP_ERROR,
     LLM_NETWORK_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
     LLM_TIMEOUT,
@@ -13,12 +12,23 @@ from schemas import (
 )
 
 
+class HttpError(Exception):
+    """Raised for HTTP error responses; carries status code and Retry-After."""
+
+    def __init__(self, status: int, body: str, retry_after: float | None = None) -> None:
+        self.status = status
+        self.body = body
+        self.retry_after = retry_after
+        super().__init__(f"HTTP {status}: {body}")
+
+
 class HttpClient:
     """Minimal HTTP client backed by urllib — no third-party dependencies.
 
     Supports JSON POST (and GET) with configurable headers and timeout.
-    All network/HTTP errors are translated to AgentError so callers don't
-    need to import urllib directly.
+    Network/timeout errors are translated to AgentError. HTTP errors are
+    raised as HttpError so callers can inspect the status code and
+    Retry-After header before deciding how to handle them.
     """
 
     def __init__(
@@ -68,7 +78,14 @@ class HttpClient:
                 body = resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
-            raise build_error(LLM_HTTP_ERROR, f"HTTP {exc.code} {method} {url}: {body}") from exc
+            retry_after: float | None = None
+            raw = exc.headers.get("Retry-After")
+            if raw is not None:
+                try:
+                    retry_after = float(raw)
+                except ValueError:
+                    pass
+            raise HttpError(status=exc.code, body=body, retry_after=retry_after) from exc
         except urllib.error.URLError as exc:
             raise build_error(LLM_NETWORK_ERROR, f"Network error {method} {url}: {exc.reason}") from exc
         except TimeoutError as exc:
