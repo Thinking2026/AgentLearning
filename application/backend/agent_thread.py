@@ -4,28 +4,15 @@ import os
 import threading
 from typing import Callable
 
-from agent import Agent, ReActAgent
-from agent.impl import ReActAgentContext
+from agent import AgentExecutor
 from config import ConfigValueReader, JsonConfig
-from context.agent_context import AgentContext
-from context.formatter import MessageFormatter
 from context.session import Session
-from llm import (
-    BaseLLMClient,
-    ClaudeLLMClient,
-    DeepSeekLLMClient,
-    FallbackLLMClient,
-    LLMProviderRegistry,
-    OpenAILLMClient,
-    QwenLLMClient,
-)
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
     AGENT_THREAD_ERROR,
     AgentError,
     ChatMessage,
     LLM_ALL_PROVIDERS_FAILED,
-    LLM_PROVIDER_NOT_FOUND,
     STORAGE_CONFIG_ERROR,
     SessionStatus,
     build_error,
@@ -33,22 +20,7 @@ from schemas import (
 from storage import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from storage.bootstrap_documents import load_seed_documents
 from tracing import Span, Tracer
-from tools import (
-    SQLQueryTool,
-    SQLSchemaTool,
-    ToolRegistry,
-    VectorSearchTool,
-    VectorSchemaTool,
-    build_sql_query_tool_description,
-    build_sql_query_tool_name,
-    build_sql_schema_tool_description,
-    build_sql_schema_tool_name,
-    build_vector_search_tool_description,
-    build_vector_search_tool_name,
-    build_vector_schema_tool_description,
-    build_vector_schema_tool_name,
-    create_default_tool_registry,
-)
+from tools import ToolRegistry, create_default_tool_registry
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
@@ -66,67 +38,63 @@ class AgentThread(threading.Thread):
         super().__init__(name="AgentThread", daemon=False)
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
-        self._agent_context: AgentContext = self._build_agent_context()
-        self._session = Session()
         self._config = config
         self._config_value_reader = ConfigValueReader(config)
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
+        self._session = Session()
         self._user_message_wait_timeout_seconds = self._config_value_reader.positive_float(
             "agent.latency.agent_user_message_wait_timeout_seconds",
             2.0,
         )
+        self._max_react_attempt_iterations = int(
+            self._config.get("agent.max_react_attempt_iterations", 60)
+        )
         self._storage_registry: StorageRegistry | None = None
-        self._message_formatter: MessageFormatter | None = None
         self._tool_registry: ToolRegistry | None = None
-        self._llm_client: BaseLLMClient | None = None
-        self._agent: Agent | None = None
+        self._executor: AgentExecutor | None = None
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
-        self._base_system_prompt = self._agent_context.get_system_prompt()
-        self._load_agent_config()
-        self._load_llm_config()
         self._load_tool_config()
         self._load_tracing_config()
         try:
             self._tracer = self._build_tracer()
             self._storage_registry = self._build_storage_registry()
-            self._message_formatter = self._build_message_formatter()
             self._tool_registry = self._build_tool_registry()
-            self._base_system_prompt = self._agent_context.get_system_prompt()
-            self._llm_client = self._build_llm_client()
-            self._agent = self._build_agent()
+            self._executor = self._build_executor()
         except Exception:
             self.release_resources()
             raise
-
-    @staticmethod
-    def _build_agent_context() -> AgentContext:
-        return ReActAgentContext()
 
     def stop(self) -> None:
         self._stop_callback(self.name)
 
     def reset(self) -> None:
         self._finish_session_trace()
-        if self._agent is not None:
-            self._agent.reset(archive_current_task=False)
-        self._restore_base_system_prompt()
+        if self._executor is not None:
+            self._executor.reset(archive_current_task=False)
 
     def release_resources(self) -> None:
         self.reset()
-        if self._agent is not None:
-            self._agent.release_resources()
-        self._agent_context.release()
+        if self._executor is not None:
+            self._executor.release_resources()
         if self._storage_registry is not None:
             self._storage_registry.close_all()
-        self._agent = None
-        self._llm_client = None
+        self._executor = None
         self._tool_registry = None
-        self._message_formatter = None
         self._storage_registry = None
         self._session_span = None
+
+    def _build_executor(self) -> AgentExecutor:
+        return AgentExecutor(
+            session=self._session,
+            tool_registry=self._tool_registry,
+            storage_registry=self._storage_registry,
+            config=self._config,
+            tracer=self._tracer,
+            logger=self._logger,
+        )
 
     def _build_storage_registry(self) -> StorageRegistry:
         seed_documents = load_seed_documents(
@@ -207,7 +175,7 @@ class AgentThread(threading.Thread):
         if configured is None:
             configured = chromadb_config.get("collections")
         if isinstance(configured, list):
-            collections = [str(collection).strip() for collection in configured if str(collection).strip()]
+            collections = [str(c).strip() for c in configured if str(c).strip()]
             if collections:
                 return collections
         fallback_collection = str(chromadb_config.get("collection_name", "")).strip()
@@ -244,34 +212,11 @@ class AgentThread(threading.Thread):
             max_content_length=self._tracing_max_content_length,
         )
 
-    def _load_agent_config(self) -> None:
-        self._max_tool_iterations = int(self._config.get("agent.max_tool_iterations", 3))
-        self._max_react_attempt_iterations = int(
-            self._config.get("agent.max_react_attempt_iterations", 60)
-        )
-
-    def _load_llm_config(self) -> None:
-        self._llm_retry_base = float(self._config.get("llm.retry.base", 0.5))
-        self._llm_retry_max_delay = float(self._config.get("llm.retry.max_delay", 60.0))
-        self._llm_retry_max_attempts = int(self._config.get("llm.retry.max_attempts", 5))
-        self._llm_context_trimming_enabled = bool(
-            self._config.get("llm.context_trimming.enabled", True)
-        )
-        self._llm_context_max_messages = self._config_value_reader.positive_int(
-            "llm.context_trimming.max_messages",
-            default=40,
-        )
-
     def _load_tool_config(self) -> None:
         self._tool_retry_max_attempts = int(self._config.get("tools.retry.max_attempts", 4))
         self._tool_retry_delays = self._config_value_reader.retry_delays(
             "tools.retry.backoff_seconds",
         )
-
-    def _build_message_formatter(self) -> MessageFormatter:
-        if not self._llm_context_trimming_enabled:
-            return MessageFormatter(max_messages=None)
-        return MessageFormatter(max_messages=self._llm_context_max_messages)
 
     def _build_tool_registry(self) -> ToolRegistry:
         package_name = self._config.get("tools.package", "tools.impl")
@@ -280,181 +225,13 @@ class AgentThread(threading.Thread):
         module_names = self._config.get("tools.modules", [])
         if not isinstance(module_names, list):
             module_names = []
-        registry = create_default_tool_registry(
+        return create_default_tool_registry(
             module_names=module_names,
             package_name=package_name,
             timeout_retry_max_attempts=self._tool_retry_max_attempts,
             timeout_retry_delays=self._tool_retry_delays,
             tracer=self._tracer,
             logger=self._logger,
-        )
-        self._register_storage_tools(registry)
-        return registry
-
-    def _register_storage_tools(self, registry: ToolRegistry) -> None:
-        if self._storage_registry is None:
-            return
-
-        sql_tool_lines: list[str] = []
-        vector_tool_lines: list[str] = []
-        for backend_name in self._storage_registry.list_backends():
-            storage = self._storage_registry.get(backend_name)
-            if backend_name in {"sqlite", "mysql"}:
-                schema_tool_name = build_sql_schema_tool_name(backend_name)
-                schema_description = build_sql_schema_tool_description(backend_name)
-                registry.register(
-                    SQLSchemaTool(
-                        name=schema_tool_name,
-                        description=schema_description,
-                        storage=storage,
-                        backend_name=backend_name,
-                    )
-                )
-                tool_name = build_sql_query_tool_name(backend_name)
-                description = build_sql_query_tool_description(backend_name)
-                registry.register(
-                    SQLQueryTool(
-                        name=tool_name,
-                        description=description,
-                        storage=storage,
-                        backend_name=backend_name,
-                    )
-                )
-                resources = ", ".join(storage.list_resources()) or "<none>"
-                sql_tool_lines.append(
-                    f"- `{schema_tool_name}`: {schema_description} Available databases: {resources}"
-                )
-                sql_tool_lines.append(
-                    f"- `{tool_name}`: {description} Available databases: {resources}"
-                )
-                continue
-            if backend_name == "chromadb":
-                schema_tool_name = build_vector_schema_tool_name(backend_name)
-                schema_description = build_vector_schema_tool_description(backend_name)
-                registry.register(
-                    VectorSchemaTool(
-                        name=schema_tool_name,
-                        description=schema_description,
-                        storage=storage,
-                        backend_name=backend_name,
-                    )
-                )
-                tool_name = build_vector_search_tool_name(backend_name)
-                description = build_vector_search_tool_description(backend_name)
-                registry.register(
-                    VectorSearchTool(
-                        name=tool_name,
-                        description=description,
-                        storage=storage,
-                        backend_name=backend_name,
-                    )
-                )
-                resources = ", ".join(storage.list_resources()) or "<none>"
-                vector_tool_lines.append(
-                    f"- `{schema_tool_name}`: {schema_description} Available collections: {resources}"
-                )
-                vector_tool_lines.append(
-                    f"- `{tool_name}`: {description} Available collections: {resources}"
-                )
-
-        if sql_tool_lines:
-            self._agent_context.append_system_prompt(
-                "\n\nRelational query tool guide:\n"
-                "Use relational query tools for SQLite or MySQL tables with custom schemas.\n"
-                "Choose the correct authorized database for the task.\n"
-                "When you are unsure about available tables or columns, use the dedicated schema inspection tool first.\n"
-                "For SQL query tools, send only a single SELECT statement and keep values in params instead of string interpolation.\n"
-                f"{'\n'.join(sql_tool_lines)}"
-            )
-
-        if vector_tool_lines:
-            self._agent_context.append_system_prompt(
-                "\n\nVector search tool guide:\n"
-                "Use vector search tools for semantic retrieval from indexed text collections.\n"
-                "When you are unsure which collection to use, inspect the available collections first.\n"
-                "Choose the most relevant authorized collection for the task.\n"
-                "Prefer them when the task needs fuzzy matching, semantic lookup, or concept-level retrieval.\n"
-                f"{'\n'.join(vector_tool_lines)}"
-            )
-
-    def _restore_base_system_prompt(self) -> None:
-        if self._agent_context.get_system_prompt() == self._base_system_prompt:
-            return
-        self._agent_context.release()
-        self._agent_context = self._build_agent_context()
-        self._agent_context.append_system_prompt(self._base_system_prompt)
-
-    def _build_llm_client(self) -> BaseLLMClient:
-        provider_priority = self._config.get("llm.priority_chain", ["deepseek"])
-        if not isinstance(provider_priority, list) or not provider_priority:
-            provider_priority = ["deepseek"]
-
-        registry = LLMProviderRegistry()
-        for provider_name in provider_priority:
-            registry.register(self._build_provider(provider_name))
-        return FallbackLLMClient(
-            registry=registry,
-            provider_priority=provider_priority,
-            enable_provider_fallback=bool(self._config.get("llm.enable_provider_fallback", False)),
-            retry_base=self._llm_retry_base,
-            retry_max_delay=self._llm_retry_max_delay,
-            retry_max_attempts=self._llm_retry_max_attempts,
-        ).set_tracer(self._tracer)
-
-    def _build_provider(self, provider_name: str) -> BaseLLMClient:
-        providers = self._config.get("llm.providers", {})
-        if not isinstance(providers, dict):
-            providers = {}
-        provider_settings = providers.get(provider_name, {})
-        if not isinstance(provider_settings, dict):
-            provider_settings = {}
-        overrides = dict(provider_settings)
-        api_key = overrides.get("api_key")
-        timeout = float(overrides.get("timeout", self._config.get("llm.timeout", 60.0)))
-
-        if provider_name == "openai":
-            return OpenAILLMClient.from_settings(
-                api_key=api_key,
-                model=overrides.get("model", "gpt-4o-mini"),
-                base_url=overrides.get("base_url", "https://api.openai.com/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "qwen":
-            return QwenLLMClient.from_settings(
-                api_key=api_key,
-                model=overrides.get("model", "qwen-plus"),
-                base_url=overrides.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "deepseek":
-            return DeepSeekLLMClient.from_settings(
-                api_key=api_key,
-                model=overrides.get("model", "deepseek-chat"),
-                base_url=overrides.get("base_url", "https://api.deepseek.com/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "claude":
-            return ClaudeLLMClient.from_settings(
-                api_key=api_key,
-                model=overrides.get("model", "claude-3-5-sonnet-latest"),
-                base_url=overrides.get("base_url", "https://api.anthropic.com"),
-                timeout=timeout,
-                max_tokens=int(overrides.get("max_tokens", self._config.get("llm.max_tokens", 1024))),
-                anthropic_version=overrides.get(
-                    "anthropic_version",
-                    self._config.get("llm.anthropic_version", "2023-06-01"),
-                ),
-            ).set_tracer(self._tracer)
-        raise build_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}")
-
-    def _build_agent(self) -> Agent:
-        return ReActAgent(
-            agent_context=self._agent_context,
-            session=self._session,
-            message_formatter=self._message_formatter,
-            llm_client=self._llm_client,
-            tool_registry=self._tool_registry,
-            max_tool_iterations=self._max_tool_iterations,
         )
 
     def run(self) -> None:
@@ -463,9 +240,9 @@ class AgentThread(threading.Thread):
                 session_status = self._session.get_status()
                 if (
                     session_status == SessionStatus.IN_PROGRESS
-                    and self._agent is not None
-                    and self._agent.get_react_attempt_iterations() > self._max_react_attempt_iterations
-                ):#有限处理，防止无限循环
+                    and self._executor is not None
+                    and self._executor.get_iterations() > self._max_react_attempt_iterations
+                ):
                     completion_message = ChatMessage(
                         role="assistant",
                         content="Sorry, this question is too hard, i can not solve",
@@ -475,18 +252,16 @@ class AgentThread(threading.Thread):
                         },
                     )
                     self._agent_to_user_queue.send_agent_message(completion_message)
-                    self._complete_current_task(
-                        archive_current_task=False,
-                    )
+                    self._complete_current_task(archive_current_task=False)
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
                 if not self._is_running():
                     break
                 if incoming_message is not None:
-                    if session_status == SessionStatus.NEW_TASK: 
+                    if session_status == SessionStatus.NEW_TASK:
                         self._start_session_trace(incoming_message)
-                        self._agent.begin_session()
+                        self._executor.begin_session()
                         self._agent_to_user_queue.send_agent_message(
                             ChatMessage(
                                 role="assistant",
@@ -504,7 +279,7 @@ class AgentThread(threading.Thread):
                         self._record_user_input_trace(incoming_message, input_type="hint")
 
                 try:
-                    execution_result = self._agent.run(session_status, incoming_message)
+                    execution_result = self._executor.run(incoming_message)
                     for message in execution_result.user_messages:
                         self._agent_to_user_queue.send_agent_message(message)
 
@@ -578,9 +353,8 @@ class AgentThread(threading.Thread):
         error: Exception | AgentError | None = None,
     ) -> None:
         self._finish_session_trace(error=error)
-        if self._agent is not None:
-            self._agent.reset(archive_current_task=archive_current_task)
-        self._restore_base_system_prompt()
+        if self._executor is not None:
+            self._executor.reset(archive_current_task=archive_current_task)
 
     def _record_user_input_trace(
         self,

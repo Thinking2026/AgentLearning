@@ -83,3 +83,10 @@ class KeyValueSetRequest:
     key: str
     value: Any
     ttl_seconds: int | None = None
+
+
+@dataclass(slots=True)
+class AgentExecutionResult:
+    user_messages: list[ChatMessage] = field(default_factory=list)
+    error: AgentError | None = None
+    task_completed: bool = False

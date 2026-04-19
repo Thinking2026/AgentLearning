@@ -16,6 +16,10 @@ class AgentContext:
         with self._lock:
             return self._system_prompt
 
+    def set_system_prompt(self, prompt: str) -> None:
+        with self._lock:
+            self._system_prompt = prompt
+
     def append_system_prompt(self, text: str) -> None:
         with self._lock:
             self._system_prompt += text

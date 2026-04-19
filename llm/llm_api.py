@@ -109,26 +109,6 @@ class BaseLLMClient(ABC):
         raise NotImplementedError
 
 
-class DynamicLLMClient(BaseLLMClient):
-    provider_name = "dynamic"
-
-    def __init__(self, registry: LLMProviderRegistry, default_provider: str) -> None:
-        self._registry = registry
-        self._provider_name = default_provider
-
-    @property
-    def current_provider_name(self) -> str:
-        return self._provider_name
-
-    def use_provider(self, provider_name: str) -> None:
-        self._registry.get(provider_name)
-        self._provider_name = provider_name
-
-    def generate(self, request: LLMRequest) -> LLMResponse:
-        provider = self._registry.get(self._provider_name)
-        return provider.generate(request)
-
-
 class FallbackLLMClient(BaseLLMClient):
     provider_name = "fallback"
 
@@ -173,7 +153,7 @@ class FallbackLLMClient(BaseLLMClient):
                 try:
                     return provider.generate(current_request)
                 except HttpError as exc:
-                    if _is_fatal_http(exc):
+                    if _is_fatal_http(exc):#TODO 没有做好多模型封装
                         raise build_error(LLM_HTTP_ERROR, f"{provider_name}: HTTP {exc.status}: {exc.body}") from exc
 
                     code = _classify_http_error(exc)
