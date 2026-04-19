@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 from config import ConfigValueReader
 from context.agent_context import AgentContext
-from context.session import Session
 from schemas import (
     AGENT_STRATEGY_NOT_FOUND,
     AgentExecutionResult,
@@ -43,21 +42,17 @@ if TYPE_CHECKING:
 class AgentExecutor:
     def __init__(
         self,
-        session: Session,
         config: JsonConfig,
         tracer: Tracer | None,
         logger: Logger,
     ) -> None:
-        self._session = session
         self._agent_context = AgentContext()
-        self._cur_iterations = 0
 
         config_reader = ConfigValueReader(config)
         self._storage_registry = self._build_storage_registry(config)
         self._tool_registry = self._build_tool_registry(config, config_reader, tracer, logger)
         self._strategy = self._build_strategy(config, tracer)
         self._register_storage_tools(self._storage_registry)
-        self._base_system_prompt = self._agent_context.get_system_prompt()
 
     # ------------------------------------------------------------------
     # Conversation interfaces (for Strategy use)
@@ -101,26 +96,17 @@ class AgentExecutor:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def begin_session(self) -> None:
-        self._cur_iterations = 0
-        self._session.begin()
-
     def reset(self, archive_current_task: bool = False) -> None:
-        self._cur_iterations = 0
         if archive_current_task:
             self._agent_context.archive_current_task()
         else:
             self._agent_context.clear_current_task()
-        self._session.reset()
         self._restore_base_system_prompt()
 
     def release_resources(self) -> None:
         self.reset(archive_current_task=False)
         self._agent_context.release()
         self._storage_registry.close_all()
-
-    def get_iterations(self) -> int:
-        return self._cur_iterations
 
     # ------------------------------------------------------------------
     # Execution
@@ -130,7 +116,6 @@ class AgentExecutor:
         self,
         user_message: ChatMessage | None,
     ) -> AgentExecutionResult:
-        self._cur_iterations += 1
         return self._strategy.execute(self, self._tool_registry, user_message)
 
     # ------------------------------------------------------------------
@@ -150,11 +135,7 @@ class AgentExecutor:
         return strategy
 
     def _restore_base_system_prompt(self) -> None:
-        if self._agent_context.get_system_prompt() == self._base_system_prompt:
-            return
-        self._agent_context.release()
         self._agent_context = AgentContext()
-        self._agent_context.set_system_prompt(self._base_system_prompt)
 
     @staticmethod
     def _build_storage_registry(config: JsonConfig) -> StorageRegistry:

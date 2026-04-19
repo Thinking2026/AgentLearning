@@ -1,6 +1,7 @@
 from .consts import SessionStatus
 from .errors import (
     AGENT_EXECUTION_ERROR,
+    AGENT_MAX_ITERATIONS_EXCEEDED,
     AGENT_STRATEGY_NOT_FOUND,
     AGENT_THREAD_ERROR,
     CALCULATION_ERROR,

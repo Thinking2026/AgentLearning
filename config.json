@@ -4,7 +4,7 @@
   },
   "agent": {
     "max_tool_iterations": 10,
-    "max_react_attempt_iterations": 60,
+    "max_attempt_iterations": 60,
     "latency": {
       "thread_join_timeout_seconds": 1.0,
       "new_task_user_input_timeout_seconds": 60.0,

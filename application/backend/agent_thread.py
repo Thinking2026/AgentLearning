@@ -8,6 +8,7 @@ from config import ConfigValueReader, JsonConfig
 from context.session import Session
 from queue.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
+    AGENT_MAX_ITERATIONS_EXCEEDED,
     AGENT_THREAD_ERROR,
     AgentError,
     ChatMessage,
@@ -43,9 +44,10 @@ class AgentThread(threading.Thread):
             "agent.latency.agent_user_message_wait_timeout_seconds",
             2.0,
         )
-        self._max_react_attempt_iterations = int(
-            self._config.get("agent.max_react_attempt_iterations", 60)
+        self._max_attempt_iterations = int(
+            self._config.get("agent.max_attempt_iterations", 60)
         )
+        self._cur_attempt_iterations = 0
         self._executor: AgentExecutor | None = None
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
@@ -62,6 +64,8 @@ class AgentThread(threading.Thread):
 
     def reset(self) -> None:
         self._finish_session_trace()
+        self._session.reset()
+        self._cur_attempt_iterations = 0
         if self._executor is not None:
             self._executor.reset(archive_current_task=False)
 
@@ -74,7 +78,6 @@ class AgentThread(threading.Thread):
 
     def _build_executor(self) -> AgentExecutor:
         return AgentExecutor(
-            session=self._session,
             config=self._config,
             tracer=self._tracer,
             logger=self._logger,
@@ -102,6 +105,16 @@ class AgentThread(threading.Thread):
             max_content_length=self._tracing_max_content_length,
         )
 
+    def _begin_session(self, user_message: ChatMessage) -> None:
+        self._start_session_trace(user_message)
+        self._session.begin()
+        self._cur_attempt_iterations = 0
+
+    def _finish_session(self, archive_current_task: bool = True, error: Exception | AgentError | None = None) -> None:
+        self._finish_session_trace(error=error)
+        self._session.reset()
+        self._complete_current_task(archive_current_task)
+
     def run(self) -> None:
         try:
             while self._is_running():
@@ -109,7 +122,7 @@ class AgentThread(threading.Thread):
                 if (
                     session_status == SessionStatus.IN_PROGRESS
                     and self._executor is not None
-                    and self._executor.get_iterations() > self._max_react_attempt_iterations
+                    and self._cur_attempt_iterations > self._max_attempt_iterations
                 ):
                     completion_message = ChatMessage(
                         role="assistant",
@@ -120,7 +133,13 @@ class AgentThread(threading.Thread):
                         },
                     )
                     self._agent_to_user_queue.send_agent_message(completion_message)
-                    self._complete_current_task(archive_current_task=False)
+                    self._finish_session(
+                        archive_current_task=False,
+                        error=build_error(
+                            AGENT_MAX_ITERATIONS_EXCEEDED,
+                            f"Exceeded max attempt iterations ({self._max_attempt_iterations}).",
+                        ),
+                    )
                     continue
 
                 incoming_message = self._wait_for_user_message(session_status)
@@ -128,8 +147,7 @@ class AgentThread(threading.Thread):
                     break
                 if incoming_message is not None:
                     if session_status == SessionStatus.NEW_TASK:
-                        self._start_session_trace(incoming_message)
-                        self._executor.begin_session()
+                        self._begin_session(incoming_message)
                         self._agent_to_user_queue.send_agent_message(
                             ChatMessage(
                                 role="assistant",
@@ -147,6 +165,7 @@ class AgentThread(threading.Thread):
                         self._record_user_input_trace(incoming_message, input_type="hint")
 
                 try:
+                    self._cur_attempt_iterations += 1
                     execution_result = self._executor.run(incoming_message)
                     for message in execution_result.user_messages:
                         self._agent_to_user_queue.send_agent_message(message)
@@ -163,10 +182,7 @@ class AgentThread(threading.Thread):
                                 },
                             )
                         )
-                        self._complete_current_task(
-                            archive_current_task=execution_result.error is None,
-                            error=execution_result.error,
-                        )
+                        self._finish_session(archive_current_task=(execution_result.error is None), error=execution_result.error)
                         continue
 
                     if execution_result.error is not None:
@@ -177,12 +193,12 @@ class AgentThread(threading.Thread):
                             zap.any("error", execution_result.error),
                         )
                         if self._is_hard_error(execution_result.error):
-                            self._finish_session_trace(error=execution_result.error)
+                            self._finish_session(archive_current_task=False, error=execution_result.error)
                             break
 
                 except Exception as exc:
                     normalized_error = self._normalize_error(exc)
-                    self._finish_session_trace(error=normalized_error)
+                    self._finish_session(archive_current_task=False, error=normalized_error)
                     self._logger.error(
                         "Agent thread execution failed",
                         zap.any("trace_id", None if self._tracer is None else self._tracer.current_trace_id()),
@@ -191,7 +207,7 @@ class AgentThread(threading.Thread):
                     )
                     break
         except Exception as exc:
-            self._finish_session_trace(error=exc)
+            self._finish_session(archive_current_task=False, error=exec)
             self._logger.error("Agent thread crashed", zap.any("error", exc))
         finally:
             self.release_resources()
@@ -218,9 +234,7 @@ class AgentThread(threading.Thread):
     def _complete_current_task(
         self,
         archive_current_task: bool,
-        error: Exception | AgentError | None = None,
     ) -> None:
-        self._finish_session_trace(error=error)
         if self._executor is not None:
             self._executor.reset(archive_current_task=archive_current_task)
 
