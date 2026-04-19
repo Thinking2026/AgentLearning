@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import threading
 from typing import Callable
 
@@ -13,14 +12,10 @@ from schemas import (
     AgentError,
     ChatMessage,
     LLM_ALL_PROVIDERS_FAILED,
-    STORAGE_CONFIG_ERROR,
     SessionStatus,
     build_error,
 )
-from storage import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
-from storage.bootstrap_documents import load_seed_documents
 from tracing import Span, Tracer
-from tools import ToolRegistry, create_default_tool_registry
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
@@ -51,17 +46,12 @@ class AgentThread(threading.Thread):
         self._max_react_attempt_iterations = int(
             self._config.get("agent.max_react_attempt_iterations", 60)
         )
-        self._storage_registry: StorageRegistry | None = None
-        self._tool_registry: ToolRegistry | None = None
         self._executor: AgentExecutor | None = None
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
-        self._load_tool_config()
         self._load_tracing_config()
         try:
             self._tracer = self._build_tracer()
-            self._storage_registry = self._build_storage_registry()
-            self._tool_registry = self._build_tool_registry()
             self._executor = self._build_executor()
         except Exception:
             self.release_resources()
@@ -79,116 +69,16 @@ class AgentThread(threading.Thread):
         self.reset()
         if self._executor is not None:
             self._executor.release_resources()
-        if self._storage_registry is not None:
-            self._storage_registry.close_all()
         self._executor = None
-        self._tool_registry = None
-        self._storage_registry = None
         self._session_span = None
 
     def _build_executor(self) -> AgentExecutor:
         return AgentExecutor(
             session=self._session,
-            tool_registry=self._tool_registry,
-            storage_registry=self._storage_registry,
             config=self._config,
             tracer=self._tracer,
             logger=self._logger,
         )
-
-    def _build_storage_registry(self) -> StorageRegistry:
-        seed_documents = load_seed_documents(
-            self._config.get("storage.file.path", "runtime/nanoagent_soul.json")
-        )
-        sqlite_databases = self._build_sqlite_databases()
-        sqlite_storage = SQLiteStorage(sqlite_databases)
-        storages = [sqlite_storage]
-
-        chromadb_path = self._config.get("storage.chromadb.persist_directory")
-        if chromadb_path:
-            chromadb_collections = self._build_chromadb_collections()
-            chromadb_storage = ChromaDBStorage(
-                persist_directory=chromadb_path,
-                collections=chromadb_collections,
-            )
-            bootstrap_collection = self._config.get("storage.chromadb.bootstrap_collection")
-            if isinstance(bootstrap_collection, str) and bootstrap_collection.strip():
-                if not chromadb_storage.get_documents(bootstrap_collection):
-                    chromadb_storage.upsert_documents(bootstrap_collection, seed_documents)
-            storages.append(chromadb_storage)
-
-        mysql_host = str(self._config.get("storage.mysql.host", "")).strip()
-        if mysql_host:
-            mysql_storage = MySQLStorage(
-                host=mysql_host,
-                port=int(self._config.get("storage.mysql.port", 3306)),
-                user=os.getenv("MYSQL_USER", ""),
-                password=os.getenv("MYSQL_PASSWORD", ""),
-                allowed_databases=self._build_mysql_databases(),
-                charset=str(self._config.get("storage.mysql.charset", "utf8mb4")),
-            )
-            storages.append(mysql_storage)
-
-        return StorageRegistry(storages)
-
-    def _build_sqlite_databases(self) -> dict[str, str]:
-        sqlite_config = self._config.get("storage.sqlite", {})
-        if not isinstance(sqlite_config, dict):
-            sqlite_config = {}
-        configured = sqlite_config.get("allowed_databases")
-        if configured is None:
-            configured = sqlite_config.get("databases")
-        databases: dict[str, str] = {}
-        if isinstance(configured, dict):
-            for name, path in configured.items():
-                if str(name).strip() and str(path).strip():
-                    databases[str(name).strip()] = str(path).strip()
-        fallback_path = str(sqlite_config.get("path", "")).strip()
-        if fallback_path:
-            databases.setdefault(self._derive_sqlite_alias(fallback_path), fallback_path)
-        if not databases:
-            databases["local_storage"] = "runtime/nanoagent_local_storage.db"
-        return databases
-
-    def _build_mysql_databases(self) -> list[str]:
-        mysql_config = self._config.get("storage.mysql", {})
-        if not isinstance(mysql_config, dict):
-            mysql_config = {}
-        configured = mysql_config.get("allowed_databases")
-        if isinstance(configured, list):
-            databases = [str(database).strip() for database in configured if str(database).strip()]
-            if databases:
-                return databases
-        fallback_database = str(mysql_config.get("database", "")).strip()
-        if fallback_database:
-            return [fallback_database]
-        raise build_error(
-            STORAGE_CONFIG_ERROR,
-            "MySQL storage requires `storage.mysql.allowed_databases` or `storage.mysql.database`.",
-        )
-
-    def _build_chromadb_collections(self) -> list[str]:
-        chromadb_config = self._config.get("storage.chromadb", {})
-        if not isinstance(chromadb_config, dict):
-            chromadb_config = {}
-        configured = chromadb_config.get("allowed_collections")
-        if configured is None:
-            configured = chromadb_config.get("collections")
-        if isinstance(configured, list):
-            collections = [str(c).strip() for c in configured if str(c).strip()]
-            if collections:
-                return collections
-        fallback_collection = str(chromadb_config.get("collection_name", "")).strip()
-        if fallback_collection:
-            return [fallback_collection]
-        return ["agent_documents"]
-
-    @staticmethod
-    def _derive_sqlite_alias(path_value: str) -> str:
-        path = str(path_value).strip()
-        if path.endswith(".db"):
-            path = path[:-3]
-        return path.rsplit("/", 1)[-1] or "sqlite"
 
     def _load_tracing_config(self) -> None:
         self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
@@ -210,28 +100,6 @@ class AgentThread(threading.Thread):
             output_path=self._tracing_output_path,
             payload_redaction_enabled=self._tracing_payload_redaction_enabled,
             max_content_length=self._tracing_max_content_length,
-        )
-
-    def _load_tool_config(self) -> None:
-        self._tool_retry_max_attempts = int(self._config.get("tools.retry.max_attempts", 4))
-        self._tool_retry_delays = self._config_value_reader.retry_delays(
-            "tools.retry.backoff_seconds",
-        )
-
-    def _build_tool_registry(self) -> ToolRegistry:
-        package_name = self._config.get("tools.package", "tools.impl")
-        if not isinstance(package_name, str) or not package_name.strip():
-            package_name = "tools.impl"
-        module_names = self._config.get("tools.modules", [])
-        if not isinstance(module_names, list):
-            module_names = []
-        return create_default_tool_registry(
-            module_names=module_names,
-            package_name=package_name,
-            timeout_retry_max_attempts=self._tool_retry_max_attempts,
-            timeout_retry_delays=self._tool_retry_delays,
-            tracer=self._tracer,
-            logger=self._logger,
         )
 
     def run(self) -> None:
