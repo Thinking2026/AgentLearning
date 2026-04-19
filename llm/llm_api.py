@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from schemas import (
     AgentError,
     ChatMessage,
+    HttpError,
     LLMRequest,
     LLMResponse,
     LLM_ALL_PROVIDERS_FAILED,
@@ -22,7 +23,7 @@ from schemas import (
     build_error,
 )
 from tracing import Span, Tracer
-from utils.http_client import HttpClient, HttpError
+from utils.http_client import HttpClient
 
 if TYPE_CHECKING:
     from llm.registry import LLMProviderRegistry

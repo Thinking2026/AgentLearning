@@ -5,21 +5,12 @@ import urllib.error
 import urllib.request
 
 from schemas import (
+    HttpError,
     LLM_NETWORK_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
     LLM_TIMEOUT,
     build_error,
 )
-
-
-class HttpError(Exception):
-    """Raised for HTTP error responses; carries status code and Retry-After."""
-
-    def __init__(self, status: int, body: str, retry_after: float | None = None) -> None:
-        self.status = status
-        self.body = body
-        self.retry_after = retry_after
-        super().__init__(f"HTTP {status}: {body}")
 
 
 class HttpClient:

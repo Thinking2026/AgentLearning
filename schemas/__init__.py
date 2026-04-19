@@ -46,6 +46,7 @@ from .errors import (
     VECTOR_SEARCH_TOOL_ERROR,
     AgentError,
     ConfigError,
+    HttpError,
     build_error,
 )
 from .types import (
@@ -118,5 +119,6 @@ __all__ = [
     "VECTOR_SEARCH_TOOL_ERROR",
     "AgentError",
     "ConfigError",
+    "HttpError",
     "build_error",
 ]
