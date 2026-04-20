@@ -44,7 +44,7 @@ class AgentThread(threading.Thread):
             "agent.latency.agent_user_message_wait_timeout_seconds",
             2.0,
         )
-        self._max_attempt_iterations = int(
+        self._max_attempt_iterations = int(#TODO 循环最后一轮要强制给一个答案
             self._config.get("agent.max_attempt_iterations", 60)
         )
         self._cur_attempt_iterations = 0
@@ -56,64 +56,8 @@ class AgentThread(threading.Thread):
             self._tracer = self._build_tracer()
             self._executor = self._build_executor()
         except Exception:
-            self.release_resources()
+            self._release_resources() #TODO 全文的日志都要加好
             raise
-
-    def stop(self) -> None:
-        self._stop_callback(self.name)
-
-    def reset(self) -> None:
-        self._finish_session_trace()
-        self._session.reset()
-        self._cur_attempt_iterations = 0
-        if self._executor is not None:
-            self._executor.reset(archive_current_task=False)
-
-    def release_resources(self) -> None:
-        self.reset()
-        if self._executor is not None:
-            self._executor.release_resources()
-        self._executor = None
-        self._session_span = None
-
-    def _build_executor(self) -> AgentExecutor:
-        return AgentExecutor(
-            config=self._config,
-            tracer=self._tracer,
-            logger=self._logger,
-        )
-
-    def _load_tracing_config(self) -> None:
-        self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
-        self._tracing_output_path = self._config.get("tracing.output_path", "runtime/tracing/traces.jsonl")
-        self._tracing_payload_redaction_enabled = bool(
-            self._config.get(
-                "tracing.payload_redaction_enabled",
-                not bool(self._config.get("tracing.capture_payloads", False)),
-            )
-        )
-        self._tracing_max_content_length = self._config_value_reader.positive_int(
-            "tracing.max_content_length",
-            default=1000,
-        )
-
-    def _build_tracer(self) -> Tracer:
-        return Tracer(
-            enabled=self._tracing_enabled,
-            output_path=self._tracing_output_path,
-            payload_redaction_enabled=self._tracing_payload_redaction_enabled,
-            max_content_length=self._tracing_max_content_length,
-        )
-
-    def _begin_session(self, user_message: ChatMessage) -> None:
-        self._start_session_trace(user_message)
-        self._session.begin()
-        self._cur_attempt_iterations = 0
-
-    def _finish_session(self, archive_current_task: bool = True, error: Exception | AgentError | None = None) -> None:
-        self._finish_session_trace(error=error)
-        self._session.reset()
-        self._complete_current_task(archive_current_task)
 
     def run(self) -> None:
         try:
@@ -207,11 +151,52 @@ class AgentThread(threading.Thread):
                     )
                     break
         except Exception as exc:
-            self._finish_session(archive_current_task=False, error=exec)
+            self._finish_session(archive_current_task=False, error=exc)
             self._logger.error("Agent thread crashed", zap.any("error", exc))
         finally:
-            self.release_resources()
-            self.stop()
+            self._release_resources()
+            self._stop()
+
+    def _build_executor(self) -> AgentExecutor:
+        return AgentExecutor(
+            config=self._config,
+            tracer=self._tracer,
+            logger=self._logger,
+        )
+
+    def _load_tracing_config(self) -> None:
+        self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
+        self._tracing_output_path = self._config.get("tracing.output_path", "runtime/tracing/traces.jsonl")
+        self._tracing_payload_redaction_enabled = bool(
+            self._config.get(
+                "tracing.payload_redaction_enabled",
+                not bool(self._config.get("tracing.capture_payloads", False)),
+            )
+        )
+        self._tracing_max_content_length = self._config_value_reader.positive_int(
+            "tracing.max_content_length",
+            default=1000,
+        )
+
+    def _build_tracer(self) -> Tracer:
+        return Tracer(
+            enabled=self._tracing_enabled,
+            output_path=self._tracing_output_path,
+            payload_redaction_enabled=self._tracing_payload_redaction_enabled,
+            max_content_length=self._tracing_max_content_length,
+        )
+
+    def _begin_session(self, user_message: ChatMessage) -> None:
+        self._start_session_trace(user_message)
+        self._session.begin()
+        self._cur_attempt_iterations = 0
+
+    def _finish_session(self, archive_current_task: bool = True, error: Exception | AgentError | None = None) -> None:
+        self._finish_session_trace(error=error)
+        self._session.reset()
+        if self._executor is not None:
+            self._executor.reset(archive_current_task=archive_current_task)
+        self._cur_attempt_iterations = 0
 
     def _start_session_trace(self, user_message: ChatMessage) -> None:
         if self._tracer is None or self._session_span is not None:
@@ -231,12 +216,16 @@ class AgentThread(threading.Thread):
         self._session_span.finish(status=status, error=error)
         self._session_span = None
 
-    def _complete_current_task(
-        self,
-        archive_current_task: bool,
-    ) -> None:
+    def _stop(self) -> None:
+        self._stop_callback(self.name)
+
+    def _release_resources(self) -> None:
+        self._cur_attempt_iterations = 0
         if self._executor is not None:
-            self._executor.reset(archive_current_task=archive_current_task)
+            self._executor.release_resources()
+        self._executor = None
+        self._session_span = None
+        self._tracer = None
 
     def _record_user_input_trace(
         self,

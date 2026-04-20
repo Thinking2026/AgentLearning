@@ -177,7 +177,7 @@ class FallbackLLMClient(BaseLLMClient):
 
                 except AgentError as exc:
                     repaired = self._try_parse_error_self_repair(provider, current_request, exc)
-                    if repaired is not None:
+                    if repaired is not None:#TODO 没有判断返回分类
                         return repaired
 
                     failure_messages.append(f"{provider_name}[attempt {attempt_idx + 1}/{self._retry_max_attempts}]: {exc}")

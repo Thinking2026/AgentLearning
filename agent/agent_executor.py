@@ -48,9 +48,9 @@ class AgentExecutor:
     ) -> None:
         self._agent_context = AgentContext()
 
-        config_reader = ConfigValueReader(config)
+        _config_reader = ConfigValueReader(config)
         self._storage_registry = self._build_storage_registry(config)
-        self._tool_registry = self._build_tool_registry(config, config_reader, tracer, logger)
+        self._tool_registry = self._build_tool_registry(config, _config_reader, tracer, logger)
         self._strategy = self._build_strategy(config, tracer)
         self._register_storage_tools(self._storage_registry)
 
@@ -104,7 +104,6 @@ class AgentExecutor:
         self._restore_base_system_prompt()
 
     def release_resources(self) -> None:
-        self.reset(archive_current_task=False)
         self._agent_context.release()
         self._storage_registry.close_all()
 
