@@ -23,8 +23,6 @@
     "timeout": 120.0,
     "priority_chain": ["deepseek", "claude", "openai"],
     "context_trimming": {
-      "enabled": true,
-      "max_messages": 60
     },
     "retry": {
       "max_attempts": 5,
