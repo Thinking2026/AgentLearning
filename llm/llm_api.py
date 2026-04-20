@@ -129,6 +129,10 @@ class BaseLLMClient(ABC):
         return tracer.start_span(name=name, type="llm", attributes=attributes)
 
     @abstractmethod
+    def token_estimate(self, request_payload: dict[str, object]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
     def generate(self, request: LLMRequest) -> LLMResponse:
         raise NotImplementedError
 
@@ -242,7 +246,7 @@ class SingleProviderClient(BaseLLMClient):
                 attempt_idx += 1
 
             except AgentError as exc:
-                resp_after_repaired = _try_parse_error_self_repair(self._provider, current_request, exc)#TODO repair修复逻辑没有对返回做错误分类处理
+                resp_after_repaired = _try_parse_error_self_repair(self._provider, current_request, exc)
                 if resp_after_repaired is not None:
                     logger.info(
                         "Self-repair succeeded",
