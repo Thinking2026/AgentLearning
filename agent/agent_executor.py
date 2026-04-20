@@ -65,25 +65,6 @@ class AgentExecutor:
     def get_conversation(self) -> list[ChatMessage]:
         return self._agent_context.get_conversation_history()
 
-    def get_trimmed_conversation(self, max_messages: int | None) -> list[ChatMessage]:
-        conversation = self._agent_context.get_conversation_history()
-        if max_messages is None or max_messages <= 0 or len(conversation) <= max_messages:
-            return conversation
-        # Drop complete ReAct units from the front until within the limit.
-        # A unit is: one user message, or one assistant message + all immediately
-        # following tool messages. This guarantees we never split an
-        # assistant/tool-call group, which OpenAI and Claude APIs reject.
-        result = list(conversation)
-        while len(result) > max_messages:
-            if not result:
-                break
-            end = 1
-            if result[0].role == "assistant":
-                while end < len(result) and result[end].role == "tool":
-                    end += 1
-            del result[:end]
-        return result
-
     def get_system_prompt(self) -> str:
         return self._agent_context.get_system_prompt()
 

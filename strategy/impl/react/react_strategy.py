@@ -174,7 +174,7 @@ Always aim to produce the next best action from the evidence currently available
         if user_message is not None and user_message.content.strip():
             message = ChatMessage(role="user", content=user_message.content.strip())
             executor.append_conversation(message)
-        conversation = executor.get_trimmed_conversation(self._max_messages)
+        conversation = self._get_trimmed_conversation(executor.get_conversation(), self._max_messages)
         return (
             self._message_formatter.build_request(
                 system_prompt=executor.get_system_prompt(),
@@ -322,6 +322,23 @@ Always aim to produce the next best action from the evidence currently available
                 )
             )
         return AgentExecutionResult(user_messages=intermediate_messages)
+
+    @staticmethod
+    def _get_trimmed_conversation(
+        conversation: list[ChatMessage], max_messages: int | None
+    ) -> list[ChatMessage]:
+        if max_messages is None or max_messages <= 0 or len(conversation) <= max_messages:
+            return conversation
+        result = list(conversation)
+        while len(result) > max_messages:
+            if not result:
+                break
+            end = 1
+            if result[0].role == "assistant":
+                while end < len(result) and result[end].role == "tool":
+                    end += 1
+            del result[:end]
+        return result
 
     @staticmethod
     def _build_error_result(content: str) -> AgentExecutionResult:
