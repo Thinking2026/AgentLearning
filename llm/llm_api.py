@@ -129,10 +129,6 @@ class BaseLLMClient(ABC):
         return tracer.start_span(name=name, type="llm", attributes=attributes)
 
     @abstractmethod
-    def token_estimate(self, request_payload: dict[str, object]) -> int:
-        raise NotImplementedError
-
-    @abstractmethod
     def generate(self, request: LLMRequest) -> LLMResponse:
         raise NotImplementedError
 

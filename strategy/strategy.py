@@ -24,7 +24,3 @@ class Strategy(ABC):
         user_message: ChatMessage | None,
     ) -> AgentExecutionResult:
         raise NotImplementedError
-
-    @abstractmethod
-    def get_trimmed_conversation(self, conversation: list[ChatMessage]) -> list[ChatMessage]:
-        raise NotImplementedError
