@@ -96,6 +96,12 @@
 - [TODO]同一个模型provider都可以使用不同的model，比如claude的sonnet降级到haiku
 - [TODO]工具注册前要全部自检，除了权限问题确保都是可以执行的
 - [TODO]轨迹重放的debug能力
+- [TODO]重复的推理轨迹以及工具调用轨迹，系统介入防止死循环
+- [TODO]对于LLM返回finish reason=length时处理的不好
+- [TODO]需要根据不同provider回复处理个性化错误码和message
+- [TODO]工具调用参数校验，返回格式不对先程序修复，修复不了让LLM重新处理
+- [TODO]上下文剪裁
+- [TODO]系统迭代次数最后一轮强行给一个结果？
 
 ## ReAct Agent可靠性设计
 
@@ -104,10 +110,6 @@
 ### 问题
 - LLM不调用我提供的工具: DeepSeek习惯使用Python脚本直接处理问题
 - 结果文件没有写入：DeepSeek说结果文件已经存到了磁盘，但是实际没有
-- llm provider重试看起来顺序不对，应该是一个模型重试5次？然后换模型
-- 发现同样的处理序列出现死循环，一直调用同样的工具
-- query_sqlite_data工具返回结果，llm api返回报错“OpenAI API returned an invalid tool call payload: Unterminated string starting at: line 1 column 10 (char 9)"”
-- LLM_RESPONSE_TRUNCATED这个处理的不好
 
 ### 解决方式
 - 最开始问问题时就将工具描述带进去，让LLM优先使用我们提供的工具。上面两个问题得到解决

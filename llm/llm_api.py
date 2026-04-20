@@ -242,7 +242,7 @@ class SingleProviderClient(BaseLLMClient):
                 attempt_idx += 1
 
             except AgentError as exc:
-                resp_after_repaired = _try_parse_error_self_repair(self._provider, current_request, exc)
+                resp_after_repaired = _try_parse_error_self_repair(self._provider, current_request, exc)#TODO repair修复逻辑没有对返回做错误分类处理
                 if resp_after_repaired is not None:
                     logger.info(
                         "Self-repair succeeded",
