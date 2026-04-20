@@ -141,7 +141,7 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
         if user_message is not None and user_message.content.strip():
             message = ChatMessage(role="user", content=user_message.content.strip())
             executor.append_conversation(message)
-        conversation = self._get_trimmed_conversation(executor.get_conversation(), self._max_messages)
+        conversation = executor.get_conversation()
         return (
             self._message_formatter.build_request(
                 system_prompt=executor.get_system_prompt(),
