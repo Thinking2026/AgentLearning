@@ -49,6 +49,7 @@ from .errors import (
     AgentError,
     ConfigError,
     HttpError,
+    ProviderFailure,
     build_error,
 )
 from .types import (
@@ -125,5 +126,6 @@ __all__ = [
     "AgentError",
     "ConfigError",
     "HttpError",
+    "ProviderFailure",
     "build_error",
 ]

@@ -48,9 +48,9 @@ class AgentExecutor:
     ) -> None:
         self._agent_context = AgentContext()
 
-        _config_reader = ConfigValueReader(config)
+        config_reader = ConfigValueReader(config)
         self._storage_registry = self._build_storage_registry(config)
-        self._tool_registry = self._build_tool_registry(config, _config_reader, tracer, logger)
+        self._tool_registry = self._build_tool_registry(config, config_reader, tracer, logger)
         self._strategy = self._build_strategy(config, tracer)
         self._register_storage_tools(self._storage_registry)
 

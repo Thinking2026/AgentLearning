@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from schemas.types import LLMRequest
+
 AGENT_EXECUTION_ERROR = "AGENT_EXECUTION_ERROR"
 AGENT_MAX_ITERATIONS_EXCEEDED = "AGENT_MAX_ITERATIONS_EXCEEDED"
 AGENT_STRATEGY_NOT_FOUND = "AGENT_STRATEGY_NOT_FOUND"
@@ -75,3 +80,15 @@ class HttpError(Exception):
         self.body = body
         self.retry_after = retry_after
         super().__init__(f"HTTP {status}: {body}")
+
+class ProviderFailure(Exception):
+    """Raised by SingleProviderClient when this provider cannot serve the request.
+
+    Carries the final request state (possibly trimmed) so the fallback layer
+    can pass it to the next provider unchanged.
+    """
+
+    def __init__(self, provider_name: str, message: str, final_request: "LLMRequest") -> None:
+        super().__init__(message)
+        self.provider_name = provider_name
+        self.final_request = final_request

@@ -8,7 +8,9 @@ from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
     DeepSeekLLMClient,
-    FallbackLLMClient,
+    ProviderFallbackClient,
+    RetryConfig,
+    SingleProviderClient,
     LLMProviderRegistry,
     OpenAILLMClient,
     QwenLLMClient,
@@ -235,8 +237,6 @@ Always aim to produce the next best action from the evidence currently available
             tool_result = self._handle_tool_calls(executor, tool_registry, response)
             return AgentExecutionResult(
                 user_messages=[*llm_messages, *tool_result.user_messages],
-                error=tool_result.error,
-                task_completed=tool_result.task_completed,
             )
 
         return AgentExecutionResult(
@@ -309,13 +309,18 @@ Always aim to produce the next best action from the evidence currently available
         registry = LLMProviderRegistry()
         for provider_name in provider_priority:
             registry.register(self._build_provider(provider_name, config, tracer))
-        return FallbackLLMClient(
-            registry=registry,
-            provider_priority=provider_priority,
-            enable_provider_fallback=bool(config.get("llm.enable_provider_fallback", False)),
+        retry_config = RetryConfig(
             retry_base=float(config.get("llm.retry.base", 0.5)),
             retry_max_delay=float(config.get("llm.retry.max_delay", 60.0)),
             retry_max_attempts=int(config.get("llm.retry.max_attempts", 5)),
+        )
+        clients = [
+            SingleProviderClient(registry.get(name), retry_config)
+            for name in provider_priority
+        ]
+        return ProviderFallbackClient(
+            clients=clients,
+            enable_fallback=bool(config.get("llm.enable_provider_fallback", False)),
         ).set_tracer(tracer)
 
     @staticmethod
