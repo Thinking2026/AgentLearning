@@ -64,6 +64,10 @@ class ToolRegistry:
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
+    def reset_all(self) -> None:
+        for tool in self._tools.values():
+            tool.reset()
+
     def execute(
         self,
         name: str,

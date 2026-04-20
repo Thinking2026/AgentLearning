@@ -99,9 +99,8 @@ class AgentExecutor:
     def reset(self, archive_current_task: bool = False) -> None:
         if archive_current_task:
             self._agent_context.archive_current_task()
-        else:
-            self._agent_context.clear_current_task()
-        self._restore_base_system_prompt()
+        self._agent_context.clear_current_task()
+        self._tool_registry.reset_all()
 
     def release_resources(self) -> None:
         self._agent_context.release()
@@ -132,9 +131,6 @@ class AgentExecutor:
             )
         strategy.init_context(self)
         return strategy
-
-    def _restore_base_system_prompt(self) -> None:
-        self._agent_context = AgentContext()
 
     @staticmethod
     def _build_storage_registry(config: JsonConfig) -> StorageRegistry:

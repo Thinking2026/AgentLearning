@@ -19,6 +19,9 @@ class BaseTool(ABC):
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         raise NotImplementedError
 
+    def reset(self) -> None:
+        """Called between tasks to clear any per-task state. Override if needed."""
+
     def schema(self) -> dict[str, Any]:
         return {
             "name": self.name,

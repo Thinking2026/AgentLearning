@@ -130,6 +130,9 @@ class RunPythonTool(BaseTool):
     def __init__(self) -> None:
         self._session_context: dict[str, Any] = {}
 
+    def reset(self) -> None:
+        self._session_context.clear()
+
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         action = str(arguments.get("action", "run")).strip().lower()
 
