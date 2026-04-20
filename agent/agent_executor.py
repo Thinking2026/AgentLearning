@@ -31,12 +31,12 @@ from tools import (
     build_vector_schema_tool_name,
     create_default_tool_registry,
 )
+from utils.log import Logger, zap
 
 if TYPE_CHECKING:
     from config import JsonConfig
     from strategy.strategy import Strategy
     from tracing import Tracer
-    from utils.log import Logger
 
 
 class AgentExecutor:
@@ -46,6 +46,7 @@ class AgentExecutor:
         tracer: Tracer | None,
         logger: Logger,
     ) -> None:
+        self._logger = logger
         self._agent_context = AgentContext()
 
         config_reader = ConfigValueReader(config)
@@ -97,12 +98,14 @@ class AgentExecutor:
     # ------------------------------------------------------------------
 
     def reset(self, archive_current_task: bool = False) -> None:
+        self._logger.info("AgentExecutor reset", zap.any("archive_current_task", archive_current_task))
         if archive_current_task:
             self._agent_context.archive_current_task()
         self._agent_context.clear_current_task()
         self._tool_registry.reset_all()
 
     def release_resources(self) -> None:
+        self._logger.info("AgentExecutor releasing resources")
         self._agent_context.release()
         self._storage_registry.close_all()
 
@@ -114,7 +117,19 @@ class AgentExecutor:
         self,
         user_message: ChatMessage | None,
     ) -> AgentExecutionResult:
-        return self._strategy.execute(self, self._tool_registry, user_message)
+        self._logger.info(
+            "AgentExecutor run start",
+            zap.any("has_user_message", user_message is not None),
+            zap.any("user_message", user_message.content[:200] if user_message else None),
+        )
+        result = self._strategy.execute(self, self._tool_registry, user_message)
+        self._logger.info(
+            "AgentExecutor run complete",
+            zap.any("task_completed", result.task_completed),
+            zap.any("has_error", result.error is not None),
+            zap.any("error", str(result.error) if result.error else None),
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers

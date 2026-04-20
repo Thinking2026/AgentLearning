@@ -55,8 +55,12 @@ class AgentThread(threading.Thread):
         try:
             self._tracer = self._build_tracer()
             self._executor = self._build_executor()
-        except Exception:
-            self._release_resources() #TODO 全文的日志都要加好
+        except Exception as exc:
+            self._logger.error(
+                "AgentThread init failed, releasing resources",
+                zap.any("error", str(exc)),
+            )
+            self._release_resources()
             raise
 
     def run(self) -> None:
@@ -187,11 +191,20 @@ class AgentThread(threading.Thread):
         )
 
     def _begin_session(self, user_message: ChatMessage) -> None:
+        self._logger.info(
+            "Session begin",
+            zap.any("user_message", user_message.content[:200]),
+        )
         self._start_session_trace(user_message)
         self._session.begin()
         self._cur_attempt_iterations = 0
 
     def _finish_session(self, archive_current_task: bool = True, error: Exception | AgentError | None = None) -> None:
+        self._logger.info(
+            "Session finish",
+            zap.any("archive_current_task", archive_current_task),
+            zap.any("error", str(error) if error else None),
+        )
         self._finish_session_trace(error=error)
         self._session.reset()
         if self._executor is not None:

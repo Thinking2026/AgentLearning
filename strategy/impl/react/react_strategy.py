@@ -29,6 +29,7 @@ from schemas import (
     build_error,
 )
 from strategy.strategy import Strategy
+from utils.log import Logger, zap
 
 if TYPE_CHECKING:
     from agent.agent_executor import AgentExecutor
@@ -137,6 +138,12 @@ Always aim to produce the next best action from the evidence currently available
         tool_registry: ToolRegistry,
         user_message: ChatMessage | None,
     ) -> AgentExecutionResult:
+        logger = Logger.get_instance()
+        logger.info(
+            "ReAct execute start",
+            zap.any("user_message", user_message.content[:200] if user_message else None),
+        )
+
         request, request_error = self._build_llm_request(executor, tool_registry, user_message)
         if request_error is not None:
             return self._build_error_result("Failed to prepare the next LLM request.")
@@ -149,7 +156,14 @@ Always aim to produce the next best action from the evidence currently available
         if parse_result is not None:
             return parse_result
 
-        return self._route_llm_response(executor, tool_registry, parsed_response)
+        result = self._route_llm_response(executor, tool_registry, parsed_response)
+        logger.info(
+            "ReAct execute complete",
+            zap.any("task_completed", result.task_completed),
+            zap.any("has_error", result.error is not None),
+            zap.any("user_messages", len(result.user_messages)),
+        )
+        return result
 
     def _build_llm_request(
         self,
@@ -174,13 +188,31 @@ Always aim to produce the next best action from the evidence currently available
         self,
         request: LLMRequest,
     ) -> tuple[LLMResponse | None, AgentExecutionResult | None]:
+        logger = Logger.get_instance()
+        logger.info(
+            "LLM call start",
+            zap.any("messages", len(request.messages)),
+            zap.any("tools", len(request.tools) if request.tools else 0),
+        )
         try:
-            return self._llm_client.generate(request), None
+            response = self._llm_client.generate(request)
+            logger.info(
+                "LLM call success",
+                zap.any("finish_reason", response.finish_reason),
+                zap.any("tool_calls", len(response.tool_calls) if response.tool_calls else 0),
+            )
+            return response, None
         except AgentError as exc:
+            logger.error(
+                "LLM call failed",
+                zap.any("error_code", exc.code),
+                zap.any("error", str(exc)),
+            )
             if exc.code == LLM_ALL_PROVIDERS_FAILED:
                 return None, AgentExecutionResult(error=exc)
             return None, AgentExecutionResult(error=build_error(AGENT_EXECUTION_ERROR, str(exc)))
         except TimeoutError as exc:
+            logger.error("LLM call timed out", zap.any("error", str(exc)))
             return None, AgentExecutionResult(
                 error=build_error(
                     AGENT_EXECUTION_ERROR,
@@ -250,6 +282,11 @@ Always aim to produce the next best action from the evidence currently available
         tool_registry: ToolRegistry,
         response: LLMResponse,
     ) -> AgentExecutionResult:
+        logger = Logger.get_instance()
+        logger.info(
+            "Tool calls dispatched",
+            zap.any("tools", [tc.name for tc in response.tool_calls]),
+        )
         intermediate_messages: list[ChatMessage] = []
         for tool_call in response.tool_calls:
             result = tool_registry.execute(
@@ -257,6 +294,14 @@ Always aim to produce the next best action from the evidence currently available
                 tool_call.arguments,
                 tool_call.llm_raw_tool_call_id,
             )
+            if not result.success:
+                logger.error(
+                    "Tool call failed",
+                    zap.any("tool", tool_call.name),
+                    zap.any("arguments", tool_call.arguments),
+                    zap.any("error_code", result.error.code if result.error else None),
+                    zap.any("error", result.error.message if result.error else None),
+                )
             observation = self._message_formatter.format_tool_observation(
                 tool_name=tool_call.name,
                 output=result.output,

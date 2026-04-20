@@ -25,6 +25,7 @@ from schemas import (
 )
 from tracing import Span, Tracer
 from utils.http_client import HttpClient
+from utils.log import Logger, zap
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +174,33 @@ class SingleProviderClient(BaseLLMClient):
         failures: list[str] = []
         cfg = self._retry_config
         name = self._provider.provider_name
+        logger = Logger.get_instance()
+
+        logger.info(
+            "LLM generate start",
+            zap.any("provider", name),
+            zap.any("messages", len(current_request.messages)),
+        )
 
         while attempt_idx < cfg.retry_max_attempts:
             try:
-                return self._provider.generate(current_request)
+                result = self._provider.generate(current_request)
+                logger.info(
+                    "LLM generate success",
+                    zap.any("provider", name),
+                    zap.any("attempt", attempt_idx + 1),
+                    zap.any("finish_reason", result.finish_reason),
+                )
+                return result
 
             except HttpError as exc:
                 if _is_fatal_http(exc):
-                    # 401/403/400 invalid_request — this provider cannot serve us, switch
+                    logger.error(
+                        "Provider fatal HTTP error, switching provider",
+                        zap.any("provider", name),
+                        zap.any("status", exc.status),
+                        zap.any("body", exc.body),
+                    )
                     raise ProviderFailure(name, f"HTTP {exc.status}: {exc.body}", current_request) from exc
 
                 code = _classify_http_error(exc)
@@ -188,16 +208,32 @@ class SingleProviderClient(BaseLLMClient):
                 if code == LLM_CONTEXT_TOO_LONG:
                     trimmed = _try_trim_context(current_request)
                     if trimmed is None:
-                        # No more trimming possible — no provider can help
+                        logger.error(
+                            "Context too long and cannot be trimmed",
+                            zap.any("provider", name),
+                            zap.any("messages", len(current_request.messages)),
+                        )
                         raise build_error(
                             LLM_CONTEXT_TOO_LONG,
                             f"{name}: context too long and cannot be trimmed",
                         ) from exc
+                    logger.info(
+                        "Context trimmed, retrying",
+                        zap.any("provider", name),
+                        zap.any("remaining_messages", len(trimmed.messages)),
+                    )
                     current_request = trimmed
                     failures.append(f"{name}[trim]: context trimmed, retrying")
-                    continue  # trim does not consume an attempt
+                    continue
 
                 failures.append(f"{name}[attempt {attempt_idx + 1}/{cfg.retry_max_attempts}]: HTTP {exc.status}")
+                logger.error(
+                    "Provider HTTP error, retrying",
+                    zap.any("provider", name),
+                    zap.any("status", exc.status),
+                    zap.any("attempt", attempt_idx + 1),
+                    zap.any("max_attempts", cfg.retry_max_attempts),
+                )
                 if attempt_idx < cfg.retry_max_attempts - 1:
                     if code == LLM_RATE_LIMITED and exc.retry_after is not None:
                         time.sleep(exc.retry_after)
@@ -208,22 +244,46 @@ class SingleProviderClient(BaseLLMClient):
             except AgentError as exc:
                 resp_after_repaired = _try_parse_error_self_repair(self._provider, current_request, exc)
                 if resp_after_repaired is not None:
+                    logger.info(
+                        "Self-repair succeeded",
+                        zap.any("provider", name),
+                        zap.any("error_code", exc.code),
+                    )
                     return resp_after_repaired
 
                 failures.append(f"{name}[attempt {attempt_idx + 1}/{cfg.retry_max_attempts}]: {exc}")
+                logger.error(
+                    "Provider AgentError, switching provider",
+                    zap.any("provider", name),
+                    zap.any("error_code", exc.code),
+                    zap.any("error", str(exc)),
+                    zap.any("attempt", attempt_idx + 1),
+                )
                 if exc.code in _RETRYABLE_CODES and attempt_idx < cfg.retry_max_attempts - 1:
                     time.sleep(self._backoff_delay(attempt_idx))
                     attempt_idx += 1
                 else:
-                    # Non-retryable or self-repair failed — switch provider
                     raise ProviderFailure(name, " | ".join(failures), current_request) from exc
 
             except Exception as exc:
                 failures.append(f"{name}[attempt {attempt_idx + 1}/{cfg.retry_max_attempts}]: {exc}")
+                logger.error(
+                    "Provider unexpected error, retrying",
+                    zap.any("provider", name),
+                    zap.any("error", str(exc)),
+                    zap.any("attempt", attempt_idx + 1),
+                    zap.any("max_attempts", cfg.retry_max_attempts),
+                )
                 if attempt_idx < cfg.retry_max_attempts - 1:
                     time.sleep(self._backoff_delay(attempt_idx))
                 attempt_idx += 1
 
+        logger.error(
+            "Provider retries exhausted, switching provider",
+            zap.any("provider", name),
+            zap.any("max_attempts", cfg.retry_max_attempts),
+            zap.any("failures", failures),
+        )
         raise ProviderFailure(name, " | ".join(failures), current_request)
 
 
@@ -255,14 +315,32 @@ class ProviderFallbackClient(BaseLLMClient):
         current_request = request
         targets = self._clients if self._enable_fallback else self._clients[:1]
         failures: list[str] = []
+        logger = Logger.get_instance()
+
+        logger.info(
+            "Fallback LLM generate start",
+            zap.any("providers", [c.provider_name for c in targets]),
+            zap.any("messages", len(current_request.messages)),
+        )
 
         for client in targets:
             try:
                 return client.generate(current_request)
             except ProviderFailure as exc:
+                logger.error(
+                    "Provider failed, switching to next",
+                    zap.any("provider", exc.provider_name),
+                    zap.any("reason", str(exc)),
+                    zap.any("remaining_providers", [c.provider_name for c in targets if c.provider_name != exc.provider_name]),
+                )
                 failures.append(f"{exc.provider_name}: {exc}")
-                current_request = exc.final_request  # carry trimmed state to next provider
+                current_request = exc.final_request
 
+        logger.error(
+            "All LLM providers failed",
+            zap.any("providers", [c.provider_name for c in targets]),
+            zap.any("failures", failures),
+        )
         raise build_error(
             LLM_ALL_PROVIDERS_FAILED,
             "All attempted LLM providers failed. " + " | ".join(failures),
