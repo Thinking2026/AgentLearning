@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from schemas import LLMRequest, LLM_CONFIG_ERROR, RoutingDecision, build_error
+from dataclasses import dataclass, field
+
+from schemas import LLMRequest, LLM_CONFIG_ERROR, build_error
 from llm.llm_api import RetryConfig, SingleProviderClient
 from llm.registry import LLMProviderRegistry
+
+
+@dataclass
+class RoutingDecision:
+    primary: SingleProviderClient
+    fallbacks: list[SingleProviderClient] = field(default_factory=list)
 
 
 class LLMProviderRouter:

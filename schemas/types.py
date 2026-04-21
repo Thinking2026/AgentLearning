@@ -6,6 +6,8 @@ from typing import Any, Literal
 from schemas.errors import AgentError
 from utils.timezone import isoformat
 
+#本文件引入的类型只能依赖内置类型或者文件中已经引入的类型，不能依赖其他文件中定义的类型，否则会导致循环依赖问题
+
 ChatRole = Literal["user", "assistant", "tool"]
 
 @dataclass(slots=True)
@@ -82,9 +84,3 @@ class AgentExecutionResult:
     user_messages: list[ChatMessage] = field(default_factory=list)
     error: AgentError | None = None
     task_completed: bool = False
-
-
-@dataclass
-class RoutingDecision:
-    primary: Any
-    fallbacks: list[Any] = field(default_factory=list)

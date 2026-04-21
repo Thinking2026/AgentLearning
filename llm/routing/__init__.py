@@ -1,3 +1,3 @@
-from .provider_router import LLMProviderRouter
+from .provider_router import LLMProviderRouter, RoutingDecision
 
-__all__ = ["LLMProviderRouter"]
+__all__ = ["LLMProviderRouter", "RoutingDecision"]
