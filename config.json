@@ -86,5 +86,16 @@
   },
   "time": {
     "timezone": "shanghai"
+  },
+  "token_budget": {
+    "react": {
+      "reserve_ratio": 0.20,
+      "role_ratios": {
+        "system":    0.15,
+        "user":      0.15,
+        "assistant": 0.15,
+        "tool":      0.55
+      }
+    }
   }
 }

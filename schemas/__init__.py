@@ -63,9 +63,13 @@ from .types import (
     ToolCall,
     ToolResult,
     VectorSearchRequest,
+    RoleBudget,
+    BudgetResult
 )
 
 __all__ = [
+    "BudgetResult",
+    "RoleBudget",
     "AgentExecutionResult",
     "ChatMessage",
     "KeyValueGetRequest",

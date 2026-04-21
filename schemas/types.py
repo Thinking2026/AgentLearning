@@ -84,3 +84,18 @@ class AgentExecutionResult:
     user_messages: list[ChatMessage] = field(default_factory=list)
     error: AgentError | None = None
     task_completed: bool = False
+
+@dataclass(slots=True)
+class RoleBudget:
+    role: str
+    ratio: float
+    token_budget: int
+
+@dataclass(slots=True)
+class BudgetResult:
+    strategy: str
+    total_budget: int
+    reserve_ratio: float
+    reserved_tokens: int        # for LLM response + future summary calls
+    available_tokens: int       # total_budget - reserved_tokens
+    role_budgets: dict[str, RoleBudget] = field(default_factory=dict)
