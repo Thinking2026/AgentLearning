@@ -19,14 +19,6 @@ class ChatMessage:
         if self.role not in valid_roles:
             raise ValueError(f"Unsupported chat role: {self.role}")
 
-
-@dataclass(slots=True)
-class AgentEvent:
-    event_type: str
-    payload: dict[str, Any]
-    timestamp: str = field(default_factory=isoformat())
-
-
 @dataclass(slots=True)
 class ToolCall:
     name: str

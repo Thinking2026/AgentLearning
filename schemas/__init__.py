@@ -53,7 +53,6 @@ from .errors import (
     build_error,
 )
 from .types import (
-    AgentEvent,
     AgentExecutionResult,
     ChatMessage,
     KeyValueGetRequest,
@@ -67,7 +66,6 @@ from .types import (
 )
 
 __all__ = [
-    "AgentEvent",
     "AgentExecutionResult",
     "ChatMessage",
     "KeyValueGetRequest",
