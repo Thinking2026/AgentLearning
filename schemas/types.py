@@ -82,3 +82,9 @@ class AgentExecutionResult:
     user_messages: list[ChatMessage] = field(default_factory=list)
     error: AgentError | None = None
     task_completed: bool = False
+
+
+@dataclass
+class RoutingDecision:
+    primary: Any
+    fallbacks: list[Any] = field(default_factory=list)

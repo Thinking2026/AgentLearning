@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-from schemas import (
-    AgentError,
-    LLMRequest,
-    LLMResponse,
-    LLM_ALL_PROVIDERS_FAILED,
-    LLM_CONFIG_ERROR,
-    ProviderFailure,
-    build_error,
-)
+from schemas import LLMRequest, LLM_CONFIG_ERROR, RoutingDecision, build_error
 from llm.llm_api import RetryConfig, SingleProviderClient
 from llm.registry import LLMProviderRegistry
-from utils.log import Logger, zap
 
 
 class LLMProviderRouter:
-    """Selects a SingleProviderClient per request and handles cross-provider fallback."""
+    """Returns a routing decision (primary + fallbacks) for each request.
+
+    Does not call generate() — the caller is responsible for executing
+    the providers and deciding whether/how to fall back.
+    """
 
     def __init__(
         self,
@@ -32,39 +27,8 @@ class LLMProviderRouter:
         ]
         self._enable_fallback = enable_fallback
 
-    def route(self, request: LLMRequest) -> LLMResponse:
-        """Run inference, falling back across providers on ProviderFailure."""
-        targets = self._clients if self._enable_fallback else self._clients[:1]
-        current_request = request
-        failures: list[str] = []
-        logger = Logger.get_instance()
-
-        logger.info(
-            "LLMProviderRouter route start",
-            zap.any("providers", [c.provider_name for c in targets]),
-            zap.any("messages", len(current_request.messages)),
-        )
-
-        for client in targets:
-            try:
-                return client.generate(current_request)
-            except ProviderFailure as exc:
-                logger.error(
-                    "Provider failed, trying next",
-                    zap.any("provider", exc.provider_name),
-                    zap.any("reason", str(exc)),
-                )
-                failures.append(f"{exc.provider_name}: {exc}")
-                current_request = exc.final_request
-            except AgentError:
-                raise
-
-        logger.error(
-            "All LLM providers failed",
-            zap.any("providers", [c.provider_name for c in targets]),
-            zap.any("failures", failures),
-        )
-        raise build_error(
-            LLM_ALL_PROVIDERS_FAILED,
-            "All attempted LLM providers failed. " + " | ".join(failures),
-        )
+    def route(self, request: LLMRequest) -> RoutingDecision:  # noqa: ARG002
+        """Return which provider to use and which to fall back to for this request."""
+        primary = self._clients[0]
+        fallbacks = self._clients[1:] if self._enable_fallback else []
+        return RoutingDecision(primary=primary, fallbacks=fallbacks)

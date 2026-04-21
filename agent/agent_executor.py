@@ -13,6 +13,9 @@ from schemas import (
     ChatMessage,
     LLM_ALL_PROVIDERS_FAILED,
     LLM_PROVIDER_NOT_FOUND,
+    LLMRequest,
+    LLMResponse,
+    ProviderFailure,
     STORAGE_CONFIG_ERROR,
     build_error,
 )
@@ -144,7 +147,7 @@ class AgentExecutor:
         )
 
         try:
-            llm_response = self._llm_provider_router.route(request)
+            llm_response = self._call_llm(request)
         except AgentError as exc:
             return AgentExecutionResult(
                 user_messages=user_messages,
@@ -208,6 +211,34 @@ class AgentExecutor:
                 },
             ))
         return AgentExecutionResult(user_messages=user_messages, task_completed=False)
+
+    def _call_llm(self, request: LLMRequest) -> LLMResponse:
+        decision = self._llm_provider_router.route(request)
+        current_request = request
+        failures: list[str] = []
+
+        self._logger.info(
+            "LLM call start",
+            zap.any("primary", decision.primary.provider_name),
+            zap.any("fallbacks", [c.provider_name for c in decision.fallbacks]),
+        )
+
+        for client in [decision.primary, *decision.fallbacks]:
+            try:
+                return client.generate(current_request)
+            except ProviderFailure as exc:
+                self._logger.error(
+                    "Provider failed, trying next",
+                    zap.any("provider", exc.provider_name),
+                    zap.any("reason", str(exc)),
+                )
+                failures.append(f"{exc.provider_name}: {exc}")
+                current_request = exc.final_request
+
+        raise build_error(
+            LLM_ALL_PROVIDERS_FAILED,
+            "All attempted LLM providers failed. " + " | ".join(failures),
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
