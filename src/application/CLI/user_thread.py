@@ -61,10 +61,10 @@ class UserThread(threading.Thread):
         self._task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
         self._project_root = get_project_root()
         self._task_source_dir = get_task_source_dir(
-            self._project_root / "testing" / "tasks" / self._task_name
+            self._project_root / "tests" / "integration" / "tasks" / self._task_name
         )
         self._task_runtime_dir = get_task_runtime_dir(
-            self._project_root / "testing" / "runtime" / self._task_name
+            self._project_root / "var" / "tasks" / self._task_name
         )
         self._prompt_file_path = get_task_prompt_file(
             self._task_source_dir / "prompt.txt"

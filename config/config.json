@@ -49,13 +49,13 @@
   "storage": {
     "backend": "file",
     "file": {
-      "path": "testing/runtime/agent_documents.json"
+      "path": "tests/runtime/agent_documents.json"
     },
     "sqlite": {
       "allowed_databases": {
-        "material_price": "testing/runtime/material_price.db"
+        "material_price": "tests/runtime/material_price.db"
       },
-      "path": "testing/runtime/material_price.db"
+      "path": "tests/runtime/material_price.db"
     },
     "chromadb": {
       "persist_directory": "",
@@ -80,7 +80,7 @@
   },
   "tracing": {
     "enabled": true,
-    "output_path": "testing/runtime/tracing/traces.jsonl",
+    "output_path": "var/tracing/traces.jsonl",
     "payload_redaction_enabled": false,
     "max_content_length": 2048
   },
