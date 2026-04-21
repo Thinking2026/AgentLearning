@@ -322,7 +322,7 @@ class AgentExecutor:
     @staticmethod
     def _build_storage_registry(config: JsonConfig) -> StorageRegistry:
         seed_documents = load_seed_documents(
-            config.get("storage.file.path", "testing/runtime/nanoagent_soul.json")
+            config.get("storage.file.path", "tests/runtime/nanoagent_soul.json")
         )
         sqlite_databases = AgentExecutor._build_sqlite_databases(config)
         storages = [SQLiteStorage(sqlite_databases)]
@@ -368,7 +368,7 @@ class AgentExecutor:
         if fallback_path:
             databases.setdefault(AgentExecutor._derive_sqlite_alias(fallback_path), fallback_path)
         if not databases:
-            databases["local_storage"] = "testing/runtime/nanoagent_local_storage.db"
+            databases["local_storage"] = "var/storage/nanoagent_local_storage.db"
         return databases
 
     @staticmethod

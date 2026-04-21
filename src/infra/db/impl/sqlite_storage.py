@@ -29,7 +29,7 @@ class SQLiteStorage(RelationalStorage):
         if not databases:
             raise build_error(STORAGE_CONFIG_ERROR, "SQLite storage requires at least one database.")
         self._databases = {
-            self._normalize_database_name(name): Path(path).expanduser()
+            self._normalize_database_name(name): self._resolve_db_path(path)
             for name, path in databases.items()
             if str(name).strip() and str(path).strip()
         }
@@ -164,6 +164,17 @@ class SQLiteStorage(RelationalStorage):
         if normalized.endswith(".db"):
             normalized = normalized[:-3]
         return normalized
+
+    @staticmethod
+    def _resolve_db_path(path: str) -> Path:
+        p = Path(path).expanduser()
+        if p.is_absolute():
+            return p
+        from utils.runtime_env import get_project_root
+        try:
+            return get_project_root() / p
+        except RuntimeError:
+            return p
 
     @staticmethod
     def _quote_identifier(identifier: str) -> str:

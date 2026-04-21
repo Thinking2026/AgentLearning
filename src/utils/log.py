@@ -25,7 +25,7 @@ class Logger:
     _instance: Logger | None = None
     _instance_lock: Lock = Lock()
 
-    def __init__(self, log_dir: str | Path = "logs") -> None:
+    def __init__(self, log_dir: str | Path = "var/logs") -> None:
         self._log_dir = self._resolve_log_dir(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
@@ -42,7 +42,7 @@ class Logger:
             return path
 
     @classmethod
-    def get_instance(cls, log_dir: str | Path = "logs") -> "Logger":
+    def get_instance(cls, log_dir: str | Path = "var/logs") -> "Logger":
         if cls._instance is None:
             with cls._instance_lock:
                 if cls._instance is None:

@@ -4,6 +4,9 @@ import os
 import sys
 from pathlib import Path
 
+_project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_project_root / "src"))
+
 from application import AgentApplication
 from utils.env_loader import load_dotenv
 from utils.log import Logger, zap
@@ -11,10 +14,10 @@ from utils.runtime_env import set_project_root
 
 
 def main() -> None:
-    project_root = set_project_root(Path(__file__).resolve().parent)
+    project_root = set_project_root(_project_root)
     os.chdir(project_root)
     load_dotenv(project_root / ".env")
-    config_path = project_root / "config.json"
+    config_path = project_root / "config" / "config.json"
     logger = Logger()
     try:
         application = AgentApplication(config_path)

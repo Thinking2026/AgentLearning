@@ -139,8 +139,8 @@ class AgentApplication:
 
         project_root = get_project_root()
         task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
-        task_source_dir = project_root / "testing" / "tasks" / task_name
-        task_runtime_dir = project_root / "testing" / "runtime" / task_name
+        task_source_dir = project_root / "tests" / "integration" / "tasks" / task_name
+        task_runtime_dir = project_root / "var" / "tasks" / task_name
         task_runtime_dir.mkdir(parents=True, exist_ok=True)
         set_task_environment(
             task_name=task_name,

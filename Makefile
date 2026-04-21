@@ -19,10 +19,10 @@ install-dev:
 	@echo "Installed development dependencies."
 
 run:
-	@$(PYTHON) main.py
+	@$(PYTHON) src/main.py
 
 check:
-	@$(PYTHON) -m compileall . >/dev/null
+	@$(PYTHON) -m compileall src/ >/dev/null
 	@echo "Compile check passed."
 
 compile: check
@@ -31,7 +31,7 @@ compile: check
 		'SCRIPT_DIR="$$(CDPATH= cd -- "$$(dirname -- "$$0")" && pwd)"' \
 		'PROJECT_ROOT="$$(CDPATH= cd -- "$$SCRIPT_DIR/.." && pwd)"' \
 		'cd "$$PROJECT_ROOT" || exit 1' \
-		'exec "$${PYTHON:-python3}" "$$PROJECT_ROOT/main.py" "$$@"' \
+		'exec "$${PYTHON:-python3}" "$$PROJECT_ROOT/src/main.py" "$$@"' \
 		> $(BINARY_PATH)
 	@chmod +x $(BINARY_PATH)
 	@echo "Built $(BINARY_PATH)"

@@ -170,7 +170,7 @@ class AgentThread(threading.Thread):
 
     def _load_tracing_config(self) -> None:
         self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
-        self._tracing_output_path = self._config.get("tracing.output_path", "testing/runtime/tracing/traces.jsonl")
+        self._tracing_output_path = self._config.get("tracing.output_path", "var/tracing/traces.jsonl")
         self._tracing_payload_redaction_enabled = bool(
             self._config.get(
                 "tracing.payload_redaction_enabled",

@@ -19,9 +19,12 @@ env/
 .idea/
 .DS_Store
 
-# Runtime and logs (non-source artifacts)
+# Runtime artifacts (logs, traces, storage)
+var/
 logs/
 bin/
+
+# Task-specific runtime output
 testing/runtime/
 
 # Local databases and logs
