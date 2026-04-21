@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from agent.strategy.decision import StrategyDecision
 from schemas import ChatMessage, LLMRequest, LLMResponse
 
 if TYPE_CHECKING:
     from agent.agent_executor import AgentExecutor
+    from context.agent_context import AgentContext
+    from schemas import ToolCall, ToolResult
+    from tools import ToolRegistry
 
 
 class Strategy(ABC):
@@ -19,9 +22,8 @@ class Strategy(ABC):
     @abstractmethod
     def build_llm_request(
         self,
-        system_prompt: str,
-        conversation: list[ChatMessage],
-        tool_schemas: list[dict[str, Any]],
+        agent_context: AgentContext,
+        tool_registry: ToolRegistry,
     ) -> LLMRequest:
         """Format conversation into an LLMRequest for this reasoning mode."""
         raise NotImplementedError
@@ -34,9 +36,8 @@ class Strategy(ABC):
     @abstractmethod
     def format_tool_observation(
         self,
-        tool_name: str,
-        output: str,
-        llm_raw_tool_call_id: str | None,
+        tool_call: ToolCall,
+        result: ToolResult,
     ) -> ChatMessage:
         """Format a tool result as a conversation message."""
         raise NotImplementedError

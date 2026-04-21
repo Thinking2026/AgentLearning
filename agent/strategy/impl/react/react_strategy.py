@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from agent.strategy.decision import FinalAnswer, InvokeTools, ResponseTruncated, StrategyDecision
 from agent.strategy.impl.react.message_formatter import MessageFormatter
@@ -11,11 +11,15 @@ from schemas import (
     LLMResponse,
     LLM_RESPONSE_TRUNCATED,
     SessionStatus,
+    ToolCall,
+    ToolResult,
     build_error,
 )
 
 if TYPE_CHECKING:
     from agent.agent_executor import AgentExecutor
+    from context.agent_context import AgentContext
+    from tools import ToolRegistry
 
 
 class ReActStrategy(Strategy):
@@ -78,14 +82,13 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
 
     def build_llm_request(
         self,
-        system_prompt: str,
-        conversation: list[ChatMessage],
-        tool_schemas: list[dict[str, Any]],
+        agent_context: AgentContext,
+        tool_registry: ToolRegistry,
     ) -> LLMRequest:
         return self._formatter.build_request(
-            system_prompt=system_prompt,
-            conversation=conversation,
-            tools=tool_schemas,
+            system_prompt=agent_context.get_system_prompt(),
+            conversation=agent_context.get_conversation_history(),
+            tools=tool_registry.get_tool_schemas(),
         )
 
     def parse_llm_response(self, response: LLMResponse) -> StrategyDecision:
@@ -125,12 +128,11 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
 
     def format_tool_observation(
         self,
-        tool_name: str,
-        output: str,
-        llm_raw_tool_call_id: str | None,
+        tool_call: ToolCall,
+        result: ToolResult,
     ) -> ChatMessage:
         return self._formatter.format_tool_observation(
-            tool_name=tool_name,
-            output=output,
-            llm_raw_tool_call_id=llm_raw_tool_call_id,
+            tool_name=tool_call.name,
+            output=result.output,
+            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
         )

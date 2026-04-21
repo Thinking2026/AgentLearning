@@ -141,9 +141,8 @@ class AgentExecutor:
         user_messages: list[ChatMessage] = []
 
         request = self._strategy.build_llm_request(
-            system_prompt=self.get_system_prompt(),
-            conversation=self.get_conversation(),
-            tool_schemas=self._tool_registry.get_tool_schemas(),
+            agent_context=self._agent_context,
+            tool_registry=self._tool_registry,
         )
 
         try:
@@ -194,9 +193,8 @@ class AgentExecutor:
                     zap.any("error", result.error.message if result.error else None),
                 )
             observation = self._strategy.format_tool_observation(
-                tool_name=tool_call.name,
-                output=result.output,
-                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                tool_call=tool_call,
+                result=result,
             )
             self.append_conversation(observation)
             user_messages.append(ChatMessage(
