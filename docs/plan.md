@@ -106,14 +106,14 @@
 
 ## ReAct Agent裁剪上下文设计
 - 根据token预算触发裁剪
-- 分槽位，每个槽位分配token预算，系统提示15%，多伦推理35%，工具调用和RAG 35%，用户输入15%
+- [Done]分槽位，每个槽位分配token预算，系统提示15%，多伦推理35%，工具调用和RAG 35%，用户输入15%
 - 引用
 - 重要性评分
 - 时间衰减
 - 滑动窗口+summary
 - json保留关键结构
 - LLM返回的thought可能没用
-- summary也要预留token
+- [Done]summary也要预留token
 - 渐进式裁剪，不要上来就压缩
 - 保障LLM API需要的tool call/tool result配对
 
