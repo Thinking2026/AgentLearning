@@ -26,9 +26,20 @@ class Logger:
     _instance_lock: Lock = Lock()
 
     def __init__(self, log_dir: str | Path = "logs") -> None:
-        self._log_dir = Path(log_dir)
+        self._log_dir = self._resolve_log_dir(log_dir)
         self._log_dir.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
+
+    @staticmethod
+    def _resolve_log_dir(log_dir: str | Path) -> Path:
+        path = Path(log_dir)
+        if path.is_absolute():
+            return path
+        from utils.runtime_env import get_project_root
+        try:
+            return get_project_root() / path
+        except RuntimeError:
+            return path
 
     @classmethod
     def get_instance(cls, log_dir: str | Path = "logs") -> "Logger":
