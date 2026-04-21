@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 from agent.strategy.decision import FinalAnswer, InvokeTools, ResponseTruncated, StrategyDecision
-from agent.strategy.impl.react.formatter import MessageFormatter
+from agent.strategy.impl.react.message_formatter import MessageFormatter
 from agent.strategy.strategy import Strategy
 from schemas import (
     ChatMessage,
