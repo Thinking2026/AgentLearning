@@ -124,7 +124,7 @@ class AgentExecutor:
         if user_message is not None and user_message.content.strip():
             self.append_conversation(ChatMessage(role="user", content=user_message.content.strip()))
 
-        result = self._run_loop()
+        result = self._execute()
 
         self._logger.info(
             "AgentExecutor run complete",
@@ -134,80 +134,80 @@ class AgentExecutor:
         )
         return result
 
-    def _run_loop(self) -> AgentExecutionResult:
+    def _execute(self) -> AgentExecutionResult:
         user_messages: list[ChatMessage] = []
 
-        while True:
-            request = self._strategy.build_llm_request(
-                system_prompt=self.get_system_prompt(),
-                conversation=self.get_conversation(),
-                tool_schemas=self._tool_registry.get_tool_schemas(),
+        request = self._strategy.build_llm_request(
+            system_prompt=self.get_system_prompt(),
+            conversation=self.get_conversation(),
+            tool_schemas=self._tool_registry.get_tool_schemas(),
+        )
+
+        try:
+            llm_response = self._llm_provider_router.route(request)
+        except AgentError as exc:
+            return AgentExecutionResult(
+                user_messages=user_messages,
+                error=exc if exc.code == LLM_ALL_PROVIDERS_FAILED else build_error(AGENT_EXECUTION_ERROR, str(exc)),
             )
 
-            try:
-                llm_response = self._llm_provider_router.route(request)
-            except AgentError as exc:
-                return AgentExecutionResult(
-                    user_messages=user_messages,
-                    error=exc if exc.code == LLM_ALL_PROVIDERS_FAILED else build_error(AGENT_EXECUTION_ERROR, str(exc)),
-                )
+        decision = self._strategy.parse_llm_response(llm_response)
 
-            decision = self._strategy.parse_llm_response(llm_response)
+        if isinstance(decision, ResponseTruncated):
+            self.append_conversation(decision.message)
+            user_messages.append(decision.message)
+            return AgentExecutionResult(user_messages=user_messages, error=decision.error)
 
-            if isinstance(decision, ResponseTruncated):
-                self.append_conversation(decision.message)
-                user_messages.append(decision.message)
-                return AgentExecutionResult(user_messages=user_messages, error=decision.error)
+        if isinstance(decision, FinalAnswer):
+            self.append_conversation(decision.message)
+            user_messages.append(decision.message)
+            return AgentExecutionResult(user_messages=user_messages, task_completed=True)
 
-            if isinstance(decision, FinalAnswer):
-                self.append_conversation(decision.message)
-                user_messages.append(decision.message)
-                return AgentExecutionResult(user_messages=user_messages, task_completed=True)
+        # InvokeTools
+        self.append_conversation(decision.assistant_message)
+        llm_content = decision.assistant_message.content.strip()
+        if llm_content:
+            user_messages.append(ChatMessage(
+                role="assistant",
+                content=llm_content,
+                metadata={"source": "llm"},
+            ))
 
-            # InvokeTools
-            self.append_conversation(decision.assistant_message)
-            llm_content = decision.assistant_message.content.strip()
-            if llm_content:
-                user_messages.append(ChatMessage(
-                    role="assistant",
-                    content=llm_content,
-                    metadata={"source": "llm"},
-                ))
-
-            self._logger.info(
-                "Tool calls dispatched",
-                zap.any("tools", [tc.name for tc in decision.tool_calls]),
+        self._logger.info(
+            "Tool calls dispatched",
+            zap.any("tools", [tc.name for tc in decision.tool_calls]),
+        )
+        for tool_call in decision.tool_calls:
+            result = self._tool_registry.execute(
+                tool_call.name,
+                tool_call.arguments,
+                tool_call.llm_raw_tool_call_id,
             )
-            for tool_call in decision.tool_calls:
-                result = self._tool_registry.execute(
-                    tool_call.name,
-                    tool_call.arguments,
-                    tool_call.llm_raw_tool_call_id,
+            if not result.success:
+                self._logger.error(
+                    "Tool call failed",
+                    zap.any("tool", tool_call.name),
+                    zap.any("error_code", result.error.code if result.error else None),
+                    zap.any("error", result.error.message if result.error else None),
                 )
-                if not result.success:
-                    self._logger.error(
-                        "Tool call failed",
-                        zap.any("tool", tool_call.name),
-                        zap.any("error_code", result.error.code if result.error else None),
-                        zap.any("error", result.error.message if result.error else None),
-                    )
-                observation = self._strategy.format_tool_observation(
-                    tool_name=tool_call.name,
-                    output=result.output,
-                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
-                )
-                self.append_conversation(observation)
-                user_messages.append(ChatMessage(
-                    role="assistant",
-                    content=f"[tool:{tool_call.name}] {result.output}",
-                    metadata={
-                        "source": "tool",
-                        "tool_name": tool_call.name,
-                        "tool_arguments": tool_call.arguments,
-                        "tool_result": result.output,
-                        "tool_success": result.success,
-                    },
-                ))
+            observation = self._strategy.format_tool_observation(
+                tool_name=tool_call.name,
+                output=result.output,
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+            )
+            self.append_conversation(observation)
+            user_messages.append(ChatMessage(
+                role="assistant",
+                content=f"[tool:{tool_call.name}] {result.output}",
+                metadata={
+                    "source": "tool",
+                    "tool_name": tool_call.name,
+                    "tool_arguments": tool_call.arguments,
+                    "tool_result": result.output,
+                    "tool_success": result.success,
+                },
+            ))
+        return AgentExecutionResult(user_messages=user_messages, task_completed=False)
 
     # ------------------------------------------------------------------
     # Internal helpers
