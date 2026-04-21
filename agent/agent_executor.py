@@ -68,7 +68,7 @@ class AgentExecutor:
         config_reader = ConfigValueReader(config)
         self._storage_registry = self._build_storage_registry(config)
         self._tool_registry = self._build_tool_registry(config, config_reader, tracer, logger)
-        self._llm_router = self._build_llm_router(config, tracer)
+        self._llm_provider_router = self._build_llm_provider_router(config, tracer)
         self._strategy = self._build_strategy(config)
         self._register_storage_tools(self._storage_registry)
 
@@ -145,7 +145,7 @@ class AgentExecutor:
             )
 
             try:
-                llm_response = self._llm_router.route(request)
+                llm_response = self._llm_provider_router.route(request)
             except AgentError as exc:
                 return AgentExecutionResult(
                     user_messages=user_messages,
@@ -226,7 +226,7 @@ class AgentExecutor:
         return strategy
 
     @staticmethod
-    def _build_llm_router(config: JsonConfig, tracer: Tracer | None) -> LLMProviderRouter:
+    def _build_llm_provider_router(config: JsonConfig, tracer: Tracer | None) -> LLMProviderRouter:
         priority_chain = config.get("llm.priority_chain", ["deepseek"])
         if not isinstance(priority_chain, list) or not priority_chain:
             priority_chain = ["deepseek"]
