@@ -8,7 +8,7 @@ import time
 from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
-from queue.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
 from utils.log import Logger, zap
 from utils.runtime_env import (
@@ -64,7 +64,7 @@ class UserThread(threading.Thread):
             self._project_root / "testing" / "tasks" / self._task_name
         )
         self._task_runtime_dir = get_task_runtime_dir(
-            self._project_root / "runtime" / self._task_name
+            self._project_root / "testing" / "runtime" / self._task_name
         )
         self._prompt_file_path = get_task_prompt_file(
             self._task_source_dir / "prompt.txt"

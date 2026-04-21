@@ -11,7 +11,7 @@ from schemas import (
     STORAGE_RESOURCE_REQUIRED,
     build_error,
 )
-from storage.storage import RelationalStorage
+from infra.db.storage import RelationalStorage
 
 
 class SQLiteStorage(RelationalStorage):

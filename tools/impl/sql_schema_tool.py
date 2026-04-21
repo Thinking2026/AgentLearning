@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from schemas import AgentError, SQL_SCHEMA_TOOL_ERROR, ToolResult, build_error
-from storage import RelationalStorage
+from infra.db import RelationalStorage
 from tools.tools import BaseTool, build_tool_output
 
 

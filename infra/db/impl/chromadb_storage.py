@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from schemas import STORAGE_CONFIG_ERROR, STORAGE_DEPENDENCY_ERROR, VectorSearchRequest, build_error
-from storage.storage import DocumentStorage, VectorStorage
+from infra.db.storage import DocumentStorage, VectorStorage
 
 
 class ChromaDBStorage(VectorStorage, DocumentStorage):

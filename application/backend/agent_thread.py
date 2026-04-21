@@ -5,8 +5,8 @@ from typing import Callable
 
 from agent import AgentExecutor
 from config import ConfigValueReader, JsonConfig
-from context.session import Session
-from queue.message_queue import AgentToUserQueue, UserToAgentQueue
+from agent.session import Session
+from utils.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     AGENT_THREAD_ERROR,
@@ -16,7 +16,7 @@ from schemas import (
     SessionStatus,
     build_error,
 )
-from tracing import Span, Tracer
+from runtime.tracing import Span, Tracer
 from utils.log import Logger, zap
 from utils.thread_event import ThreadEvent
 
@@ -170,7 +170,7 @@ class AgentThread(threading.Thread):
 
     def _load_tracing_config(self) -> None:
         self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
-        self._tracing_output_path = self._config.get("tracing.output_path", "runtime/tracing/traces.jsonl")
+        self._tracing_output_path = self._config.get("tracing.output_path", "testing/runtime/tracing/traces.jsonl")
         self._tracing_payload_redaction_enabled = bool(
             self._config.get(
                 "tracing.payload_redaction_enabled",

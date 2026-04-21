@@ -21,11 +21,14 @@ env/
 
 # Runtime and logs (non-source artifacts)
 logs/
-runtime/
 bin/
+testing/runtime/
 
 # Local databases and logs
 *.db
 *.sqlite
 *.sqlite3
 *.log
+
+#AI Agent specific
+.claude

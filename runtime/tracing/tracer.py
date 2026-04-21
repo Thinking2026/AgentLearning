@@ -76,7 +76,7 @@ class Tracer:
     def __init__(
         self,
         enabled: bool = True,
-        output_path: str | Path = "runtime",
+        output_path: str | Path = "testing/runtime",
         payload_redaction_enabled: bool = True,
         max_content_length: int = 1000,
     ) -> None:

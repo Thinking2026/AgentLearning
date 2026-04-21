@@ -2,24 +2,24 @@ from __future__ import annotations
 
 import os
 
-from llm.impl.openai_api import OpenAILLMClient
+from llm.providers.openai_api import OpenAILLMClient
 from schemas import LLM_CONFIG_ERROR, build_error
 
 
-class QwenLLMClient(OpenAILLMClient):
-    provider_name = "qwen"
+class DeepSeekLLMClient(OpenAILLMClient):
+    provider_name = "deepseek"
 
     @classmethod
     def from_settings(
         cls,
         api_key: str | None,
         model: str,
-        base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        base_url: str = "https://api.deepseek.com/v1",
         timeout: float = 60.0,
-    ) -> "QwenLLMClient":
-        resolved_api_key = api_key or os.getenv("QWEN_API_KEY")
+    ) -> "DeepSeekLLMClient":
+        resolved_api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
         if not resolved_api_key:
-            raise build_error(LLM_CONFIG_ERROR, "Missing API key for Qwen client.")
+            raise build_error(LLM_CONFIG_ERROR, "Missing API key for DeepSeek client.")
         return cls(
             api_key=resolved_api_key,
             model=model,

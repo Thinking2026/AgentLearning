@@ -1,4 +1,3 @@
-from .session import Session
 from .agent_context import AgentContext
 from .estimator import (
     BaseTokenEstimator,
@@ -9,7 +8,6 @@ from .estimator import (
 
 __all__ = [
     "AgentContext",
-    "Session",
     "BaseTokenEstimator",
     "ClaudeTokenEstimator",
     "OpenAICompatibleTokenEstimator",

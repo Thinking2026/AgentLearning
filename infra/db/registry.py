@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from schemas import build_error
-from storage.storage import BaseStorage
+from infra.db.storage import BaseStorage
 
 
 class StorageRegistry:

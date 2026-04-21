@@ -17,7 +17,7 @@ from schemas import (
     ToolResult,
     build_error,
 )
-from tracing import Span, Tracer
+from runtime.tracing import Span, Tracer
 from tools.tools import BaseTool
 from utils.log import Logger, zap
 

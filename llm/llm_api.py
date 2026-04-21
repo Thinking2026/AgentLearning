@@ -23,7 +23,7 @@ from schemas import (
     LLM_TIMEOUT,
     build_error,
 )
-from tracing import Span, Tracer
+from runtime.tracing import Span, Tracer
 from utils.http_client import HttpClient
 from utils.log import Logger, zap
 

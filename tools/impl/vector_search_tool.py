@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from schemas import AgentError, TOOL_ARGUMENT_ERROR, ToolResult, VECTOR_SEARCH_TOOL_ERROR, build_error
-from storage import VectorSearchRequest, VectorStorage
+from infra.db import VectorSearchRequest, VectorStorage
 from tools.tools import BaseTool, build_tool_output
 
 

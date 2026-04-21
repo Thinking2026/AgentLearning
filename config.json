@@ -49,13 +49,13 @@
   "storage": {
     "backend": "file",
     "file": {
-      "path": "runtime/agent_documents.json"
+      "path": "testing/runtime/agent_documents.json"
     },
     "sqlite": {
       "allowed_databases": {
-        "material_price": "runtime/material_price.db"
+        "material_price": "testing/runtime/material_price.db"
       },
-      "path": "runtime/material_price.db"
+      "path": "testing/runtime/material_price.db"
     },
     "chromadb": {
       "persist_directory": "",

@@ -3,7 +3,7 @@
 
 ### 任务输入
 1. /Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/testing/tasks/engineering_estimation/source.txt中含有本次工程所需要材料信息的清单
-2. /Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/runtime/material_price.db是材料价目表，含有每种材料的名称，规格，成分和单价
+2. /Users/yuwu/Desktop/AILearning/AgentLearning/NanoAgent/testing/runtime/material_price.db是材料价目表，含有每种材料的名称，规格，成分和单价
 
 ### 任务目标
 1. 输出一份excel表格

@@ -12,9 +12,9 @@ from schemas import (
     STORAGE_CONFIG_ERROR,
     build_error,
 )
-from storage import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
-from storage.bootstrap_documents import load_seed_documents
-from strategy.impl import ReActStrategy
+from infra.db import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
+from infra.db.bootstrap_documents import load_seed_documents
+from agent.strategy.impl import ReActStrategy
 from tools import (
     SQLQueryTool,
     SQLSchemaTool,
@@ -35,8 +35,8 @@ from utils.log import Logger, zap
 
 if TYPE_CHECKING:
     from config import JsonConfig
-    from strategy.strategy import Strategy
-    from tracing import Tracer
+    from agent.strategy.strategy import Strategy
+    from runtime.tracing import Tracer
 
 
 class AgentExecutor:
@@ -131,7 +131,7 @@ class AgentExecutor:
     @staticmethod
     def _build_storage_registry(config: JsonConfig) -> StorageRegistry:
         seed_documents = load_seed_documents(
-            config.get("storage.file.path", "runtime/nanoagent_soul.json")
+            config.get("storage.file.path", "testing/runtime/nanoagent_soul.json")
         )
         sqlite_databases = AgentExecutor._build_sqlite_databases(config)
         storages = [SQLiteStorage(sqlite_databases)]
@@ -177,7 +177,7 @@ class AgentExecutor:
         if fallback_path:
             databases.setdefault(AgentExecutor._derive_sqlite_alias(fallback_path), fallback_path)
         if not databases:
-            databases["local_storage"] = "runtime/nanoagent_local_storage.db"
+            databases["local_storage"] = "testing/runtime/nanoagent_local_storage.db"
         return databases
 
     @staticmethod

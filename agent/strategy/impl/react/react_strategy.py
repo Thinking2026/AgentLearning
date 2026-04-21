@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 from config import ConfigValueReader
-from strategy.impl.react.formatter import MessageFormatter
+from agent.strategy.impl.react.formatter import MessageFormatter
 from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
@@ -28,14 +28,14 @@ from schemas import (
     SessionStatus,
     build_error,
 )
-from strategy.strategy import Strategy
+from agent.strategy.strategy import Strategy
 from utils.log import Logger, zap
 
 if TYPE_CHECKING:
     from agent.agent_executor import AgentExecutor
     from config import JsonConfig
     from tools import ToolRegistry
-    from tracing import Tracer
+    from runtime.tracing import Tracer
 
 
 class ReActStrategy(Strategy):
