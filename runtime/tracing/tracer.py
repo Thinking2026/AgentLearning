@@ -211,8 +211,14 @@ class Tracer:
     def _resolve_output_dir(output_path: str | Path) -> Path:
         path = Path(output_path)
         if path.suffix:
-            return path.parent if str(path.parent) != "." else Path(".")
-        return path
+            path = path.parent
+        if path.is_absolute():
+            return path
+        from utils.runtime_env import get_project_root
+        try:
+            return get_project_root() / path
+        except RuntimeError:
+            return path
 
     def _normalize_attributes(self, attributes: dict[str, Any]) -> dict[str, Any]:
         return {
