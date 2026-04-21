@@ -12,7 +12,6 @@ from schemas import (
     LLMRequest,
     LLMResponse,
     ProviderFailure,
-    LLM_ALL_PROVIDERS_FAILED,
     LLM_CONFIG_ERROR,
     LLM_CONTEXT_TOO_LONG,
     LLM_HTTP_ERROR,
@@ -285,63 +284,3 @@ class SingleProviderClient(BaseLLMClient):
             zap.any("failures", failures),
         )
         raise ProviderFailure(name, " | ".join(failures), current_request)
-
-
-# ---------------------------------------------------------------------------
-# Layer 1: cross-provider fallback orchestrator
-# ---------------------------------------------------------------------------
-
-class ProviderFallbackClient(BaseLLMClient):
-    """Tries providers in priority order, passing trimmed request state across switches.
-
-    Each provider is a SingleProviderClient that handles its own retry logic.
-    ProviderFailure from one provider causes a switch to the next, carrying
-    the final request state (which may have been trimmed).
-    AgentError (request-fatal) propagates immediately without trying other providers.
-    """
-    provider_name = "fallback"
-
-    def __init__(
-        self,
-        clients: list[SingleProviderClient],
-        enable_fallback: bool = False,
-    ) -> None:
-        if not clients:
-            raise build_error(LLM_CONFIG_ERROR, "clients cannot be empty")
-        self._clients = clients
-        self._enable_fallback = enable_fallback
-
-    def generate(self, request: LLMRequest) -> LLMResponse:
-        current_request = request
-        targets = self._clients if self._enable_fallback else self._clients[:1]
-        failures: list[str] = []
-        logger = Logger.get_instance()
-
-        logger.info(
-            "Fallback LLM generate start",
-            zap.any("providers", [c.provider_name for c in targets]),
-            zap.any("messages", len(current_request.messages)),
-        )
-
-        for client in targets:
-            try:
-                return client.generate(current_request)
-            except ProviderFailure as exc:
-                logger.error(
-                    "Provider failed, switching to next",
-                    zap.any("provider", exc.provider_name),
-                    zap.any("reason", str(exc)),
-                    zap.any("remaining_providers", [c.provider_name for c in targets if c.provider_name != exc.provider_name]),
-                )
-                failures.append(f"{exc.provider_name}: {exc}")
-                current_request = exc.final_request
-
-        logger.error(
-            "All LLM providers failed",
-            zap.any("providers", [c.provider_name for c in targets]),
-            zap.any("failures", failures),
-        )
-        raise build_error(
-            LLM_ALL_PROVIDERS_FAILED,
-            "All attempted LLM providers failed. " + " | ".join(failures),
-        )

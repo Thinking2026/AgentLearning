@@ -6,15 +6,31 @@ from typing import TYPE_CHECKING
 from config import ConfigValueReader
 from context.agent_context import AgentContext
 from schemas import (
+    AGENT_EXECUTION_ERROR,
     AGENT_STRATEGY_NOT_FOUND,
+    AgentError,
     AgentExecutionResult,
     ChatMessage,
+    LLM_ALL_PROVIDERS_FAILED,
+    LLM_PROVIDER_NOT_FOUND,
     STORAGE_CONFIG_ERROR,
     build_error,
 )
 from infra.db import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from infra.db.bootstrap_documents import load_seed_documents
+from agent.strategy.decision import FinalAnswer, InvokeTools, ResponseTruncated
 from agent.strategy.impl import ReActStrategy
+from llm import (
+    BaseLLMClient,
+    ClaudeLLMClient,
+    DeepSeekLLMClient,
+    LLMProviderRegistry,
+    OpenAILLMClient,
+    QwenLLMClient,
+    RetryConfig,
+    SingleProviderClient,
+)
+from llm.routing import LLMProviderRouter
 from tools import (
     SQLQueryTool,
     SQLSchemaTool,
@@ -52,7 +68,8 @@ class AgentExecutor:
         config_reader = ConfigValueReader(config)
         self._storage_registry = self._build_storage_registry(config)
         self._tool_registry = self._build_tool_registry(config, config_reader, tracer, logger)
-        self._strategy = self._build_strategy(config, tracer)
+        self._llm_router = self._build_llm_router(config, tracer)
+        self._strategy = self._build_strategy(config)
         self._register_storage_tools(self._storage_registry)
 
     # ------------------------------------------------------------------
@@ -103,7 +120,12 @@ class AgentExecutor:
             zap.any("has_user_message", user_message is not None),
             zap.any("user_message", user_message.content[:200] if user_message else None),
         )
-        result = self._strategy.execute(self, self._tool_registry, user_message)
+
+        if user_message is not None and user_message.content.strip():
+            self.append_conversation(ChatMessage(role="user", content=user_message.content.strip()))
+
+        result = self._run_loop()
+
         self._logger.info(
             "AgentExecutor run complete",
             zap.any("task_completed", result.task_completed),
@@ -112,14 +134,89 @@ class AgentExecutor:
         )
         return result
 
+    def _run_loop(self) -> AgentExecutionResult:
+        user_messages: list[ChatMessage] = []
+
+        while True:
+            request = self._strategy.build_llm_request(
+                system_prompt=self.get_system_prompt(),
+                conversation=self.get_conversation(),
+                tool_schemas=self._tool_registry.get_tool_schemas(),
+            )
+
+            try:
+                llm_response = self._llm_router.route(request)
+            except AgentError as exc:
+                return AgentExecutionResult(
+                    user_messages=user_messages,
+                    error=exc if exc.code == LLM_ALL_PROVIDERS_FAILED else build_error(AGENT_EXECUTION_ERROR, str(exc)),
+                )
+
+            decision = self._strategy.parse_llm_response(llm_response)
+
+            if isinstance(decision, ResponseTruncated):
+                self.append_conversation(decision.message)
+                user_messages.append(decision.message)
+                return AgentExecutionResult(user_messages=user_messages, error=decision.error)
+
+            if isinstance(decision, FinalAnswer):
+                self.append_conversation(decision.message)
+                user_messages.append(decision.message)
+                return AgentExecutionResult(user_messages=user_messages, task_completed=True)
+
+            # InvokeTools
+            self.append_conversation(decision.assistant_message)
+            llm_content = decision.assistant_message.content.strip()
+            if llm_content:
+                user_messages.append(ChatMessage(
+                    role="assistant",
+                    content=llm_content,
+                    metadata={"source": "llm"},
+                ))
+
+            self._logger.info(
+                "Tool calls dispatched",
+                zap.any("tools", [tc.name for tc in decision.tool_calls]),
+            )
+            for tool_call in decision.tool_calls:
+                result = self._tool_registry.execute(
+                    tool_call.name,
+                    tool_call.arguments,
+                    tool_call.llm_raw_tool_call_id,
+                )
+                if not result.success:
+                    self._logger.error(
+                        "Tool call failed",
+                        zap.any("tool", tool_call.name),
+                        zap.any("error_code", result.error.code if result.error else None),
+                        zap.any("error", result.error.message if result.error else None),
+                    )
+                observation = self._strategy.format_tool_observation(
+                    tool_name=tool_call.name,
+                    output=result.output,
+                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                )
+                self.append_conversation(observation)
+                user_messages.append(ChatMessage(
+                    role="assistant",
+                    content=f"[tool:{tool_call.name}] {result.output}",
+                    metadata={
+                        "source": "tool",
+                        "tool_name": tool_call.name,
+                        "tool_arguments": tool_call.arguments,
+                        "tool_result": result.output,
+                        "tool_success": result.success,
+                    },
+                ))
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_strategy(self, config: JsonConfig, tracer: Tracer | None) -> Strategy:
+    def _build_strategy(self, config: JsonConfig) -> Strategy:
         strategy_name = str(config.get("agent.strategy", "react")).strip()
         if strategy_name == "react":
-            strategy = ReActStrategy(config, tracer)
+            strategy = ReActStrategy()
         else:
             raise build_error(
                 AGENT_STRATEGY_NOT_FOUND,
@@ -127,6 +224,71 @@ class AgentExecutor:
             )
         strategy.init_context(self)
         return strategy
+
+    @staticmethod
+    def _build_llm_router(config: JsonConfig, tracer: Tracer | None) -> LLMProviderRouter:
+        priority_chain = config.get("llm.priority_chain", ["deepseek"])
+        if not isinstance(priority_chain, list) or not priority_chain:
+            priority_chain = ["deepseek"]
+
+        registry = LLMProviderRegistry()
+        for name in priority_chain:
+            registry.register(AgentExecutor._build_provider(name, config, tracer))
+
+        retry_config = RetryConfig(
+            retry_base=float(config.get("llm.retry.base", 0.5)),
+            retry_max_delay=float(config.get("llm.retry.max_delay", 60.0)),
+            retry_max_attempts=int(config.get("llm.retry.max_attempts", 5)),
+        )
+        return LLMProviderRouter(
+            registry=registry,
+            priority_chain=priority_chain,
+            retry_config=retry_config,
+            enable_fallback=bool(config.get("llm.enable_provider_fallback", False)),
+        )
+
+    @staticmethod
+    def _build_provider(provider_name: str, config: JsonConfig, tracer: Tracer | None) -> BaseLLMClient:
+        provider_settings = config.get(f"llm.provider_settings.{provider_name}", {})
+        if not isinstance(provider_settings, dict):
+            provider_settings = {}
+        timeout = float(provider_settings.get("timeout", config.get("llm.timeout", 60.0)))
+        api_key = provider_settings.get("api_key")
+
+        if provider_name == "openai":
+            return OpenAILLMClient.from_settings(
+                api_key=api_key,
+                model=provider_settings.get("model", "gpt-4o-mini"),
+                base_url=provider_settings.get("base_url", "https://api.openai.com/v1"),
+                timeout=timeout,
+            ).set_tracer(tracer)
+        if provider_name == "qwen":
+            return QwenLLMClient.from_settings(
+                api_key=api_key,
+                model=provider_settings.get("model", "qwen-plus"),
+                base_url=provider_settings.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                timeout=timeout,
+            ).set_tracer(tracer)
+        if provider_name == "deepseek":
+            return DeepSeekLLMClient.from_settings(
+                api_key=api_key,
+                model=provider_settings.get("model", "deepseek-chat"),
+                base_url=provider_settings.get("base_url", "https://api.deepseek.com/v1"),
+                timeout=timeout,
+            ).set_tracer(tracer)
+        if provider_name == "claude":
+            return ClaudeLLMClient.from_settings(
+                api_key=api_key,
+                model=provider_settings.get("model", "claude-3-5-sonnet-latest"),
+                base_url=provider_settings.get("base_url", "https://api.anthropic.com"),
+                timeout=timeout,
+                max_tokens=int(provider_settings.get("max_tokens", config.get("llm.max_tokens", 1024))),
+                anthropic_version=provider_settings.get(
+                    "anthropic_version",
+                    config.get("llm.anthropic_version", "2023-06-01"),
+                ),
+            ).set_tracer(tracer)
+        raise build_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}")
 
     @staticmethod
     def _build_storage_registry(config: JsonConfig) -> StorageRegistry:
