@@ -229,7 +229,7 @@ class SearchTool(BaseTool):
     @staticmethod
     def _fetch_duckduckgo(*, query: str, top_k: int, page: int, timeout: int) -> SearchSession:
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
         except ModuleNotFoundError as exc:
             raise _ProviderError(
                 "duckduckgo_search package is not installed. "
