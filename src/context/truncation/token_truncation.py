@@ -95,9 +95,10 @@ class ReActContextTruncator:
         self._llm_client_factory = llm_client_factory
         self._cfg = config or ReActTruncationConfig()
 
-    def truncate(self, request: LLMRequest, total_budget: int) -> TruncationResult:
+    def truncate(self, request: LLMRequest, total_budget: int, estimator: BaseTokenEstimator | None = None) -> TruncationResult:
+        effective_estimator = estimator if estimator is not None else self._estimator
         budget = self._budget_manager.allocate(total_budget)
-        estimation = self._estimator.estimate(request)
+        estimation = effective_estimator.estimate(request)
         if estimation["total"] <= budget.available_tokens:
             return TruncationResult(request=request, compacted_messages=None)
 
@@ -109,18 +110,18 @@ class ReActContextTruncator:
         msgs = self._strategy_c_trim_args(msgs)
         msgs = self._strategy_d_trim_results(msgs)
 
-        if self._fits(request, msgs, budget):
+        if self._fits(request, msgs, budget, effective_estimator):
             return self._make_result(request, msgs)
 
         # Strategy E: binary-search drop of middle units
-        msgs_e = self._strategy_e_binary_drop(request, msgs, budget)
+        msgs_e = self._strategy_e_binary_drop(request, msgs, budget, effective_estimator)
         if msgs_e is not None:
             return self._make_result(request, msgs_e)
 
         # Strategy F: LLM summary of middle 30% units, then retry E
         msgs_f = self._strategy_f_summarize(request, msgs, budget)
         if msgs_f is not None:
-            msgs_fe = self._strategy_e_binary_drop(request, msgs_f, budget)
+            msgs_fe = self._strategy_e_binary_drop(request, msgs_f, budget, effective_estimator)
             final = msgs_fe if msgs_fe is not None else msgs_f
             return self._make_result(request, final)
 
@@ -219,6 +220,7 @@ class ReActContextTruncator:
         request: LLMRequest,
         messages: list[LLMMessage],
         budget: BudgetResult,
+        estimator: BaseTokenEstimator,
     ) -> list[LLMMessage] | None:
         units = _parse_reasoning_units(messages)
         if len(units) <= 2:
@@ -233,7 +235,7 @@ class ReActContextTruncator:
         while lo <= hi:
             k = (lo + hi) // 2
             candidate = self._drop_oldest_k(messages, units, middle_units, k)
-            if self._fits(request, candidate, budget):
+            if self._fits(request, candidate, budget, estimator):
                 best = candidate
                 hi = k - 1
             else:
@@ -322,13 +324,13 @@ class ReActContextTruncator:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _fits(self, request: LLMRequest, messages: list[LLMMessage], budget: BudgetResult) -> bool:
+    def _fits(self, request: LLMRequest, messages: list[LLMMessage], budget: BudgetResult, estimator: BaseTokenEstimator) -> bool:
         candidate = LLMRequest(
             system_prompt=request.system_prompt,
             messages=messages,
             tools=request.tools,
         )
-        estimation = self._estimator.estimate(candidate)
+        estimation = estimator.estimate(candidate)
         return estimation["total"] <= budget.available_tokens
 
     def _make_result(self, request: LLMRequest, messages: list[LLMMessage]) -> TruncationResult:
@@ -351,10 +353,13 @@ class TruncatorFactory:
         config: JsonConfig | None = None,
     ) -> ReActContextTruncator:
         if strategy == "react":
-            summary_provider = (
-                config.get("context_truncation.react.summary_provider", "deepseek")
-                if config is not None else "deepseek"
+            trunc_cfg = ReActTruncationConfig(
+                tool_arg_max_chars=int(config.get("context_truncation.react.tool_arg_max_chars", 300)) if config is not None else 300,
+                tool_result_max_chars=int(config.get("context_truncation.react.tool_result_max_chars", 500)) if config is not None else 500,
+                summary_provider=(
+                    config.get("context_truncation.react.summary_provider", "deepseek")
+                    if config is not None else "deepseek"
+                ),
             )
-            trunc_cfg = ReActTruncationConfig(summary_provider=summary_provider)
             return ReActContextTruncator(budget_manager, estimator, llm_client_factory, trunc_cfg)
         raise ValueError(f"Unknown truncation strategy: {strategy!r}")

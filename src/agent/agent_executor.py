@@ -35,7 +35,7 @@ from llm import (
     RetryConfig,
     SingleProviderClient,
 )
-from llm.routing import LLMProviderRouter
+from llm.routing import LLMProviderRouter, RoutingDecision
 from tools import (
     SQLQueryTool,
     SQLSchemaTool,
@@ -71,6 +71,7 @@ class AgentExecutor:
         logger: Logger,
     ) -> None:
         self._logger = logger
+        self._config = config
         self._agent_context = AgentContext()
 
         config_reader = ConfigValueReader(config)
@@ -80,7 +81,6 @@ class AgentExecutor:
         self._strategy = self._build_strategy(config)
         self._register_storage_tools(self._storage_registry)
         self._truncator = self._build_truncator(config, tracer)
-        self._total_budget = int(config.get("token_budget.total", 8192))
 
     # ------------------------------------------------------------------
     # Conversation interfaces (for Strategy use)
@@ -151,12 +151,11 @@ class AgentExecutor:
             agent_context=self._agent_context,
             tool_registry=self._tool_registry,
         )
-        trunc_result = self._truncator.truncate(request, self._total_budget)
-        if trunc_result.compacted_messages is not None:
-            self._agent_context.replace_conversation_history(trunc_result.compacted_messages)
+
+        routing_decision = self._llm_provider_router.route(request)
 
         try:
-            llm_response = self._call_llm(trunc_result.request)
+            llm_response = self._call_llm(request, routing_decision)
         except AgentError as exc:
             return AgentExecutionResult(
                 user_messages=user_messages,
@@ -220,20 +219,26 @@ class AgentExecutor:
             ))
         return AgentExecutionResult(user_messages=user_messages, task_completed=False)
 
-    def _call_llm(self, request: LLMRequest) -> LLMResponse:
-        decision = self._llm_provider_router.route(request)
-        current_request = request
+    def _call_llm(self, request: LLMRequest, routing_decision: RoutingDecision) -> LLMResponse:
         failures: list[str] = []
 
         self._logger.info(
             "LLM call start",
-            zap.any("primary", decision.primary.provider_name),
-            zap.any("fallbacks", [c.provider_name for c in decision.fallbacks]),
+            zap.any("primary", routing_decision.primary.provider_name),
+            zap.any("fallbacks", [c.provider_name for c in routing_decision.fallbacks]),
         )
 
-        for client in [decision.primary, *decision.fallbacks]:
+        for client in [routing_decision.primary, *routing_decision.fallbacks]:
+            provider_name = client.provider_name
+            estimator = TokenEstimatorFactory.get_estimator(provider_name)
+            total_budget = self._get_provider_context_window(provider_name)
+            trunc_result = self._truncator.truncate(request, total_budget, estimator)
+
             try:
-                return client.generate(current_request)
+                response = client.generate(trunc_result.request)
+                if trunc_result.compacted_messages is not None:
+                    self._agent_context.replace_conversation_history(trunc_result.compacted_messages)
+                return response
             except ProviderFailure as exc:
                 self._logger.error(
                     "Provider failed, trying next",
@@ -241,7 +246,6 @@ class AgentExecutor:
                     zap.any("reason", str(exc)),
                 )
                 failures.append(f"{exc.provider_name}: {exc}")
-                current_request = exc.final_request
 
         raise build_error(
             LLM_ALL_PROVIDERS_FAILED,
@@ -251,6 +255,13 @@ class AgentExecutor:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _get_provider_context_window(self, provider_name: str) -> int:
+        window = self._config.get(f"llm.provider_settings.{provider_name}.context_window")
+        if window is not None:
+            return int(window)
+        defaults = {"claude": 200000, "deepseek": 64000, "openai": 128000}
+        return defaults.get(provider_name, 32000)
 
     def _build_strategy(self, config: JsonConfig) -> Strategy:
         strategy_name = str(config.get("agent.strategy", "react")).strip()
@@ -267,12 +278,9 @@ class AgentExecutor:
     def _build_truncator(self, config: JsonConfig, tracer: Tracer | None) -> ReActContextTruncator:
         strategy_name = str(config.get("agent.strategy", "react")).strip()
         budget_manager = TokenBudgetManagerFactory.create(strategy_name, config)
-        primary_provider = config.get("llm.priority_chain", ["deepseek"])
-        if isinstance(primary_provider, list) and primary_provider:
-            primary_provider = str(primary_provider[0])
-        else:
-            primary_provider = "deepseek"
-        estimator = TokenEstimatorFactory.get_estimator(primary_provider)
+        priority_chain = config.get("llm.priority_chain", ["deepseek"])
+        default_provider = str(priority_chain[0]) if isinstance(priority_chain, list) and priority_chain else "deepseek"
+        estimator = TokenEstimatorFactory.get_estimator(default_provider)
 
         def llm_client_factory(provider_name: str) -> BaseLLMClient:
             return AgentExecutor._build_provider(provider_name, config, tracer)

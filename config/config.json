@@ -34,16 +34,26 @@
         "model": "claude-3-5-sonnet-latest",
         "base_url": "https://api.anthropic.com",
         "max_tokens": 1024,
-        "anthropic_version": "2023-06-01"
+        "anthropic_version": "2023-06-01",
+        "context_window": 200000
       },
       "deepseek": {
         "model": "deepseek-chat",
-        "base_url": "https://api.deepseek.com/v1"
+        "base_url": "https://api.deepseek.com/v1",
+        "context_window": 64000
       },
       "openai": {
         "model": "gpt-4o",
-        "base_url": "https://api.openai.com/v1"
+        "base_url": "https://api.openai.com/v1",
+        "context_window": 128000
       }
+    }
+  },
+  "context_truncation": {
+    "react": {
+      "tool_arg_max_chars": 300,
+      "tool_result_max_chars": 500,
+      "summary_provider": "deepseek"
     }
   },
   "storage": {
