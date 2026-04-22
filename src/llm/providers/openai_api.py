@@ -5,7 +5,7 @@ import os
 
 from llm.llm_api import BaseLLMClient
 from schemas import (
-    LLMMessage,
+    ChatMessage,
     LLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
@@ -172,7 +172,7 @@ class OpenAILLMClient(BaseLLMClient):
                 f"OpenAI API returned an invalid tool call payload: {exc}",
             ) from exc
         return LLMResponse(
-            assistant_message=LLMMessage(
+            assistant_message=ChatMessage(
                 role=message.get("role", "assistant"),
                 content=message.get("content") or "",
                 metadata={

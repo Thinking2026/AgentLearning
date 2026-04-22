@@ -11,7 +11,7 @@ from schemas import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     AGENT_THREAD_ERROR,
     AgentError,
-    LLMMessage,
+    ChatMessage,
     LLM_ALL_PROVIDERS_FAILED,
     SessionStatus,
     build_error,
@@ -72,7 +72,7 @@ class AgentThread(threading.Thread):
                     and self._executor is not None
                     and self._cur_attempt_iterations > self._max_attempt_iterations
                 ):
-                    completion_message = LLMMessage(
+                    completion_message = ChatMessage(
                         role="assistant",
                         content="Sorry, this question is too hard, i can not solve",
                         metadata={
@@ -97,7 +97,7 @@ class AgentThread(threading.Thread):
                     if session_status == SessionStatus.NEW_TASK:
                         self._begin_session(incoming_message)
                         self._agent_to_user_queue.send_agent_message(
-                            LLMMessage(
+                            ChatMessage(
                                 role="assistant",
                                 content="",
                                 metadata={
@@ -120,7 +120,7 @@ class AgentThread(threading.Thread):
 
                     if execution_result.task_completed:
                         self._agent_to_user_queue.send_agent_message(
-                            LLMMessage(
+                            ChatMessage(
                                 role="assistant",
                                 content="",
                                 metadata={
@@ -190,7 +190,7 @@ class AgentThread(threading.Thread):
             max_content_length=self._tracing_max_content_length,
         )
 
-    def _begin_session(self, user_message: LLMMessage) -> None:
+    def _begin_session(self, user_message: ChatMessage) -> None:
         self._logger.info(
             "Session begin",
             zap.any("user_message", user_message.content[:200]),
@@ -211,7 +211,7 @@ class AgentThread(threading.Thread):
             self._executor.reset(archive_current_task=archive_current_task)
         self._cur_attempt_iterations = 0
 
-    def _start_session_trace(self, user_message: LLMMessage) -> None:
+    def _start_session_trace(self, user_message: ChatMessage) -> None:
         if self._tracer is None or self._session_span is not None:
             return
         self._session_span = self._tracer.start_trace(
@@ -242,7 +242,7 @@ class AgentThread(threading.Thread):
 
     def _record_user_input_trace(
         self,
-        user_message: LLMMessage,
+        user_message: ChatMessage,
         input_type: str,
     ) -> None:
         if self._tracer is None:
@@ -261,7 +261,7 @@ class AgentThread(threading.Thread):
     def _wait_for_user_message(
         self,
         session_status: SessionStatus,
-    ) -> LLMMessage | None:
+    ) -> ChatMessage | None:
         if session_status == SessionStatus.NEW_TASK:
             return self._user_to_agent_queue.get_user_message(timeout=None)
         return self._user_to_agent_queue.get_user_message(

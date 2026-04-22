@@ -2,23 +2,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from schemas import AgentError, LLMMessage, ToolCall
+from schemas import AgentError, ChatMessage, ToolCall
 
 
 @dataclass
 class InvokeTools:
-    assistant_message: LLMMessage
+    assistant_message: ChatMessage
     tool_calls: list[ToolCall]
 
 
 @dataclass
 class FinalAnswer:
-    message: LLMMessage
+    message: ChatMessage
 
 
 @dataclass
 class ResponseTruncated:
-    message: LLMMessage
+    message: ChatMessage
     error: AgentError
 
 

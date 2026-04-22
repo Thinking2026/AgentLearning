@@ -7,7 +7,7 @@ import time
 
 from schemas import (
     AgentError,
-    LLMMessage,
+    ChatMessage,
     HttpError,
     LLMRequest,
     LLMResponse,
@@ -99,7 +99,7 @@ def _try_parse_error_self_repair(
     )
     repaired_request = LLMRequest(
         system_prompt=request.system_prompt,
-        messages=[*request.messages, LLMMessage(role="user", content=repair_prompt)],
+        messages=[*request.messages, ChatMessage(role="user", content=repair_prompt)],
         tools=request.tools,
     )
     try:

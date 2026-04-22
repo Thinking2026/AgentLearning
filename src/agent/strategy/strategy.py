@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from agent.strategy.decision import StrategyDecision
-from schemas import LLMMessage, LLMRequest, LLMResponse
+from schemas import ChatMessage, LLMRequest, LLMResponse
 
 if TYPE_CHECKING:
     from agent.agent_executor import AgentExecutor
@@ -38,6 +38,6 @@ class Strategy(ABC):
         self,
         tool_call: ToolCall,
         result: ToolResult,
-    ) -> LLMMessage:
+    ) -> ChatMessage:
         """Format a tool result as a conversation message."""
         raise NotImplementedError

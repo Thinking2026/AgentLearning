@@ -10,7 +10,7 @@ from schemas import (
     AGENT_STRATEGY_NOT_FOUND,
     AgentError,
     AgentExecutionResult,
-    LLMMessage,
+    ChatMessage,
     LLM_ALL_PROVIDERS_FAILED,
     LLM_PROVIDER_NOT_FOUND,
     LLMRequest,
@@ -79,10 +79,10 @@ class AgentExecutor:
     # Conversation interfaces (for Strategy use)
     # ------------------------------------------------------------------
 
-    def append_conversation(self, message: LLMMessage) -> None:
+    def append_conversation(self, message: ChatMessage) -> None:
         self._agent_context.append_conversation_message(message)
 
-    def get_conversation(self) -> list[LLMMessage]:
+    def get_conversation(self) -> list[ChatMessage]:
         return self._agent_context.get_conversation_history()
 
     def get_system_prompt(self) -> str:
@@ -116,7 +116,7 @@ class AgentExecutor:
 
     def run(
         self,
-        user_message: LLMMessage | None,
+        user_message: ChatMessage | None,
     ) -> AgentExecutionResult:
         self._logger.info(
             "AgentExecutor run start",
@@ -125,7 +125,7 @@ class AgentExecutor:
         )
 
         if user_message is not None and user_message.content.strip():
-            self.append_conversation(LLMMessage(role="user", content=user_message.content.strip()))
+            self.append_conversation(ChatMessage(role="user", content=user_message.content.strip()))
 
         result = self._execute()
 
@@ -138,7 +138,7 @@ class AgentExecutor:
         return result
 
     def _execute(self) -> AgentExecutionResult:
-        user_messages: list[LLMMessage] = []
+        user_messages: list[ChatMessage] = []
 
         request = self._strategy.build_llm_request(
             agent_context=self._agent_context,
@@ -169,7 +169,7 @@ class AgentExecutor:
         self.append_conversation(decision.assistant_message)
         llm_content = decision.assistant_message.content.strip()
         if llm_content:
-            user_messages.append(LLMMessage(
+            user_messages.append(ChatMessage(
                 role="assistant",
                 content=llm_content,
                 metadata={"source": "llm"},
@@ -197,7 +197,7 @@ class AgentExecutor:
                 result=result,
             )
             self.append_conversation(observation)
-            user_messages.append(LLMMessage(
+            user_messages.append(ChatMessage(
                 role="assistant",
                 content=f"[tool:{tool_call.name}] {result.output}",
                 metadata={
