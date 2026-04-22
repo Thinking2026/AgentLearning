@@ -10,15 +10,17 @@ from schemas import (
     AGENT_STRATEGY_NOT_FOUND,
     AgentError,
     AgentExecutionResult,
-    ChatMessage,
+    LLMMessage,
     LLM_ALL_PROVIDERS_FAILED,
     LLM_PROVIDER_NOT_FOUND,
     LLMRequest,
     LLMResponse,
     ProviderFailure,
     STORAGE_CONFIG_ERROR,
+    UIMessage,
     build_error,
 )
+from schemas.message_convert import ui_to_llm
 from infra.db import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from infra.db.bootstrap_documents import load_seed_documents
 from agent.strategy.decision import FinalAnswer, InvokeTools, ResponseTruncated
@@ -79,10 +81,10 @@ class AgentExecutor:
     # Conversation interfaces (for Strategy use)
     # ------------------------------------------------------------------
 
-    def append_conversation(self, message: ChatMessage) -> None:
+    def append_conversation(self, message: LLMMessage) -> None:
         self._agent_context.append_conversation_message(message)
 
-    def get_conversation(self) -> list[ChatMessage]:
+    def get_conversation(self) -> list[LLMMessage]:
         return self._agent_context.get_conversation_history()
 
     def get_system_prompt(self) -> str:
@@ -116,7 +118,7 @@ class AgentExecutor:
 
     def run(
         self,
-        user_message: ChatMessage | None,
+        user_message: UIMessage | None,
     ) -> AgentExecutionResult:
         self._logger.info(
             "AgentExecutor run start",
@@ -125,7 +127,7 @@ class AgentExecutor:
         )
 
         if user_message is not None and user_message.content.strip():
-            self.append_conversation(ChatMessage(role="user", content=user_message.content.strip()))
+            self.append_conversation(LLMMessage(role="user", content=user_message.content.strip()))
 
         result = self._execute()
 
@@ -138,7 +140,7 @@ class AgentExecutor:
         return result
 
     def _execute(self) -> AgentExecutionResult:
-        user_messages: list[ChatMessage] = []
+        user_messages: list[UIMessage] = []
 
         request = self._strategy.build_llm_request(
             agent_context=self._agent_context,
@@ -156,12 +158,12 @@ class AgentExecutor:
         decision = self._strategy.parse_llm_response(llm_response)
 
         if isinstance(decision, ResponseTruncated):
-            self.append_conversation(decision.message)
+            self.append_conversation(ui_to_llm(decision.message))
             user_messages.append(decision.message)
             return AgentExecutionResult(user_messages=user_messages, error=decision.error)
 
         if isinstance(decision, FinalAnswer):
-            self.append_conversation(decision.message)
+            self.append_conversation(ui_to_llm(decision.message))
             user_messages.append(decision.message)
             return AgentExecutionResult(user_messages=user_messages, task_completed=True)
 
@@ -169,7 +171,7 @@ class AgentExecutor:
         self.append_conversation(decision.assistant_message)
         llm_content = decision.assistant_message.content.strip()
         if llm_content:
-            user_messages.append(ChatMessage(
+            user_messages.append(UIMessage(
                 role="assistant",
                 content=llm_content,
                 metadata={"source": "llm"},
@@ -197,7 +199,7 @@ class AgentExecutor:
                 result=result,
             )
             self.append_conversation(observation)
-            user_messages.append(ChatMessage(
+            user_messages.append(UIMessage(
                 role="assistant",
                 content=f"[tool:{tool_call.name}] {result.output}",
                 metadata={

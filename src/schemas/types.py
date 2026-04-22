@@ -8,18 +8,25 @@ from utils.time.timezone import isoformat
 
 #本文件引入的类型只能依赖内置类型或者文件中已经引入的类型，不能依赖其他文件中定义的类型，否则会导致循环依赖问题
 
-ChatRole = Literal["user", "assistant", "tool"]
+UIRole = Literal["user", "assistant"]
+LLMRole = Literal["user", "assistant", "tool"]
+
 
 @dataclass(slots=True)
-class ChatMessage:
-    role: ChatRole
+class UIMessage:
+    """Message for UI/user interaction between user_thread and agent_thread."""
+    role: UIRole
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        valid_roles = {"user", "assistant", "tool"}
-        if self.role not in valid_roles:
-            raise ValueError(f"Unsupported chat role: {self.role}")
+
+@dataclass(slots=True)
+class LLMMessage:
+    """Message conforming to LLM API spec, used in conversation history and LLM calls."""
+    role: LLMRole
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass(slots=True)
 class ToolCall:
@@ -39,13 +46,13 @@ class ToolResult:
 @dataclass(slots=True)
 class LLMRequest:
     system_prompt: str
-    messages: list[ChatMessage]
+    messages: list[LLMMessage]
     tools: list[dict[str, Any]]
 
 
 @dataclass(slots=True)
 class LLMResponse:
-    assistant_message: ChatMessage
+    assistant_message: LLMMessage
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw_response: dict[str, Any] = field(default_factory=dict)
     finish_reason: str = "stop"
@@ -81,7 +88,7 @@ class KeyValueSetRequest:
 
 @dataclass(slots=True)
 class AgentExecutionResult:
-    user_messages: list[ChatMessage] = field(default_factory=list)
+    user_messages: list[UIMessage] = field(default_factory=list)
     error: AgentError | None = None
     task_completed: bool = False
 

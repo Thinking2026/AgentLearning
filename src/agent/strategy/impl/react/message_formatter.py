@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import ChatMessage, LLMRequest, LLMResponse
+from schemas import LLMMessage, LLMRequest, LLMResponse
 
 
 class MessageFormatter:
     def build_request(
         self,
         system_prompt: str,
-        conversation: list[ChatMessage],
+        conversation: list[LLMMessage],
         tools: list[dict[str, Any]],
     ) -> LLMRequest:
         return LLMRequest(
@@ -23,8 +23,8 @@ class MessageFormatter:
         tool_name: str,
         output: str,
         llm_raw_tool_call_id: str | None = None,
-    ) -> ChatMessage:
-        return ChatMessage(
+    ) -> LLMMessage:
+        return LLMMessage(
             role="tool",
             content=output,
             metadata={

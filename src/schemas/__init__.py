@@ -54,14 +54,15 @@ from .errors import (
 )
 from .types import (
     AgentExecutionResult,
-    ChatMessage,
     KeyValueGetRequest,
     KeyValueSetRequest,
+    LLMMessage,
     LLMRequest,
     LLMResponse,
     SQLQueryRequest,
     ToolCall,
     ToolResult,
+    UIMessage,
     VectorSearchRequest,
     RoleBudget,
     BudgetResult
@@ -71,7 +72,8 @@ __all__ = [
     "BudgetResult",
     "RoleBudget",
     "AgentExecutionResult",
-    "ChatMessage",
+    "LLMMessage",
+    "UIMessage",
     "KeyValueGetRequest",
     "KeyValueSetRequest",
     "LLMRequest",

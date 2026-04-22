@@ -4,7 +4,7 @@ import os
 
 from llm.llm_api import BaseLLMClient
 from schemas import (
-    ChatMessage,
+    LLMMessage,
     LLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
@@ -117,7 +117,7 @@ class ClaudeLLMClient(BaseLLMClient):
         return messages
 
     @staticmethod
-    def _serialize_message(message: ChatMessage) -> dict[str, object] | None:
+    def _serialize_message(message: LLMMessage) -> dict[str, object] | None:
         if message.role == "user":
             return {"role": "user", "content": message.content}
         if message.role == "assistant":
@@ -207,7 +207,7 @@ class ClaudeLLMClient(BaseLLMClient):
                     ) from exc
 
         return LLMResponse(
-            assistant_message=ChatMessage(
+            assistant_message=LLMMessage(
                 role="assistant",
                 content="\n".join(text_parts).strip(),
                 metadata={

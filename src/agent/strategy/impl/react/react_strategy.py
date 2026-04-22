@@ -6,13 +6,14 @@ from agent.strategy.decision import FinalAnswer, InvokeTools, ResponseTruncated,
 from agent.strategy.impl.react.message_formatter import MessageFormatter
 from agent.strategy.strategy import Strategy
 from schemas import (
-    ChatMessage,
+    LLMMessage,
     LLMRequest,
     LLMResponse,
     LLM_RESPONSE_TRUNCATED,
     SessionStatus,
     ToolCall,
     ToolResult,
+    UIMessage,
     build_error,
 )
 
@@ -97,7 +98,7 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
 
         if response.finish_reason == "length":
             return ResponseTruncated(
-                message=ChatMessage(
+                message=UIMessage(
                     role="assistant",
                     content=assistant_msg.content,
                     metadata={"source": "llm"},
@@ -115,11 +116,10 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
             )
 
         return FinalAnswer(
-            message=ChatMessage(
+            message=UIMessage(
                 role="assistant",
                 content=assistant_msg.content,
                 metadata={
-                    **assistant_msg.metadata,
                     "session_status": SessionStatus.NEW_TASK,
                     "task_completed": True,
                 },
@@ -130,7 +130,7 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
         self,
         tool_call: ToolCall,
         result: ToolResult,
-    ) -> ChatMessage:
+    ) -> LLMMessage:
         return self._formatter.format_tool_observation(
             tool_name=tool_call.name,
             output=result.output,
