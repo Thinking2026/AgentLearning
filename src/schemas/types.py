@@ -11,7 +11,7 @@ from utils.time.timezone import isoformat
 ChatRole = Literal["user", "assistant", "tool"]
 
 @dataclass(slots=True)
-class ChatMessage:
+class LLMMessage:
     role: ChatRole
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -39,13 +39,13 @@ class ToolResult:
 @dataclass(slots=True)
 class LLMRequest:
     system_prompt: str
-    messages: list[ChatMessage]
+    messages: list[LLMMessage]
     tools: list[dict[str, Any]]
 
 
 @dataclass(slots=True)
 class LLMResponse:
-    assistant_message: ChatMessage
+    assistant_message: LLMMessage
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw_response: dict[str, Any] = field(default_factory=dict)
     finish_reason: str = "stop"
@@ -81,7 +81,7 @@ class KeyValueSetRequest:
 
 @dataclass(slots=True)
 class AgentExecutionResult:
-    user_messages: list[ChatMessage] = field(default_factory=list)
+    user_messages: list[LLMMessage] = field(default_factory=list)
     error: AgentError | None = None
     task_completed: bool = False
 

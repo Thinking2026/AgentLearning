@@ -8,16 +8,16 @@ import time
 from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
-from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import LLMMessage, SessionStatus
-from utils.log.log import Logger, zap
-from utils.env_util.runtime_env import (
+from utils.log import Logger, zap
+from utils.runtime_env import (
     get_project_root,
     get_task_prompt_file,
     get_task_runtime_dir,
     get_task_source_dir,
 )
-from utils.concurrency.thread_event import ThreadEvent
+from utils.thread_event import ThreadEvent
 
 
 class UserThread(threading.Thread):
@@ -61,10 +61,10 @@ class UserThread(threading.Thread):
         self._task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
         self._project_root = get_project_root()
         self._task_source_dir = get_task_source_dir(
-            self._project_root / "tests" / "integration" / "tasks" / self._task_name
+            self._project_root / "testing" / "tasks" / self._task_name
         )
         self._task_runtime_dir = get_task_runtime_dir(
-            self._project_root / "var" / "tasks" / self._task_name
+            self._project_root / "testing" / "runtime" / self._task_name
         )
         self._prompt_file_path = get_task_prompt_file(
             self._task_source_dir / "prompt.txt"
@@ -164,13 +164,17 @@ class UserThread(threading.Thread):
                 f"Task prompt file is empty: {self._prompt_file_path}"
             )
         runtime_dir = self._task_runtime_dir.resolve()
+        source_dir = self._task_source_dir.resolve()
         result_path = runtime_dir / "result.txt"
         return (
             f"{content}\n\n"
             "Runtime constraints:\n"
+            f"- Current task name: {self._task_name}\n"
+            f"- Read-only task input directory: {source_dir}\n"
             f"- Writable runtime directory for all generated files: {runtime_dir}\n"
             f"- Final result file must be written to: {result_path}\n"
             "- All intermediate files, temporary files, and generated outputs must stay under the writable runtime directory.\n"
+            "- Do not write any generated file back into the testing/tasks directory. Treat that directory as read-only input.\n"
             "- These runtime constraints override any earlier output path mentioned in the task description.\n"
         )
 

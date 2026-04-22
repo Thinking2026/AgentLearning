@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from schemas.types import BudgetResult, ChatMessage, LLMRequest
+from schemas.types import BudgetResult, LLMMessage, LLMRequest
 from context.estimator.token_estimator import TokenEstimation
 
 
@@ -19,7 +19,7 @@ class TruncationConfig:
 
 class Summarizer(Protocol):
     """Optional LLM-based summarizer injected for Phase-3 summary of dropped middle."""
-    def summarize(self, messages: list[ChatMessage]) -> ChatMessage: ...
+    def summarize(self, messages: list[LLMMessage]) -> LLMMessage: ...
 
 
 class ContextTruncator:
@@ -82,11 +82,11 @@ class ContextTruncator:
 
     def _apply_phases(
         self,
-        head: list[ChatMessage],
-        middle: list[ChatMessage],
-        tail: list[ChatMessage],
+        head: list[LLMMessage],
+        middle: list[LLMMessage],
+        tail: list[LLMMessage],
         budget: BudgetResult,
-    ) -> list[ChatMessage]:
+    ) -> list[LLMMessage]:
         if not middle:
             return middle
 
@@ -114,15 +114,15 @@ class ContextTruncator:
 
     def _truncate_content(
         self,
-        messages: list[ChatMessage],
+        messages: list[LLMMessage],
         role: str,
         max_chars: int,
-    ) -> list[ChatMessage]:
-        result: list[ChatMessage] = []
+    ) -> list[LLMMessage]:
+        result: list[LLMMessage] = []
         for msg in messages:
             if msg.role == role and len(msg.content) > max_chars:
                 content = msg.content[:max_chars] + " ...[truncated]"
-                result.append(ChatMessage(
+                result.append(LLMMessage(
                     role=msg.role,
                     content=content,
                     metadata={**msg.metadata, "truncated": True},
@@ -137,13 +137,13 @@ class ContextTruncator:
 
     def _drop_role(
         self,
-        head: list[ChatMessage],
-        middle: list[ChatMessage],
-        tail: list[ChatMessage],
+        head: list[LLMMessage],
+        middle: list[LLMMessage],
+        tail: list[LLMMessage],
         role: str,
         budget: BudgetResult,
         keep_last: int = 0,
-    ) -> list[ChatMessage]:
+    ) -> list[LLMMessage]:
         role_budget = budget.role_budgets.get(role)
         if role_budget is None:
             return middle
@@ -187,8 +187,8 @@ class ContextTruncator:
             for role, rb in budget.role_budgets.items()
         )
 
-    def _role_tokens(self, messages: list[ChatMessage], role: str) -> int:
+    def _role_tokens(self, messages: list[LLMMessage], role: str) -> int:
         return sum(self._count(m.content) for m in messages if m.role == role)
 
-    def _total_tokens(self, messages: list[ChatMessage]) -> int:
+    def _total_tokens(self, messages: list[LLMMessage]) -> int:
         return sum(self._count(m.content) for m in messages)
