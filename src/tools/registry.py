@@ -19,7 +19,7 @@ from schemas import (
 )
 from runtime.tracing import Span, Tracer
 from tools.tools import BaseTool
-from utils.log import Logger, zap
+from utils.log.log import Logger, zap
 
 
 class ToolRegistry:

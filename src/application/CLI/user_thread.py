@@ -8,16 +8,16 @@ import time
 from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
-from utils.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ChatMessage, SessionStatus
-from utils.log import Logger, zap
-from utils.runtime_env import (
+from utils.log.log import Logger, zap
+from utils.env_util.runtime_env import (
     get_project_root,
     get_task_prompt_file,
     get_task_runtime_dir,
     get_task_source_dir,
 )
-from utils.thread_event import ThreadEvent
+from utils.concurrency.thread_event import ThreadEvent
 
 
 class UserThread(threading.Thread):

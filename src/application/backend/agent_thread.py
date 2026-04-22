@@ -6,7 +6,7 @@ from typing import Callable
 from agent import AgentExecutor
 from config import ConfigValueReader, JsonConfig
 from agent.session import Session
-from utils.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     AGENT_THREAD_ERROR,
@@ -17,8 +17,8 @@ from schemas import (
     build_error,
 )
 from runtime.tracing import Span, Tracer
-from utils.log import Logger, zap
-from utils.thread_event import ThreadEvent
+from utils.log.log import Logger, zap
+from utils.concurrency.thread_event import ThreadEvent
 
 
 class AgentThread(threading.Thread):

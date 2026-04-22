@@ -23,8 +23,8 @@ from schemas import (
     build_error,
 )
 from runtime.tracing import Span, Tracer
-from utils.http_client import HttpClient
-from utils.log import Logger, zap
+from utils.http.http_client import HttpClient
+from utils.log.log import Logger, zap
 
 
 # ---------------------------------------------------------------------------

@@ -50,7 +50,7 @@ from tools import (
     build_vector_schema_tool_name,
     create_default_tool_registry,
 )
-from utils.log import Logger, zap
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from config import JsonConfig

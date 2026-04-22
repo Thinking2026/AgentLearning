@@ -8,9 +8,9 @@ _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root / "src"))
 
 from application import AgentApplication
-from utils.env_loader import load_dotenv
-from utils.log import Logger, zap
-from utils.runtime_env import set_project_root
+from utils.env_util.env_loader import load_dotenv
+from utils.log.log import Logger, zap
+from utils.env_util.runtime_env import set_project_root
 
 
 def main() -> None:

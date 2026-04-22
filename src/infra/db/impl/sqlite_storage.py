@@ -170,7 +170,7 @@ class SQLiteStorage(RelationalStorage):
         p = Path(path).expanduser()
         if p.is_absolute():
             return p
-        from utils.runtime_env import get_project_root
+        from utils.env_util.runtime_env import get_project_root
         try:
             return get_project_root() / p
         except RuntimeError:

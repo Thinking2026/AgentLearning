@@ -12,7 +12,7 @@ from schemas import (
     build_error,
 )
 from tools.tools import BaseTool, build_tool_output
-from utils.runtime_env import get_project_root, get_task_runtime_dir
+from utils.env_util.runtime_env import get_project_root, get_task_runtime_dir
 
 
 class ShellTool(BaseTool):

@@ -4,14 +4,14 @@ import threading
 from pathlib import Path
 
 from config import ConfigValueReader, JsonConfig, load_config
-from utils.message_queue import AgentToUserQueue, UserToAgentQueue
-from utils.log import Logger, zap
-from utils.runtime_env import (
+from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.log.log import Logger, zap
+from utils.env_util.runtime_env import (
     get_project_root,
     set_task_environment,
     set_timezone_name,
 )
-from utils.thread_event import ThreadEvent
+from utils.concurrency.thread_event import ThreadEvent
 
 from .CLI import UserThread
 from .backend import AgentThread

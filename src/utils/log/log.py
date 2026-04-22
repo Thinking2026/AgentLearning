@@ -6,7 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from utils.timezone import log_timestamp, strftime
+from utils.time.timezone import log_timestamp, strftime
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class Logger:
         path = Path(log_dir)
         if path.is_absolute():
             return path
-        from utils.runtime_env import get_project_root
+        from utils.env_util.runtime_env import get_project_root
         try:
             return get_project_root() / path
         except RuntimeError:
