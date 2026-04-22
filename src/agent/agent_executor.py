@@ -52,6 +52,9 @@ from tools import (
     build_vector_schema_tool_name,
     create_default_tool_registry,
 )
+from context.budget.token_budget_manager import TokenBudgetManagerFactory
+from context.estimator.token_estimator import TokenEstimatorFactory
+from context.truncation.token_truncation import TruncatorFactory, ReActContextTruncator
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
@@ -76,6 +79,8 @@ class AgentExecutor:
         self._llm_provider_router = self._build_llm_provider_router(config, tracer)
         self._strategy = self._build_strategy(config)
         self._register_storage_tools(self._storage_registry)
+        self._truncator = self._build_truncator(config, tracer)
+        self._total_budget = int(config.get("token_budget.total", 8192))
 
     # ------------------------------------------------------------------
     # Conversation interfaces (for Strategy use)
@@ -146,9 +151,12 @@ class AgentExecutor:
             agent_context=self._agent_context,
             tool_registry=self._tool_registry,
         )
+        trunc_result = self._truncator.truncate(request, self._total_budget)
+        if trunc_result.compacted_messages is not None:
+            self._agent_context.replace_conversation_history(trunc_result.compacted_messages)
 
         try:
-            llm_response = self._call_llm(request)
+            llm_response = self._call_llm(trunc_result.request)
         except AgentError as exc:
             return AgentExecutionResult(
                 user_messages=user_messages,
@@ -255,6 +263,21 @@ class AgentExecutor:
             )
         strategy.init_context(self)
         return strategy
+
+    def _build_truncator(self, config: JsonConfig, tracer: Tracer | None) -> ReActContextTruncator:
+        strategy_name = str(config.get("agent.strategy", "react")).strip()
+        budget_manager = TokenBudgetManagerFactory.create(strategy_name, config)
+        primary_provider = config.get("llm.priority_chain", ["deepseek"])
+        if isinstance(primary_provider, list) and primary_provider:
+            primary_provider = str(primary_provider[0])
+        else:
+            primary_provider = "deepseek"
+        estimator = TokenEstimatorFactory.get_estimator(primary_provider)
+
+        def llm_client_factory(provider_name: str) -> BaseLLMClient:
+            return AgentExecutor._build_provider(provider_name, config, tracer)
+
+        return TruncatorFactory.create(strategy_name, budget_manager, estimator, llm_client_factory, config)
 
     @staticmethod
     def _build_llm_provider_router(config: JsonConfig, tracer: Tracer | None) -> LLMProviderRouter:

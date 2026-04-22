@@ -4,7 +4,6 @@ import threading
 
 from schemas import LLMMessage
 
-
 class AgentContext:
     def __init__(self) -> None:
         self._system_prompt = ""
@@ -61,6 +60,11 @@ class AgentContext:
     def clear_current_task(self) -> None:
         with self._lock:
             self._current_task_messages.clear()
+
+    def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
+        with self._lock:
+            self._archived_tasks.clear()
+            self._current_task_messages = self._clone_messages(messages)
 
     def get_archived_tasks(self) -> list[list[LLMMessage]]:
         with self._lock:
