@@ -84,6 +84,9 @@
     "payload_redaction_enabled": false,
     "max_content_length": 2048
   },
+  "log": {
+    "dir": "var/logs"
+  },
   "time": {
     "timezone": "shanghai"
   },
