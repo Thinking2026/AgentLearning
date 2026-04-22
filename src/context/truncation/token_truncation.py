@@ -119,7 +119,7 @@ class ReActContextTruncator:
             return self._make_result(request, msgs_e)
 
         # Strategy F: LLM summary of middle 30% units, then retry E
-        msgs_f = self._strategy_f_summarize(request, msgs, budget)
+        msgs_f = self._strategy_f_summarize(request, msgs)
         if msgs_f is not None:
             msgs_fe = self._strategy_e_binary_drop(request, msgs_f, budget, effective_estimator)
             final = msgs_fe if msgs_fe is not None else msgs_f
@@ -262,7 +262,6 @@ class ReActContextTruncator:
         self,
         request: LLMRequest,
         messages: list[LLMMessage],
-        budget: BudgetResult,
     ) -> list[LLMMessage] | None:
         units = _parse_reasoning_units(messages)
         if len(units) < 3:
@@ -276,7 +275,7 @@ class ReActContextTruncator:
             return None
 
         summary_msgs = [m for u in summary_units for m in _unit_to_messages(u)]
-        summary_msg = self._call_summary_llm(request, summary_msgs)
+        summary_msg = self._call_summary_llm(summary_msgs)
         if summary_msg is None:
             return None
 
@@ -294,7 +293,6 @@ class ReActContextTruncator:
 
     def _call_summary_llm(
         self,
-        original_request: LLMRequest,
         msgs_to_summarize: list[LLMMessage],
     ) -> LLMMessage | None:
         try:
