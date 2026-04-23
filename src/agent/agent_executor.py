@@ -197,7 +197,7 @@ class AgentExecutor:
         )
         return result
 
-    def _execute(self) -> AgentExecutionResult:
+    def _execute(self) -> AgentExecutionResult:#TODO 这里的异常处理决策不清晰和完备
         user_messages: list[UIMessage] = []
 
         request = self._strategy.build_llm_request(

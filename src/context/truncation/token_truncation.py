@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
-from schemas.types import BudgetResult, LLMMessage, LLMRequest
+from schemas.types import BudgetResult, LLMMessage, LLMRequest, ALL_ROLES
 from context.estimator.token_estimator import BaseTokenEstimator, TokenEstimation
 from context.budget.token_budget_manager import BaseTokenBudgetManager
 from utils.log.log import Logger, zap
@@ -136,7 +136,10 @@ class ReActContextTruncator(ContextTruncator):
 
         def fits(m: list[LLMMessage], role: str | list[str] | None) -> bool:
             est = effective_estimator.estimate(LLMRequest(messages=m), role)
-            return est["assistant"] <= assistant_budget and est["tool"] <= tool_budget
+            if role is None:
+                role = list(ALL_ROLES)
+            
+            return all(est[r] <= budget.role_budgets.get(r).token_budget for r in (role if isinstance(role, list) else [role]))
 
         def _log_truncation_result(strategy: str, msgs_after: list[LLMMessage]) -> None:
             est_after = effective_estimator.estimate(LLMRequest(messages=msgs_after), ["assistant", "tool"])
@@ -150,7 +153,7 @@ class ReActContextTruncator(ContextTruncator):
                 tokens_before=tokens_before,
                 tokens_after=tokens_after,
                 tokens_dropped=tokens_before - tokens_after,
-                truncation_ratio=f"{ratio:.1%}",
+                truncation_ratio=f"{ratio:.2%}",
             )
 
         msgs = self._strategy_a_dedup(msgs)
@@ -196,7 +199,7 @@ class ReActContextTruncator(ContextTruncator):
                     msgs_after=len(msgs),
                     tokens_before=tokens_before,
                     tokens_after=tokens_after,
-                    truncation_ratio=f"{ratio:.1%}",
+                    truncation_ratio=f"{ratio:.2%}",
                 )
 
         return self._make_result(request, msgs)

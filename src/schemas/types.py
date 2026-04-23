@@ -4,12 +4,12 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from schemas.errors import AgentError
-from utils.time.timezone import isoformat
 
 #本文件引入的类型只能依赖内置类型或者文件中已经引入的类型，不能依赖其他文件中定义的类型，否则会导致循环依赖问题
 
 UIRole = Literal["user", "assistant"]
 LLMRole = Literal["user", "assistant", "tool"]
+ALL_ROLES = ("system", "user", "assistant", "tool")
 
 
 @dataclass(slots=True)

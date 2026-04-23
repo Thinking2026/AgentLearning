@@ -3,19 +3,16 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 
-from schemas.types import LLMRequest
+from schemas.types import LLMRequest, ALL_ROLES
 
 
 TokenEstimation = dict[str, int]
 """Keys: 'system', 'user', 'assistant', 'tool', 'total'"""
 
-_ALL_ROLES = ("system", "user", "assistant", "tool")
-
-
 class BaseTokenEstimator(ABC):
     def estimate(self, request: LLMRequest, roles: list[str] | str | None = None) -> TokenEstimation:
         if roles is None:
-            target_roles = list(_ALL_ROLES)
+            target_roles = list(ALL_ROLES)
         elif isinstance(roles, str):
             target_roles = [roles]
         else:

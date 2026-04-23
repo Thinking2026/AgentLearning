@@ -68,7 +68,8 @@ from .types import (
     UIMessage,
     VectorSearchRequest,
     RoleBudget,
-    BudgetResult
+    BudgetResult,
+    ALL_ROLES,
 )
 
 __all__ = [
