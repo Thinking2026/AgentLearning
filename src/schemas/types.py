@@ -45,9 +45,9 @@ class ToolResult:
 
 @dataclass(slots=True)
 class LLMRequest:
-    system_prompt: str
     messages: list[LLMMessage]
-    tools: list[dict[str, Any]]
+    system_prompt: str | None = None
+    tools: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
