@@ -1,22 +1,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-import random
-import time
+from dataclasses import dataclass
 
 from schemas import (
     AgentError,
-    LLMMessage,
     HttpError,
+    LLMError,
+    LLMErrorCode,
     LLMRequest,
     LLMResponse,
-    ProviderFailure,
     LLM_CONFIG_ERROR,
-    LLM_CONTEXT_TOO_LONG,
-    LLM_HTTP_ERROR,
     LLM_NETWORK_ERROR,
-    LLM_RATE_LIMITED,
     LLM_RESPONSE_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
     LLM_TIMEOUT,
@@ -28,11 +23,8 @@ from utils.log.log import Logger, zap
 
 
 # ---------------------------------------------------------------------------
-# Error classification
+# HTTP error classification helpers (used by concrete providers)
 # ---------------------------------------------------------------------------
-_RETRYABLE_CODES = {LLM_NETWORK_ERROR, LLM_TIMEOUT, LLM_RATE_LIMITED, LLM_HTTP_ERROR}
-
-_RETRYABLE_HTTP_STATUS = {500, 502, 503, 504}
 
 _CONTEXT_TOO_LONG_HINTS = (
     "context_length_exceeded",
@@ -42,70 +34,48 @@ _CONTEXT_TOO_LONG_HINTS = (
     "too many tokens",
 )
 
-_INVALID_REQUEST_HINTS = (
-    "invalid_request_error",
-    "content_filter",
-    "content filter",
-)
 
-def _classify_http_error(exc: HttpError) -> str:
+def classify_http_error(exc: HttpError) -> LLMError:
+    """Map an HttpError to a structured LLMError. Called by concrete providers."""
     body_lower = exc.body.lower()
     if exc.status == 429:
-        return LLM_RATE_LIMITED
-    if exc.status in _RETRYABLE_HTTP_STATUS:
-        return LLM_HTTP_ERROR
-    if exc.status == 400:
-        if any(hint in body_lower for hint in _CONTEXT_TOO_LONG_HINTS):
-            return LLM_CONTEXT_TOO_LONG
-    return LLM_HTTP_ERROR
-
-
-def _is_fatal_http(exc: HttpError) -> bool:
-    """True when retrying the same provider is pointless; caller should switch provider."""
+        return LLMError(LLMErrorCode.RATE_LIMITED, f"Rate limited: {exc.body}", retry_after=exc.retry_after)
     if exc.status in {401, 403}:
-        return True
-    if exc.status == 400:
-        body_lower = exc.body.lower()
-        return any(hint in body_lower for hint in _INVALID_REQUEST_HINTS)
-    return False
+        return LLMError(LLMErrorCode.AUTH_FAILED, f"Auth failed HTTP {exc.status}: {exc.body}")
+    if exc.status == 400 and any(h in body_lower for h in _CONTEXT_TOO_LONG_HINTS):
+        return LLMError(LLMErrorCode.CONTEXT_TOO_LONG, f"Context too long: {exc.body}")
+    return LLMError(LLMErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}")
+
+
+_AGENT_ERROR_CODE_MAP: dict[str, LLMErrorCode] = {
+    LLM_NETWORK_ERROR:       LLMErrorCode.NETWORK_ERROR,
+    LLM_TIMEOUT:             LLMErrorCode.TIMEOUT,
+    LLM_RESPONSE_PARSE_ERROR: LLMErrorCode.RESPONSE_PARSE_ERROR,
+    LLM_RESPONSE_ERROR:      LLMErrorCode.RESPONSE_ERROR,
+    LLM_CONFIG_ERROR:        LLMErrorCode.CONFIG_ERROR,
+}
+
+
+def classify_agent_error(exc: AgentError) -> LLMError:
+    """Map a legacy AgentError (from HttpClient) to a structured LLMError."""
+    code = _AGENT_ERROR_CODE_MAP.get(exc.code, LLMErrorCode.RESPONSE_ERROR)
+    return LLMError(code, exc.message)
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers (module-level so both layers can use them)
+# RetryConfig (used by AgentExecutor)
 # ---------------------------------------------------------------------------
 
-def _try_trim_context(request: LLMRequest) -> LLMRequest | None:
-    """Drop the two oldest non-system messages. Returns None if already too short."""
-    if len(request.messages) < 2:
-        return None
-    return LLMRequest(
-        system_prompt=request.system_prompt,
-        messages=request.messages[2:],
-        tools=request.tools,
-    )
+@dataclass
+class RetryConfig:
+    retry_base: float = 0.5
+    retry_max_delay: float = 60.0
+    retry_max_attempts: int = 5
 
-def _try_parse_error_self_repair(
-    provider: "BaseLLMClient",
-    request: LLMRequest,
-    error: AgentError,
-) -> LLMResponse | None:
-    if error.code not in {LLM_RESPONSE_PARSE_ERROR, LLM_RESPONSE_ERROR}:
-        return None
-    repair_prompt = (
-        "Your previous output could not be parsed by the client. "
-        "Please regenerate a valid response following the expected tool-call/text format. "
-        "Below is the parser error and raw output details captured by client.\n\n"
-        f"{error.message}"
-    )
-    repaired_request = LLMRequest(
-        system_prompt=request.system_prompt,
-        messages=[*request.messages, LLMMessage(role="user", content=repair_prompt)],
-        tools=request.tools,
-    )
-    try:
-        return provider.generate(repaired_request)
-    except Exception:
-        return None
+    def __post_init__(self) -> None:
+        if self.retry_max_attempts <= 0:
+            raise build_error(LLM_CONFIG_ERROR, "retry_max_attempts must be greater than 0")
+
 
 # ---------------------------------------------------------------------------
 # Base
@@ -131,156 +101,27 @@ class BaseLLMClient(ABC):
     def generate(self, request: LLMRequest) -> LLMResponse:
         raise NotImplementedError
 
+
 # ---------------------------------------------------------------------------
-# Layer 2: per-provider retry + fault tolerance
+# SingleProviderClient — thin passthrough; retry logic lives in AgentExecutor
 # ---------------------------------------------------------------------------
-
-@dataclass
-class RetryConfig:
-    retry_base: float = 0.5
-    retry_max_delay: float = 60.0
-    retry_max_attempts: int = 5
-
-    def __post_init__(self) -> None:
-        if self.retry_max_attempts <= 0:
-            raise build_error(LLM_CONFIG_ERROR, "retry_max_attempts must be greater than 0")
-
 
 class SingleProviderClient(BaseLLMClient):
-    """Wraps a single provider and handles per-provider retry and fault tolerance.
+    """Delegates to a concrete provider. Raises LLMError on failure."""
 
-    On exhaustion or provider-fatal errors, raises ProviderFailure (not AgentError),
-    so the caller can switch to the next provider while preserving request state.
-    Only truly request-fatal errors (e.g. context too long with no trim possible)
-    are raised as AgentError to stop all providers immediately.
-    """
-
-    def __init__(self, provider: BaseLLMClient, retry_config: RetryConfig = field(default_factory=RetryConfig)) -> None:
+    def __init__(self, provider: BaseLLMClient) -> None:
         self._provider = provider
-        self._retry_config = retry_config if isinstance(retry_config, RetryConfig) else RetryConfig()
 
     @property
     def provider_name(self) -> str:  # type: ignore[override]
         return self._provider.provider_name
 
-    def _backoff_delay(self, attempt_idx: int) -> float:
-        cap = min(self._retry_config.retry_base * (2 ** attempt_idx), self._retry_config.retry_max_delay)
-        return random.uniform(0, cap)
-
     def generate(self, request: LLMRequest) -> LLMResponse:
-        current_request = request
-        attempt_idx = 0
-        failures: list[str] = []
-        cfg = self._retry_config
-        name = self._provider.provider_name
         logger = Logger.get_instance()
-
         logger.info(
             "LLM generate start",
-            zap.any("provider", name),
-            zap.any("messages", len(current_request.messages)),
+            zap.any("provider", self._provider.provider_name),
+            zap.any("messages", len(request.messages)),
         )
+        return self._provider.generate(request)
 
-        while attempt_idx < cfg.retry_max_attempts:
-            try:
-                result = self._provider.generate(current_request)
-                logger.info(
-                    "LLM generate success",
-                    zap.any("provider", name),
-                    zap.any("attempt", attempt_idx + 1),
-                    zap.any("finish_reason", result.finish_reason),
-                )
-                return result
-
-            except HttpError as exc:
-                if _is_fatal_http(exc):
-                    logger.error(
-                        "Provider fatal HTTP error, switching provider",
-                        zap.any("provider", name),
-                        zap.any("status", exc.status),
-                        zap.any("body", exc.body),
-                    )
-                    raise ProviderFailure(name, f"HTTP {exc.status}: {exc.body}", current_request) from exc
-
-                code = _classify_http_error(exc)
-
-                if code == LLM_CONTEXT_TOO_LONG:
-                    trimmed = _try_trim_context(current_request)
-                    if trimmed is None:
-                        logger.error(
-                            "Context too long and cannot be trimmed",
-                            zap.any("provider", name),
-                            zap.any("messages", len(current_request.messages)),
-                        )
-                        raise build_error(
-                            LLM_CONTEXT_TOO_LONG,
-                            f"{name}: context too long and cannot be trimmed",
-                        ) from exc
-                    logger.info(
-                        "Context trimmed, retrying",
-                        zap.any("provider", name),
-                        zap.any("remaining_messages", len(trimmed.messages)),
-                    )
-                    current_request = trimmed
-                    failures.append(f"{name}[trim]: context trimmed, retrying")
-                    continue
-
-                failures.append(f"{name}[attempt {attempt_idx + 1}/{cfg.retry_max_attempts}]: HTTP {exc.status}")
-                logger.error(
-                    "Provider HTTP error, retrying",
-                    zap.any("provider", name),
-                    zap.any("status", exc.status),
-                    zap.any("attempt", attempt_idx + 1),
-                    zap.any("max_attempts", cfg.retry_max_attempts),
-                )
-                if attempt_idx < cfg.retry_max_attempts - 1:
-                    if code == LLM_RATE_LIMITED and exc.retry_after is not None:
-                        time.sleep(exc.retry_after)
-                    elif code in _RETRYABLE_CODES:
-                        time.sleep(self._backoff_delay(attempt_idx))
-                attempt_idx += 1
-
-            except AgentError as exc:
-                resp_after_repaired = _try_parse_error_self_repair(self._provider, current_request, exc)
-                if resp_after_repaired is not None:
-                    logger.info(
-                        "Self-repair succeeded",
-                        zap.any("provider", name),
-                        zap.any("error_code", exc.code),
-                    )
-                    return resp_after_repaired
-
-                failures.append(f"{name}[attempt {attempt_idx + 1}/{cfg.retry_max_attempts}]: {exc}")
-                logger.error(
-                    "Provider AgentError, switching provider",
-                    zap.any("provider", name),
-                    zap.any("error_code", exc.code),
-                    zap.any("error", str(exc)),
-                    zap.any("attempt", attempt_idx + 1),
-                )
-                if exc.code in _RETRYABLE_CODES and attempt_idx < cfg.retry_max_attempts - 1:
-                    time.sleep(self._backoff_delay(attempt_idx))
-                    attempt_idx += 1
-                else:
-                    raise ProviderFailure(name, " | ".join(failures), current_request) from exc
-
-            except Exception as exc:
-                failures.append(f"{name}[attempt {attempt_idx + 1}/{cfg.retry_max_attempts}]: {exc}")
-                logger.error(
-                    "Provider unexpected error, retrying",
-                    zap.any("provider", name),
-                    zap.any("error", str(exc)),
-                    zap.any("attempt", attempt_idx + 1),
-                    zap.any("max_attempts", cfg.retry_max_attempts),
-                )
-                if attempt_idx < cfg.retry_max_attempts - 1:
-                    time.sleep(self._backoff_delay(attempt_idx))
-                attempt_idx += 1
-
-        logger.error(
-            "Provider retries exhausted, switching provider",
-            zap.any("provider", name),
-            zap.any("max_attempts", cfg.retry_max_attempts),
-            zap.any("failures", failures),
-        )
-        raise ProviderFailure(name, " | ".join(failures), current_request)

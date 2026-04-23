@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 
-from llm.llm_api import BaseLLMClient
+from llm.llm_api import BaseLLMClient, classify_agent_error, classify_http_error
 from schemas import (
+    AgentError,
+    HttpError,
     LLMMessage,
     LLMRequest,
     LLMResponse,
@@ -66,16 +68,21 @@ class OpenAILLMClient(BaseLLMClient):
                 "last_user_message": last_message,
             },
         ) as span:
-            payload = {
-                "model": self._model,
-                "messages": self._serialize_messages(request),
-            }
-            tools = self._serialize_tools(request.tools)
-            if tools:
-                payload["tools"] = tools
-                payload["tool_choice"] = "auto"
-            response_data = self._post_json("/chat/completions", payload)
-            response = self._parse_chat_completion(response_data)
+            try:
+                payload = {
+                    "model": self._model,
+                    "messages": self._serialize_messages(request),
+                }
+                tools = self._serialize_tools(request.tools)
+                if tools:
+                    payload["tools"] = tools
+                    payload["tool_choice"] = "auto"
+                response_data = self._post_json("/chat/completions", payload)
+                response = self._parse_chat_completion(response_data)
+            except HttpError as exc:
+                raise classify_http_error(exc) from exc
+            except AgentError as exc:
+                raise classify_agent_error(exc) from exc
             usage = response_data.get("usage") or {}
             span.add_attributes(
                 {

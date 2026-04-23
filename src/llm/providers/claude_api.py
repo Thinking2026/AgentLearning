@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import os
 
-from llm.llm_api import BaseLLMClient
+from llm.llm_api import BaseLLMClient, classify_agent_error, classify_http_error
 from schemas import (
+    AgentError,
+    HttpError,
+    LLMError,
+    LLMErrorCode,
     LLMMessage,
     LLMRequest,
     LLMResponse,
@@ -74,20 +78,27 @@ class ClaudeLLMClient(BaseLLMClient):
                 "last_user_message": last_message,
             },
         ) as span:
-            payload: dict[str, object] = {
-                "model": self._model,
-                "max_tokens": self._max_tokens,
-                "messages": self._serialize_messages(request),
-            }
-            if request.system_prompt:
-                payload["system"] = request.system_prompt
+            try:
+                payload: dict[str, object] = {
+                    "model": self._model,
+                    "max_tokens": self._max_tokens,
+                    "messages": self._serialize_messages(request),
+                }
+                if request.system_prompt:
+                    payload["system"] = request.system_prompt
 
-            tools = self._serialize_tools(request.tools)
-            if tools:
-                payload["tools"] = tools
+                tools = self._serialize_tools(request.tools)
+                if tools:
+                    payload["tools"] = tools
 
-            response_data = self._post_json("/v1/messages", payload)
-            response = self._parse_message_response(response_data)
+                response_data = self._post_json("/v1/messages", payload)
+                response = self._parse_message_response(response_data)
+            except HttpError as exc:
+                if exc.status == 529:
+                    raise LLMError(LLMErrorCode.HTTP_5XX, f"Claude overloaded: {exc.body}") from exc
+                raise classify_http_error(exc) from exc
+            except AgentError as exc:
+                raise classify_agent_error(exc) from exc
             usage = response_data.get("usage") or {}
             span.add_attributes(
                 {

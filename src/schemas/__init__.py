@@ -48,7 +48,10 @@ from .errors import (
     VECTOR_SEARCH_TOOL_ERROR,
     AgentError,
     ConfigError,
+    ErrorCategory,
     HttpError,
+    LLMError,
+    LLMErrorCode,
     ProviderFailure,
     build_error,
 )
@@ -129,7 +132,10 @@ __all__ = [
     "VECTOR_SEARCH_TOOL_ERROR",
     "AgentError",
     "ConfigError",
+    "ErrorCategory",
     "HttpError",
+    "LLMError",
+    "LLMErrorCode",
     "ProviderFailure",
     "build_error",
 ]

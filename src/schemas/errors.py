@@ -1,9 +1,67 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from schemas.types import LLMRequest
+
+# ---------------------------------------------------------------------------
+# Structured LLM error hierarchy (level-1 category + level-2 code)
+# ---------------------------------------------------------------------------
+
+class ErrorCategory(str, Enum):
+    TRANSIENT  = "TRANSIENT"   # network / timeout / 5xx → retry same provider
+    RATE_LIMIT = "RATE_LIMIT"  # 429 → retry same provider with backoff
+    CONTEXT    = "CONTEXT"     # context too long → trim and retry
+    AUTH       = "AUTH"        # 401/403 → skip to next provider
+    RESPONSE   = "RESPONSE"    # bad/unparseable response → self-repair then skip
+    CONFIG     = "CONFIG"      # missing key / bad config → skip to next provider
+
+
+class LLMErrorCode(str, Enum):
+    NETWORK_ERROR        = "NETWORK_ERROR"
+    TIMEOUT              = "TIMEOUT"
+    HTTP_5XX             = "HTTP_5XX"
+    RATE_LIMITED         = "RATE_LIMITED"
+    CONTEXT_TOO_LONG     = "CONTEXT_TOO_LONG"
+    AUTH_FAILED          = "AUTH_FAILED"
+    RESPONSE_ERROR       = "RESPONSE_ERROR"
+    RESPONSE_PARSE_ERROR = "RESPONSE_PARSE_ERROR"
+    CONFIG_ERROR         = "CONFIG_ERROR"
+
+
+_CODE_CATEGORY: dict[LLMErrorCode, ErrorCategory] = {
+    LLMErrorCode.NETWORK_ERROR:        ErrorCategory.TRANSIENT,
+    LLMErrorCode.TIMEOUT:              ErrorCategory.TRANSIENT,
+    LLMErrorCode.HTTP_5XX:             ErrorCategory.TRANSIENT,
+    LLMErrorCode.RATE_LIMITED:         ErrorCategory.RATE_LIMIT,
+    LLMErrorCode.CONTEXT_TOO_LONG:     ErrorCategory.CONTEXT,
+    LLMErrorCode.AUTH_FAILED:          ErrorCategory.AUTH,
+    LLMErrorCode.RESPONSE_ERROR:       ErrorCategory.RESPONSE,
+    LLMErrorCode.RESPONSE_PARSE_ERROR: ErrorCategory.RESPONSE,
+    LLMErrorCode.CONFIG_ERROR:         ErrorCategory.CONFIG,
+}
+
+
+class LLMError(Exception):
+    """Structured LLM error with a level-1 category and level-2 code.
+
+    Raised by concrete providers; AgentExecutor inspects .category to decide
+    whether to retry the same provider, trim context, self-repair, or skip.
+    """
+
+    def __init__(self, code: LLMErrorCode, message: str, retry_after: float | None = None) -> None:
+        self.code = code
+        self.category: ErrorCategory = _CODE_CATEGORY[code]
+        self.message = message
+        self.retry_after = retry_after
+        super().__init__(f"[{self.category.value}/{self.code.value}] {message}")
+
+
+# ---------------------------------------------------------------------------
+# Legacy flat error codes (kept for tools, storage, and agent-level code)
+# ---------------------------------------------------------------------------
 
 AGENT_EXECUTION_ERROR = "AGENT_EXECUTION_ERROR"
 AGENT_MAX_ITERATIONS_EXCEEDED = "AGENT_MAX_ITERATIONS_EXCEEDED"

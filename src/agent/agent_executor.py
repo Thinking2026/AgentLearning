@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import random
+import time
 from typing import TYPE_CHECKING
 
 from config import ConfigValueReader
@@ -10,12 +12,13 @@ from schemas import (
     AGENT_STRATEGY_NOT_FOUND,
     AgentError,
     AgentExecutionResult,
+    ErrorCategory,
+    LLMError,
     LLMMessage,
     LLM_ALL_PROVIDERS_FAILED,
     LLM_PROVIDER_NOT_FOUND,
     LLMRequest,
     LLMResponse,
-    ProviderFailure,
     STORAGE_CONFIG_ERROR,
     UIMessage,
     build_error,
@@ -64,6 +67,48 @@ if TYPE_CHECKING:
     from config import JsonConfig
     from agent.strategy.strategy import Strategy
     from runtime.tracing import Tracer
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for _call_llm
+# ---------------------------------------------------------------------------
+
+def _try_trim_context(request: LLMRequest) -> LLMRequest | None:
+    """Drop the two oldest non-system messages. Returns None if already too short."""
+    if len(request.messages) < 2:
+        return None
+    return LLMRequest(
+        system_prompt=request.system_prompt,
+        messages=request.messages[2:],
+        tools=request.tools,
+    )
+
+
+def _try_self_repair(
+    client: "SingleProviderClient",
+    request: LLMRequest,
+    error: LLMError,
+) -> LLMResponse | None:
+    repair_prompt = (
+        "Your previous output could not be parsed by the client. "
+        "Please regenerate a valid response following the expected tool-call/text format. "
+        "Below is the parser error and raw output details captured by client.\n\n"
+        f"{error.message}"
+    )
+    repaired_request = LLMRequest(
+        system_prompt=request.system_prompt,
+        messages=[*request.messages, LLMMessage(role="user", content=repair_prompt)],
+        tools=request.tools,
+    )
+    try:
+        return client.generate(repaired_request)
+    except Exception:
+        return None
+
+
+def _backoff(cfg: RetryConfig, attempt_idx: int, rng: "random") -> float:
+    cap = min(cfg.retry_base * (2 ** attempt_idx), cfg.retry_max_delay)
+    return rng.uniform(0, cap)
 
 
 class AgentExecutor:
@@ -223,6 +268,7 @@ class AgentExecutor:
         return AgentExecutionResult(user_messages=user_messages, task_completed=False)
 
     def _call_llm(self, request: LLMRequest, routing_decision: RoutingDecision) -> LLMResponse:
+        cfg = self._retry_config
         failures: list[str] = []
 
         self._logger.info(
@@ -236,19 +282,63 @@ class AgentExecutor:
             estimator = TokenEstimatorFactory.get_estimator(provider_name)
             total_budget = self._get_provider_context_window(provider_name)
             trunc_result = self._truncator.truncate(request, total_budget, estimator)
+            current_request = trunc_result.request
+            attempt = 0
 
-            try:
-                response = client.generate(trunc_result.request)
-                if trunc_result.compacted_messages is not None:
-                    self._agent_context.replace_conversation_history(trunc_result.compacted_messages)
-                return response
-            except ProviderFailure as exc:
-                self._logger.error(
-                    "Provider failed, trying next",
-                    zap.any("provider", exc.provider_name),
-                    zap.any("reason", str(exc)),
-                )
-                failures.append(f"{exc.provider_name}: {exc}")
+            while attempt < cfg.retry_max_attempts:
+                try:
+                    response = client.generate(current_request)
+                    if trunc_result.compacted_messages is not None:
+                        self._agent_context.replace_conversation_history(trunc_result.compacted_messages)
+                    self._logger.info(
+                        "LLM generate success",
+                        zap.any("provider", provider_name),
+                        zap.any("attempt", attempt + 1),
+                    )
+                    return response
+
+                except LLMError as exc:
+                    self._logger.error(
+                        "LLM error",
+                        zap.any("provider", provider_name),
+                        zap.any("category", exc.category.value),
+                        zap.any("code", exc.code.value),
+                        zap.any("attempt", attempt + 1),
+                        zap.any("message", exc.message),
+                    )
+                    failures.append(f"{provider_name}[{exc.code.value}]: {exc.message}")
+
+                    if exc.category in {ErrorCategory.AUTH, ErrorCategory.CONFIG}:
+                        break  # fatal for this provider, skip to next
+
+                    if exc.category == ErrorCategory.CONTEXT:
+                        trimmed = _try_trim_context(current_request)
+                        if trimmed is None:
+                            self._logger.error(
+                                "Context too long and cannot be trimmed",
+                                zap.any("provider", provider_name),
+                            )
+                            break
+                        self._logger.info(
+                            "Context trimmed, retrying",
+                            zap.any("provider", provider_name),
+                            zap.any("remaining_messages", len(trimmed.messages)),
+                        )
+                        current_request = trimmed
+                        continue  # retry without incrementing attempt
+
+                    if exc.category == ErrorCategory.RESPONSE:
+                        repaired = _try_self_repair(client, current_request, exc)
+                        if repaired is not None:
+                            self._logger.info("Self-repair succeeded", zap.any("provider", provider_name))
+                            return repaired
+                        break  # self-repair failed, skip to next provider
+
+                    # TRANSIENT or RATE_LIMIT — backoff and retry
+                    attempt += 1
+                    if attempt < cfg.retry_max_attempts:
+                        delay = exc.retry_after if exc.retry_after is not None else _backoff(cfg, attempt - 1, random)
+                        time.sleep(delay)
 
         raise build_error(
             LLM_ALL_PROVIDERS_FAILED,
