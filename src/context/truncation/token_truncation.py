@@ -141,7 +141,7 @@ class ReActContextTruncator(ContextTruncator):
         def _log_truncation_result(strategy: str, msgs_after: list[LLMMessage]) -> None:
             est_after = effective_estimator.estimate(LLMRequest(messages=msgs_after), ["assistant", "tool"])
             tokens_after = est_after["assistant"] + est_after["tool"]
-            ratio = (tokens_before - tokens_after) / tokens_before if tokens_before > 0 else 0.0
+            ratio = ((tokens_before - tokens_after) / tokens_before) if tokens_before > 0 else 0.0
             self._logger.info(
                 f"{strategy} resolved budget",
                 msgs_before=msgs_before,
