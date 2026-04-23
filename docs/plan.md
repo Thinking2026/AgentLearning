@@ -106,6 +106,7 @@
 - [TODO]RAG做内部知识源，让LLM自己选择是否使用
 - [TODO]如何路由不同的模型，任务意图识别，cost model...
 - [TODO]工具注册那里没有提供显示的注册能力，数据库工具注册那里恶心需要统一化
+- [TODO]两个问题：（1）Strategy A触发说msg减去1，但是StrageC/D打印msg减2 （2）裁剪器里fits函数重构统一
 
 ## ReAct Agent裁剪上下文设计
 - 根据token预算触发裁剪
