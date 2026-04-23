@@ -45,7 +45,7 @@ class OpenAICompatibleTokenEstimator(BaseTokenEstimator):
 
 def _estimate_by_role(request: LLMRequest, count: ..., role: str) -> int:
     if role == "system":
-        system_tokens = count(request.system_prompt) + (count(json.dumps(request.tools)) if request.tools else 0)
+        system_tokens = count(request.system_prompt or "") + (count(json.dumps(request.tools)) if request.tools else 0)
         return system_tokens
     elif role == "user":
         user_tokens = 0

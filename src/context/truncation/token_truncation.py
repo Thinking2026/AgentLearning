@@ -404,7 +404,7 @@ class ReActContextTruncator(ContextTruncator):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _fits(self, messages: list[LLMMessage], budget: BudgetResult, estimator: BaseTokenEstimator) -> bool:
+    def _fits(self, messages: list[LLMMessage], budget: BudgetResult, estimator: BaseTokenEstimator) -> bool:#TODO 有BUG修复
         candidate = LLMRequest(
             messages=messages,
         )
