@@ -242,10 +242,13 @@ class ReActContextTruncator(ContextTruncator):
     # ------------------------------------------------------------------
 
     def _strategy_c_trim_args(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        units = _parse_reasoning_units(messages)
+        latest_ids = {id(m) for m in _unit_to_messages(units[-1])} if units else set()
+
         result: list[LLMMessage] = []
         limit = self._cfg.tool_arg_max_chars
         for msg in messages:
-            if msg.role != "assistant" or not msg.metadata.get("tool_calls"):
+            if id(msg) in latest_ids or msg.role != "assistant" or not msg.metadata.get("tool_calls"):
                 result.append(msg)
                 continue
             new_calls = []
@@ -275,10 +278,13 @@ class ReActContextTruncator(ContextTruncator):
     # ------------------------------------------------------------------
 
     def _strategy_d_trim_results(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        units = _parse_reasoning_units(messages)
+        latest_ids = {id(m) for m in _unit_to_messages(units[-1])} if units else set()
+
         result: list[LLMMessage] = []
         limit = self._cfg.tool_result_max_chars
         for msg in messages:
-            if msg.role == "tool" and len(msg.content) > limit:
+            if id(msg) not in latest_ids and msg.role == "tool" and len(msg.content) > limit:
                 result.append(LLMMessage(
                     role=msg.role,
                     content=msg.content[:limit] + "(trimmed because too long)",
