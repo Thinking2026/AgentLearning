@@ -375,14 +375,10 @@ class AgentExecutor:
     def _build_truncator(self, config: JsonConfig, tracer: Tracer | None) -> ContextTruncator:
         strategy_name = str(config.get("agent.strategy", "react")).strip()
         budget_manager = TokenBudgetManagerFactory.create(strategy_name, config)
-        priority_chain = config.get("llm.priority_chain", ["deepseek"])
-        default_provider = str(priority_chain[0]) if isinstance(priority_chain, list) and priority_chain else "deepseek"
-        estimator = TokenEstimatorFactory.get_estimator(default_provider)
-
         def llm_client_factory(provider_name: str) -> BaseLLMClient:
             return AgentExecutor._build_provider(provider_name, config, tracer)
 
-        return TruncatorFactory.create(strategy_name, budget_manager, estimator, llm_client_factory, self._logger, config)
+        return TruncatorFactory.create(strategy_name, budget_manager, llm_client_factory, self._logger, config)
 
     @staticmethod
     def _build_llm_provider_router(config: JsonConfig, tracer: Tracer | None) -> LLMProviderRouter:

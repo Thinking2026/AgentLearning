@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 class ContextTruncator(ABC):
     @abstractmethod
-    def truncate(self, request: LLMRequest, total_budget: int, estimator: BaseTokenEstimator | None = None) -> TruncationResult:
+    def truncate(self, request: LLMRequest, total_budget: int, estimator: BaseTokenEstimator) -> TruncationResult:
         ...
 
 # ===========================================================================
@@ -97,19 +97,19 @@ class ReActContextTruncator(ContextTruncator):
     def __init__(
         self,
         budget_manager: BaseTokenBudgetManager,
-        estimator: BaseTokenEstimator,
         llm_client_factory: Callable[[str], BaseLLMClient],
         logger: Logger,
         config: ReActTruncationConfig | None = None,
     ) -> None:
         self._budget_manager = budget_manager
-        self._estimator = estimator
         self._llm_client_factory = llm_client_factory
         self._logger = logger
         self._cfg = config or ReActTruncationConfig()
 
-    def truncate(self, request: LLMRequest, total_budget: int, estimator: BaseTokenEstimator | None = None) -> TruncationResult:
-        effective_estimator = estimator if estimator is not None else self._estimator
+    def truncate(self, request: LLMRequest, total_budget: int, effective_estimator: BaseTokenEstimator) -> TruncationResult:
+        if (effective_estimator is None) or (request is None) or (0 == tool_budget):
+            raise ValueError("Effective estimator, request, and tool budget must be provided and non-zero")
+
         budget = self._budget_manager.allocate(total_budget)
         estimation = effective_estimator.estimate(request)
         msgs = list(request.messages)
@@ -417,7 +417,6 @@ class TruncatorFactory:
         cls,
         strategy: str,
         budget_manager: BaseTokenBudgetManager,
-        estimator: BaseTokenEstimator,
         llm_client_factory: Callable[[str], BaseLLMClient],
         logger: Logger,
         config: JsonConfig | None = None,
@@ -431,5 +430,5 @@ class TruncatorFactory:
                     if config is not None else "deepseek"
                 ),
             )
-            return ReActContextTruncator(budget_manager, estimator, llm_client_factory, logger, trunc_cfg)
+            return ReActContextTruncator(budget_manager, llm_client_factory, logger, trunc_cfg)
         raise ValueError(f"Unknown truncation strategy: {strategy!r}")
