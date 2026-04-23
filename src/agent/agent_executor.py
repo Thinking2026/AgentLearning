@@ -106,9 +106,9 @@ def _try_self_repair(
         return None
 
 
-def _backoff(cfg: RetryConfig, attempt_idx: int, rng: "random") -> float:
+def _backoff(cfg: RetryConfig, attempt_idx: int) -> float:
     cap = min(cfg.retry_base * (2 ** attempt_idx), cfg.retry_max_delay)
-    return rng.uniform(0, cap)
+    return random.uniform(0, cap)
 
 
 class AgentExecutor:
@@ -121,6 +121,11 @@ class AgentExecutor:
         self._logger = logger
         self._config = config
         self._agent_context = AgentContext()
+        self._retry_config = RetryConfig(
+            retry_base=float(config.get("llm.retry.base", 0.5)),
+            retry_max_delay=float(config.get("llm.retry.max_delay", 60.0)),
+            retry_max_attempts=int(config.get("llm.retry.max_attempts", 5)),
+        )
 
         config_reader = ConfigValueReader(config)
         self._storage_registry = self._build_storage_registry(config)
@@ -337,7 +342,7 @@ class AgentExecutor:
                     # TRANSIENT or RATE_LIMIT — backoff and retry
                     attempt += 1
                     if attempt < cfg.retry_max_attempts:
-                        delay = exc.retry_after if exc.retry_after is not None else _backoff(cfg, attempt - 1, random)
+                        delay = exc.retry_after if exc.retry_after is not None else _backoff(cfg, attempt - 1)
                         time.sleep(delay)
 
         raise build_error(
@@ -389,15 +394,9 @@ class AgentExecutor:
         for name in priority_chain:
             registry.register(AgentExecutor._build_provider(name, config, tracer))
 
-        retry_config = RetryConfig(
-            retry_base=float(config.get("llm.retry.base", 0.5)),
-            retry_max_delay=float(config.get("llm.retry.max_delay", 60.0)),
-            retry_max_attempts=int(config.get("llm.retry.max_attempts", 5)),
-        )
         return LLMProviderRouter(
             registry=registry,
             priority_chain=priority_chain,
-            retry_config=retry_config,
             enable_fallback=bool(config.get("llm.enable_provider_fallback", False)),
         )
 

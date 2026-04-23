@@ -28,17 +28,13 @@ class VectorSearchTool(BaseTool):
             "collection": {
                 "type": "string",
                 "description": (
-                    "Collection name to search. "
-                    "Optional when only one collection is available; "
-                    "use inspect schema first if unsure which collection to use."
+                    "Collection to search. Optional when only one collection is available; "
+                    "use inspect schema first if unsure."
                 ),
             },
             "query": {
                 "type": "string",
-                "description": (
-                    "Natural language query text for semantic similarity search. "
-                    "The query is embedded and matched against stored vectors by concept similarity."
-                ),
+                "description": "Natural language query text; embedded and matched against stored vectors by concept similarity.",
             },
             "top_k": {
                 "type": "integer",

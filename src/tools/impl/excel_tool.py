@@ -21,16 +21,11 @@ class ExcelTool(BaseTool):
     name = "excel"
     description = (
         "Inspect, read, and update Excel workbooks (.xlsx/.xlsm). "
-        "Supports four actions: "
-        "(1) inspect — list all sheets with their row/column dimensions; "
-        "(2) read_sheet — read up to max_rows rows (default 50, max 500) from a sheet; "
-        "note that cell formulas are NOT returned — only the last cached computed value is read; "
-        "(3) write_sheet — write rows to a sheet, creating the sheet if it does not exist; "
-        "if the sheet already exists, set replace_sheet=true (default) to overwrite it, "
-        "or the call will fail with an error; "
-        "(4) append_rows — append rows after existing data in a sheet, "
-        "creating the sheet (and the workbook file) if either does not exist. "
-        "Relative paths are resolved inside the current task workspace directory."
+        "Actions: inspect (list sheets with row/column dimensions), "
+        "read_sheet (read up to max_rows rows; returns cached values, not formula text), "
+        "write_sheet (write rows to a sheet; creates sheet if absent; fails if sheet exists and replace_sheet=false), "
+        "append_rows (append rows after existing data; creates sheet/file if absent). "
+        "Relative paths resolve inside the task workspace directory."
     )
     parameters = {
         "type": "object",
@@ -38,12 +33,10 @@ class ExcelTool(BaseTool):
             "action": {
                 "type": "string",
                 "description": (
-                    "The Excel operation to perform. "
                     "inspect: list sheets and dimensions. "
-                    "read_sheet: read rows (formulas return cached values, not formula text). "
-                    "write_sheet: write rows to a sheet, creating it if absent; "
-                    "fails if sheet exists and replace_sheet=false. "
-                    "append_rows: append rows after existing data; creates sheet/file if absent."
+                    "read_sheet: read rows (returns cached values, not formula text). "
+                    "write_sheet: write rows to a sheet (creates if absent; fails if exists and replace_sheet=false). "
+                    "append_rows: append rows after existing data (creates sheet/file if absent)."
                 ),
                 "enum": ["inspect", "read_sheet", "write_sheet", "append_rows"],
             },
@@ -51,33 +44,28 @@ class ExcelTool(BaseTool):
                 "type": "string",
                 "description": (
                     "Path to the Excel workbook (.xlsx/.xlsm). "
-                    "Relative paths are resolved inside the task workspace directory. "
-                    "For write_sheet and append_rows the file is created if it does not exist."
+                    "Relative paths resolve inside the task workspace. "
+                    "Created automatically for write_sheet and append_rows if absent."
                 ),
             },
             "sheet_name": {
                 "type": "string",
                 "description": (
-                    "Target worksheet name. "
-                    "Defaults to the active sheet when omitted for inspect and read_sheet. "
-                    "For write_sheet and append_rows, omitting this uses the active sheet name; "
-                    "if the named sheet does not exist it will be created automatically."
+                    "Target worksheet name. Defaults to the active sheet when omitted. "
+                    "Created automatically for write_sheet and append_rows if it does not exist."
                 ),
             },
             "max_rows": {
                 "type": "integer",
-                "description": (
-                    "Maximum number of rows to return for read_sheet. "
-                    "Defaults to 50; capped at 500. Use inspect first to check total row count."
-                ),
+                "description": "Max rows to return for read_sheet. Defaults to 50, max 500.",
                 "default": 50,
             },
             "rows": {
                 "type": "array",
                 "description": (
                     "Required for write_sheet and append_rows. "
-                    "Each element is a row represented as an array of cell values "
-                    "(strings, numbers, booleans, or null). Non-primitive values are coerced to strings."
+                    "Array of row arrays; cell values may be strings, numbers, booleans, or null. "
+                    "Non-primitive values are coerced to strings."
                 ),
                 "items": {
                     "type": "array",
@@ -87,9 +75,8 @@ class ExcelTool(BaseTool):
             "replace_sheet": {
                 "type": "boolean",
                 "description": (
-                    "Only used by write_sheet. "
-                    "When true (default), an existing sheet is deleted and recreated before writing. "
-                    "When false, the call fails if the sheet already exists."
+                    "For write_sheet only. When true (default), deletes and recreates the sheet before writing. "
+                    "When false, fails if the sheet already exists."
                 ),
                 "default": True,
             },

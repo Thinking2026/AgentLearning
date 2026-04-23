@@ -11,9 +11,10 @@ from tools.tools import BaseTool, build_tool_output
 class CalculatorTool(BaseTool):
     name = "calculator"
     description = (
-        "Evaluate a standard arithmetic expression safely. "
-        "Use this tool for calculations with +, -, *, /, //, %, **, parentheses, "
-        "and common math functions such as sqrt, sin, cos, tan, log, exp, floor, ceil, and abs."
+        "Safely evaluate an arithmetic expression. "
+        "Supports +, -, *, /, //, %, **, parentheses, and math functions: "
+        "sqrt, sin, cos, tan, log, log10, exp, floor, ceil, abs, pow, round. "
+        "Constants: pi, e, tau."
     )
     parameters = {
         "type": "object",

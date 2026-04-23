@@ -40,25 +40,20 @@ class SQLQueryTool(BaseTool):
         "properties": {
             "database": {
                 "type": "string",
-                "description": (
-                    "Authorized database alias or database name to query. "
-                    "Optional when only one database is available."
-                ),
+                "description": "Database alias or name to query. Optional when only one database is available.",
             },
             "statement": {
                 "type": "string",
                 "description": (
                     "A single SELECT statement. "
-                    "Only read-only SELECT queries are permitted by convention; "
-                    "the tool does not enforce this but non-SELECT statements may be rejected by the backend. "
+                    "Non-SELECT statements may be rejected by the backend. "
                     "Use placeholders (? or :name) instead of interpolating values directly."
                 ),
             },
             "params": {
                 "description": (
-                    "Query parameters bound to the placeholders in the statement. "
-                    "Use an array for positional placeholders (?), "
-                    "or an object for named placeholders (:name). "
+                    "Parameters bound to placeholders in the statement. "
+                    "Array for positional placeholders (?), object for named placeholders (:name). "
                     "Omit when the statement has no placeholders."
                 ),
                 "oneOf": [

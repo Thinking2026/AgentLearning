@@ -7,10 +7,7 @@ from utils.time.timezone import isoformat
 
 class CurrentTimeTool(BaseTool):
     name = "current_time"
-    description = (
-        "Return the current local date and time for the running environment. "
-        "Use this tool when the answer depends on the current time."
-    )
+    description = "Return the current local date and time. Use when the answer depends on the current time."
     parameters = {
         "type": "object",
         "properties": {},

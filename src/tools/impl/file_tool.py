@@ -11,16 +11,11 @@ class FileTool(BaseTool):
     name = "file"
     description = (
         "Read, write, append a UTF-8 text file, or list a directory. "
-        "Supports four actions: "
-        "(1) read — return the full file contents as a string; fails if the file does not exist; "
-        "only UTF-8 encoded text files are supported, binary files will cause an error; "
-        "(2) write — write content to a file, completely overwriting any existing content; "
-        "parent directories are created automatically if they do not exist; "
-        "(3) append — append content to the end of a file, creating it if it does not exist; "
-        "parent directories are created automatically; "
-        "(4) list_dir — list the entries in a directory, returning each entry's name, type (file or directory), "
-        "and size in bytes (for files); fails if the path does not exist or is not a directory. "
-        "Relative paths are resolved inside the current task workspace directory."
+        "Actions: read (returns contents; UTF-8 only; file must exist), "
+        "write (overwrites file; creates file and parent dirs if absent), "
+        "append (adds to end; creates file and parent dirs if absent), "
+        "list_dir (returns name/type/size per entry; path must be an existing directory). "
+        "Relative paths resolve inside the task workspace directory."
     )
     parameters = {
         "type": "object",
@@ -28,29 +23,23 @@ class FileTool(BaseTool):
             "action": {
                 "type": "string",
                 "description": (
-                    "The file operation to perform. "
-                    "read: return file contents (UTF-8 only, file must exist). "
-                    "write: overwrite the file with new content (creates file and parent dirs if absent). "
-                    "append: add content to the end of the file (creates file and parent dirs if absent). "
-                    "list_dir: list entries in a directory (name, type, size)."
+                    "read: return file contents (UTF-8 only; file must exist). "
+                    "write: overwrite file with new content (creates file and parent dirs if absent). "
+                    "append: add content to end of file (creates file and parent dirs if absent). "
+                    "list_dir: list directory entries (name, type, size)."
                 ),
                 "enum": ["read", "write", "append", "list_dir"],
             },
             "path": {
                 "type": "string",
                 "description": (
-                    "Path to the target file. "
-                    "Relative paths are resolved inside the task workspace directory. "
-                    "Absolute paths are used as-is."
+                    "Path to the target file or directory. "
+                    "Relative paths resolve inside the task workspace; absolute paths used as-is."
                 ),
             },
             "content": {
                 "type": "string",
-                "description": (
-                    "The text content to write or append. "
-                    "Required when action is write or append. "
-                    "Ignored for read."
-                ),
+                "description": "Text to write or append. Required for write/append; ignored for read/list_dir.",
             },
         },
         "required": ["action", "path"],

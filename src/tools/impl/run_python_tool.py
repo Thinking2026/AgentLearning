@@ -65,15 +65,11 @@ class RunPythonTool(BaseTool):
     name = "run_python"
     description = (
         "Execute a Python code snippet and return its stdout output. "
-        "Maintains a session context across calls: variables saved via context_vars "
-        "are automatically available in subsequent calls without re-passing them. "
-        "Use the context parameter to inject or override specific variables for a single call. "
-        "Use action=reset_context to clear all saved session variables. "
-        "Allowed imports are a curated whitelist of stdlib and lightweight third-party "
-        "packages (numpy, pandas, requests, pydantic, etc.); heavy ML libraries "
-        "(torch, tensorflow) and OS-level modules (os, subprocess, socket) are blocked. "
-        "Execution is time-limited (default 10 s, max 30 s) and memory-limited (256 MB). "
-        "Print to stdout to produce output."
+        "Maintains session context across calls: variables saved via context_vars are available in subsequent calls. "
+        "Use context to inject/override variables for a single call; use action=reset_context to clear all session variables. "
+        "Allowed imports: curated stdlib and lightweight third-party packages (numpy, pandas, requests, pydantic, etc.); "
+        "heavy ML libs (torch, tensorflow) and OS-level modules (os, subprocess, socket) are blocked. "
+        "Time limit: default 10 s, max 30 s. Memory limit: 256 MB. Use print() to produce output."
     )
     parameters = {
         "type": "object",
@@ -81,9 +77,8 @@ class RunPythonTool(BaseTool):
             "action": {
                 "type": "string",
                 "description": (
-                    "Operation to perform. "
                     "run (default): execute the code snippet. "
-                    "reset_context: clear all session variables (code parameter is ignored)."
+                    "reset_context: clear all session variables (code is ignored)."
                 ),
                 "enum": ["run", "reset_context"],
                 "default": "run",
@@ -91,30 +86,26 @@ class RunPythonTool(BaseTool):
             "code": {
                 "type": "string",
                 "description": (
-                    "The Python source code to execute. "
-                    "Session variables from previous calls are pre-loaded into the namespace. "
-                    "Use print() to produce output. "
-                    "Imports must come from the allowed whitelist."
+                    "Python source code to execute. "
+                    "Session variables from prior calls are pre-loaded. "
+                    "Use print() for output. Imports must be from the allowed whitelist."
                 ),
             },
             "context": {
                 "type": "object",
                 "description": (
-                    "Optional dict of variable names to values injected into the namespace "
-                    "for this call only, overriding any session variable with the same name. "
-                    "Values must be JSON-serialisable. "
-                    "These are NOT automatically saved back to the session — "
-                    "list them in context_vars to persist them."
+                    "Dict of variable names to JSON-serialisable values injected for this call only, "
+                    "overriding any session variable with the same name. "
+                    "Not saved back to session unless listed in context_vars."
                 ),
             },
             "context_vars": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Variable names to extract after execution and save into the session context. "
-                    "Saved variables are automatically available in all future calls. "
-                    "Callable objects (functions, classes, lambdas) are NOT saved — only data values. "
-                    "Non-JSON-serialisable values are converted to repr()."
+                    "Variable names to extract after execution and persist to session. "
+                    "Callables (functions, classes, lambdas) are not saved. "
+                    "Non-JSON-serialisable values are stored as repr()."
                 ),
             },
             "timeout": {

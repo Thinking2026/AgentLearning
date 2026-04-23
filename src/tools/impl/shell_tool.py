@@ -19,30 +19,20 @@ class ShellTool(BaseTool):
     name = "shell"
     description = (
         "Run a shell command and return its output. "
-        "Commands execute in the task workspace directory (not the project root). "
-        "The command is run via the system shell (shell=True), so pipes, redirects, and "
-        "environment variables work as expected. "
-        "If the command exits with a non-zero return code the call is treated as a failure; "
-        "stderr is used as the error message when available. "
-        "Long-running or interactive commands should be avoided; use the timeout parameter to cap execution time."
+        "Executes in the task workspace directory via the system shell (pipes, redirects, env vars supported). "
+        "Non-zero exit code is treated as failure; stderr is used as the error message when available. "
+        "Avoid long-running or interactive commands; use timeout to cap execution time."
     )
     parameters = {
         "type": "object",
         "properties": {
             "command": {
                 "type": "string",
-                "description": (
-                    "The shell command to execute. "
-                    "Runs in the task workspace directory. "
-                    "Non-zero exit code is treated as failure."
-                ),
+                "description": "Shell command to execute in the task workspace directory.",
             },
             "timeout": {
                 "type": "integer",
-                "description": (
-                    "Maximum seconds to wait before killing the command. "
-                    "Defaults to 15. Increase for commands known to be slow."
-                ),
+                "description": "Max seconds before killing the command. Defaults to 15.",
                 "default": 15,
             },
         },
