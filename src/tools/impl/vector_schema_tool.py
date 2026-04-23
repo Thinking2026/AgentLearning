@@ -11,10 +11,12 @@ def build_vector_schema_tool_name(backend_name: str) -> str:
     return f"inspect_{backend_name}_schema"
 
 
-def build_vector_schema_tool_description(backend_name: str) -> str:
+def build_vector_schema_tool_description(backend_name: str, resources: str = "") -> str:
+    suffix = f" Available collections: {resources}." if resources else ""
     return (
         f"Inspect the authorized collections exposed by the `{backend_name}` vector backend. "
         "Use this before vector search when you are unsure which collection to search."
+        + suffix
     )
 
 

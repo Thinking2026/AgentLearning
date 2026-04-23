@@ -11,10 +11,13 @@ def build_vector_search_tool_name(backend_name: str) -> str:
     return f"search_{backend_name}_vectors"
 
 
-def build_vector_search_tool_description(backend_name: str) -> str:
+def build_vector_search_tool_description(backend_name: str, resources: str = "") -> str:
+    suffix = f" Available collections: {resources}." if resources else ""
     return (
         f"Run semantic vector retrieval against the `{backend_name}` backend. "
-        "Use this when the answer depends on concept similarity, fuzzy wording, or paraphrased knowledge."
+        "Use for semantic retrieval from indexed text collections; choose the most relevant authorized collection for the task. "
+        "Prefer when the task needs fuzzy matching, semantic lookup, or concept-level retrieval."
+        + suffix
     )
 
 

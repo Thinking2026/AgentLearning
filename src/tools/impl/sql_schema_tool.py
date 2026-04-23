@@ -11,19 +11,23 @@ def build_sql_schema_tool_name(backend_name: str) -> str:
     return f"inspect_{backend_name}_schema"
 
 
-def build_sql_schema_tool_description(backend_name: str) -> str:
+def build_sql_schema_tool_description(backend_name: str, resources: str = "") -> str:
+    suffix = f" Available databases: {resources}." if resources else ""
     if backend_name == "sqlite":
         return (
             "Inspect the authorized SQLite database schema. "
             "Use this before querying when you are unsure which tables or columns exist."
+            + suffix
         )
     if backend_name == "mysql":
         return (
             "Inspect the authorized MySQL database schema. "
             "Use this before querying when you are unsure which tables or columns exist."
+            + suffix
         )
     return (
         f"Inspect the authorized schema exposed by the `{backend_name}` relational backend."
+        + suffix
     )
 
 

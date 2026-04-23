@@ -466,78 +466,35 @@ class AgentExecutor:
         )
 
     def _register_storage_tools(self, storage_registry: StorageRegistry) -> None:
-        sql_tool_lines: list[str] = []
-        vector_tool_lines: list[str] = []
-
         for backend_name in storage_registry.list_backends():
             storage = storage_registry.get(backend_name)
             if backend_name in {"sqlite", "mysql"}:
-                schema_tool_name = build_sql_schema_tool_name(backend_name)
-                schema_description = build_sql_schema_tool_description(backend_name)
-                self._tool_registry.register(SQLSchemaTool(
-                    name=schema_tool_name,
-                    description=schema_description,
-                    storage=storage,
-                    backend_name=backend_name,
-                ))
-                tool_name = build_sql_query_tool_name(backend_name)
-                description = build_sql_query_tool_description(backend_name)
-                self._tool_registry.register(SQLQueryTool(
-                    name=tool_name,
-                    description=description,
-                    storage=storage,
-                    backend_name=backend_name,
-                ))
                 resources = ", ".join(storage.list_resources()) or "<none>"
-                sql_tool_lines.append(
-                    f"- `{schema_tool_name}`: {schema_description} Available databases: {resources}"
-                )
-                sql_tool_lines.append(
-                    f"- `{tool_name}`: {description} Available databases: {resources}"
-                )
+                self._tool_registry.register(SQLSchemaTool(
+                    name=build_sql_schema_tool_name(backend_name),
+                    description=build_sql_schema_tool_description(backend_name, resources),
+                    storage=storage,
+                    backend_name=backend_name,
+                ))
+                self._tool_registry.register(SQLQueryTool(
+                    name=build_sql_query_tool_name(backend_name),
+                    description=build_sql_query_tool_description(backend_name, resources),
+                    storage=storage,
+                    backend_name=backend_name,
+                ))
                 continue
 
             if backend_name == "chromadb":
-                schema_tool_name = build_vector_schema_tool_name(backend_name)
-                schema_description = build_vector_schema_tool_description(backend_name)
-                self._tool_registry.register(VectorSchemaTool(
-                    name=schema_tool_name,
-                    description=schema_description,
-                    storage=storage,
-                    backend_name=backend_name,
-                ))
-                tool_name = build_vector_search_tool_name(backend_name)
-                description = build_vector_search_tool_description(backend_name)
-                self._tool_registry.register(VectorSearchTool(
-                    name=tool_name,
-                    description=description,
-                    storage=storage,
-                    backend_name=backend_name,
-                ))
                 resources = ", ".join(storage.list_resources()) or "<none>"
-                vector_tool_lines.append(
-                    f"- `{schema_tool_name}`: {schema_description} Available collections: {resources}"
-                )
-                vector_tool_lines.append(
-                    f"- `{tool_name}`: {description} Available collections: {resources}"
-                )
-
-        if sql_tool_lines:
-            self._agent_context.append_system_prompt(
-                "\n\nRelational query tool guide:\n"
-                "Use relational query tools for SQLite or MySQL tables with custom schemas.\n"
-                "Choose the correct authorized database for the task.\n"
-                "When you are unsure about available tables or columns, use the dedicated schema inspection tool first.\n"
-                "For SQL query tools, send only a single SELECT statement and keep values in params instead of string interpolation.\n"
-                f"{chr(10).join(sql_tool_lines)}"
-            )
-
-        if vector_tool_lines:
-            self._agent_context.append_system_prompt(
-                "\n\nVector search tool guide:\n"
-                "Use vector search tools for semantic retrieval from indexed text collections.\n"
-                "When you are unsure which collection to use, inspect the available collections first.\n"
-                "Choose the most relevant authorized collection for the task.\n"
-                "Prefer them when the task needs fuzzy matching, semantic lookup, or concept-level retrieval.\n"
-                f"{chr(10).join(vector_tool_lines)}"
-            )
+                self._tool_registry.register(VectorSchemaTool(
+                    name=build_vector_schema_tool_name(backend_name),
+                    description=build_vector_schema_tool_description(backend_name, resources),
+                    storage=storage,
+                    backend_name=backend_name,
+                ))
+                self._tool_registry.register(VectorSearchTool(
+                    name=build_vector_search_tool_name(backend_name),
+                    description=build_vector_search_tool_description(backend_name, resources),
+                    storage=storage,
+                    backend_name=backend_name,
+                ))

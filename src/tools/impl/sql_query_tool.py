@@ -11,22 +11,26 @@ def build_sql_query_tool_name(backend_name: str) -> str:
     return f"query_{backend_name}_data"
 
 
-def build_sql_query_tool_description(backend_name: str) -> str:
+def build_sql_query_tool_description(backend_name: str, resources: str = "") -> str:
+    suffix = f" Available databases: {resources}." if resources else ""
     if backend_name == "sqlite":
         return (
             "Run a single read-only SELECT query against the SQLite database. "
-            "Use this for relational tables with custom schemas. "
-            "Provide a database alias, SQL plus parameters, and inspect schema first when needed."
+            "Use for relational tables with custom schemas; choose the correct authorized database for the task. "
+            "Send only a single SELECT statement and keep values in params instead of string interpolation."
+            + suffix
         )
     if backend_name == "mysql":
         return (
             "Run a single read-only SELECT query against the MySQL database. "
-            "Use this for relational tables with custom schemas. "
-            "Provide a database name, SQL plus parameters, and inspect schema first when needed."
+            "Use for relational tables with custom schemas; choose the correct authorized database for the task. "
+            "Send only a single SELECT statement and keep values in params instead of string interpolation."
+            + suffix
         )
     return (
         f"Run a single read-only SELECT query against the `{backend_name}` relational backend. "
         "Use this when the answer depends on structured table data."
+        + suffix
     )
 
 
