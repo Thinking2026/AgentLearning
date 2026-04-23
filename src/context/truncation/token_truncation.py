@@ -107,7 +107,7 @@ class ReActContextTruncator(ContextTruncator):
         self._cfg = config or ReActTruncationConfig()
 
     def truncate(self, request: LLMRequest, total_budget: int, effective_estimator: BaseTokenEstimator) -> TruncationResult:
-        if (effective_estimator is None) or (request is None) or (0 == tool_budget):
+        if (effective_estimator is None) or (request is None) or (0 == total_budget):
             raise ValueError("Effective estimator, request, and tool budget must be provided and non-zero")
 
         budget = self._budget_manager.allocate(total_budget)
