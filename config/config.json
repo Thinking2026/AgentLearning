@@ -16,11 +16,7 @@
     }
   },
   "llm": {
-    "provider": "deepseek",
     "enable_provider_fallback": true,
-    "model": "deepseek-chat",
-    "base_url": "https://api.deepseek.com/v1",
-    "timeout": 120.0,
     "priority_chain": ["deepseek", "claude", "openai"],
     "context_trimming": {
     },
@@ -33,6 +29,7 @@
       "claude": {
         "model": "claude-3-5-sonnet-latest",
         "base_url": "https://api.anthropic.com",
+        "timeout": 120.0,
         "max_tokens": 1024,
         "anthropic_version": "2023-06-01",
         "context_window": 200000
@@ -40,11 +37,31 @@
       "deepseek": {
         "model": "deepseek-chat",
         "base_url": "https://api.deepseek.com/v1",
+        "timeout": 120.0,
         "context_window": 64000
       },
       "openai": {
         "model": "gpt-4o",
         "base_url": "https://api.openai.com/v1",
+        "timeout": 120.0,
+        "context_window": 128000
+      },
+      "minmax": {
+        "model": "MiniMax-Text-01",
+        "base_url": "https://api.minimax.chat/v1",
+        "timeout": 120.0,
+        "context_window": 1000000
+      },
+      "glm": {
+        "model": "glm-4",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "timeout": 120.0,
+        "context_window": 128000
+      },
+      "kimi": {
+        "model": "moonshot-v1-8k",
+        "base_url": "https://api.moonshot.cn/v1",
+        "timeout": 120.0,
         "context_window": 128000
       }
     }
@@ -104,10 +121,10 @@
     "react": {
       "reserve_ratio": 0.20,
       "role_ratios": {
-        "system":    0.15,
+        "system":    0.1,
         "user":      0.15,
-        "assistant": 0.15,
-        "tool":      0.55
+        "assistant": 0.35,
+        "tool":      0.4
       }
     }
   }

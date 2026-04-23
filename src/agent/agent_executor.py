@@ -29,7 +29,10 @@ from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
     DeepSeekLLMClient,
+    GLMLLMClient,
+    KimiLLMClient,
     LLMProviderRegistry,
+    MinMaxLLMClient,
     OpenAILLMClient,
     QwenLLMClient,
     RetryConfig,
@@ -54,7 +57,7 @@ from tools import (
 )
 from context.budget.token_budget_manager import TokenBudgetManagerFactory
 from context.estimator.token_estimator import TokenEstimatorFactory
-from context.truncation.token_truncation import TruncatorFactory, ReActContextTruncator
+from context.truncation.token_truncation import TruncatorFactory, ContextTruncator
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
@@ -274,7 +277,7 @@ class AgentExecutor:
             )
         return strategy
 
-    def _build_truncator(self, config: JsonConfig, tracer: Tracer | None) -> ReActContextTruncator:
+    def _build_truncator(self, config: JsonConfig, tracer: Tracer | None) -> ContextTruncator:
         strategy_name = str(config.get("agent.strategy", "react")).strip()
         budget_manager = TokenBudgetManagerFactory.create(strategy_name, config)
         priority_chain = config.get("llm.priority_chain", ["deepseek"])
@@ -284,7 +287,7 @@ class AgentExecutor:
         def llm_client_factory(provider_name: str) -> BaseLLMClient:
             return AgentExecutor._build_provider(provider_name, config, tracer)
 
-        return TruncatorFactory.create(strategy_name, budget_manager, estimator, llm_client_factory, config)
+        return TruncatorFactory.create(strategy_name, budget_manager, estimator, llm_client_factory, self._logger, config)
 
     @staticmethod
     def _build_llm_provider_router(config: JsonConfig, tracer: Tracer | None) -> LLMProviderRouter:
@@ -313,7 +316,7 @@ class AgentExecutor:
         provider_settings = config.get(f"llm.provider_settings.{provider_name}", {})
         if not isinstance(provider_settings, dict):
             provider_settings = {}
-        timeout = float(provider_settings.get("timeout", config.get("llm.timeout", 60.0)))
+        timeout = float(provider_settings.get("timeout", 60.0))
         api_key = provider_settings.get("api_key")
 
         if provider_name == "openai":
@@ -348,6 +351,27 @@ class AgentExecutor:
                     "anthropic_version",
                     config.get("llm.anthropic_version", "2023-06-01"),
                 ),
+            ).set_tracer(tracer)
+        if provider_name == "minmax":
+            return MinMaxLLMClient.from_settings(
+                api_key=api_key,
+                model=provider_settings.get("model", "MiniMax-Text-01"),
+                base_url=provider_settings.get("base_url", "https://api.minimax.chat/v1"),
+                timeout=timeout,
+            ).set_tracer(tracer)
+        if provider_name == "glm":
+            return GLMLLMClient.from_settings(
+                api_key=api_key,
+                model=provider_settings.get("model", "glm-4"),
+                base_url=provider_settings.get("base_url", "https://open.bigmodel.cn/api/paas/v4"),
+                timeout=timeout,
+            ).set_tracer(tracer)
+        if provider_name == "kimi":
+            return KimiLLMClient.from_settings(
+                api_key=api_key,
+                model=provider_settings.get("model", "moonshot-v1-8k"),
+                base_url=provider_settings.get("base_url", "https://api.moonshot.cn/v1"),
+                timeout=timeout,
             ).set_tracer(tracer)
         raise build_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}")
 

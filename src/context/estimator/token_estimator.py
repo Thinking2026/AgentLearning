@@ -7,13 +7,25 @@ from schemas.types import LLMRequest
 
 
 TokenEstimation = dict[str, int]
-"""Keys: 'system', 'tools', 'user', 'assistant', 'tool', 'total'"""
+"""Keys: 'system', 'user', 'assistant', 'tool', 'total'"""
+
+_ALL_ROLES = ("system", "user", "assistant", "tool")
 
 
 class BaseTokenEstimator(ABC):
-    @abstractmethod
-    def estimate(self, request: LLMRequest) -> TokenEstimation: ...
+    def estimate(self, request: LLMRequest, roles: list[str] | str | None = None) -> TokenEstimation:
+        if roles is None:
+            target_roles = list(_ALL_ROLES)
+        elif isinstance(roles, str):
+            target_roles = [roles]
+        else:
+            target_roles = list(roles)
 
+        result: TokenEstimation = {role: _estimate_by_role(request, self._count, role) for role in target_roles}
+        result["total"] = sum(result[r] for r in target_roles)
+        return result
+
+    @abstractmethod
     def _count(self, text: str) -> int:
         raise NotImplementedError
 
@@ -24,9 +36,6 @@ class ClaudeTokenEstimator(BaseTokenEstimator):
     def _count(self, text: str) -> int:
         return int(len(text) / self._CHARS_PER_TOKEN)
 
-    def estimate(self, request: LLMRequest) -> TokenEstimation:
-        return _estimate(request, self._count)
-
 
 class OpenAICompatibleTokenEstimator(BaseTokenEstimator):
     def __init__(self) -> None:
@@ -36,21 +45,43 @@ class OpenAICompatibleTokenEstimator(BaseTokenEstimator):
     def _count(self, text: str) -> int:
         return len(self._enc.encode(text))
 
-    def estimate(self, request: LLMRequest) -> TokenEstimation:
-        return _estimate(request, self._count)
 
-
-def _estimate(request: LLMRequest, count: ...) -> TokenEstimation:
-    result: TokenEstimation = {"system": 0, "tools": 0, "user": 0, "assistant": 0, "tool": 0}
-
-    result["system"] = count(request.system_prompt)
-    result["tools"] = count(json.dumps(request.tools)) if request.tools else 0
-
-    for msg in request.messages:
-        result[msg.role] = result.get(msg.role, 0) + count(msg.content)
-
-    result["total"] = sum(result.values())
-    return result
+def _estimate_by_role(request: LLMRequest, count: ..., role: str) -> int:
+    if role == "system":
+        system_tokens = count(request.system_prompt) + (count(json.dumps(request.tools)) if request.tools else 0)
+        return system_tokens
+    elif role == "user":
+        user_tokens = 0
+        for msg in request.messages:
+            if msg.role == "user":
+                user_tokens += count(msg.content)
+        return user_tokens
+    elif role == "assistant":
+        assistant_tokens = 0
+        for msg in request.messages:
+            if msg.role == "assistant":
+                tokens = count(msg.content)
+                tool_calls = msg.metadata.get("tool_calls")
+                if isinstance(tool_calls, list):
+                    for tc in tool_calls:
+                        tokens += count(tc.get("name") or "")
+                        tokens += count(tc.get("llm_raw_tool_call_id") or "")
+                        args = tc.get("arguments")
+                        if args is not None:
+                            tokens += count(json.dumps(args) if not isinstance(args, str) else args)
+                assistant_tokens += tokens
+        return assistant_tokens
+    elif role == "tool":
+        tool_tokens = 0
+        for msg in request.messages:
+            if msg.role == "tool":
+                tokens = count(msg.content)
+                tokens += count(msg.metadata.get("tool_name") or "")
+                tokens += count(msg.metadata.get("llm_raw_tool_call_id") or "")
+                tool_tokens += tokens
+        return tool_tokens
+    else:
+        raise ValueError(f"Unknown role: {role!r}")
 
 
 class TokenEstimatorFactory:

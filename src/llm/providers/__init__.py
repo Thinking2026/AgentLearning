@@ -1,6 +1,9 @@
 from .claude_api import ClaudeLLMClient
 from .deepseek_api import DeepSeekLLMClient
+from .glm_api import GLMLLMClient
+from .kimi_api import KimiLLMClient
+from .minmax_api import MinMaxLLMClient
 from .openai_api import OpenAILLMClient
 from .qwen_api import QwenLLMClient
 
-__all__ = ["OpenAILLMClient", "QwenLLMClient", "DeepSeekLLMClient", "ClaudeLLMClient"]
+__all__ = ["OpenAILLMClient", "QwenLLMClient", "DeepSeekLLMClient", "ClaudeLLMClient", "MinMaxLLMClient", "GLMLLMClient", "KimiLLMClient"]
