@@ -18,7 +18,6 @@ from schemas import (
 )
 
 if TYPE_CHECKING:
-    from agent.agent_executor import AgentExecutor
     from context.agent_context import AgentContext
     from tools import ToolRegistry
 
@@ -78,16 +77,13 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
     def __init__(self) -> None:
         self._formatter = MessageFormatter()
 
-    def init_context(self, executor: AgentExecutor) -> None:
-        executor.set_system_prompt(self.SYSTEM_PROMPT)
-
     def build_llm_request(
         self,
         agent_context: AgentContext,
         tool_registry: ToolRegistry,
     ) -> LLMRequest:
         return self._formatter.build_request(
-            system_prompt=agent_context.get_system_prompt(),
+            system_prompt=self.SYSTEM_PROMPT,
             conversation=agent_context.get_conversation_history(),
             tools=tool_registry.get_tool_schemas(),
         )

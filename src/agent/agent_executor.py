@@ -272,7 +272,6 @@ class AgentExecutor:
                 AGENT_STRATEGY_NOT_FOUND,
                 f"Unsupported agent strategy: {strategy_name}",
             )
-        strategy.init_context(self)
         return strategy
 
     def _build_truncator(self, config: JsonConfig, tracer: Tracer | None) -> ReActContextTruncator:

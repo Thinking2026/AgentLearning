@@ -15,11 +15,6 @@ if TYPE_CHECKING:
 
 class Strategy(ABC):
     @abstractmethod
-    def init_context(self, executor: AgentExecutor) -> None:
-        """Called once after construction to set strategy-specific system prompt."""
-        raise NotImplementedError
-
-    @abstractmethod
     def build_llm_request(
         self,
         agent_context: AgentContext,
