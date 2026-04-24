@@ -5,8 +5,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable
 
-from schemas.types import BudgetResult, LLMMessage, LLMRequest, ALL_ROLES
-from context.estimator.token_estimator import BaseTokenEstimator, TokenEstimation
+from schemas.types import LLMMessage, LLMRequest
+from context.estimator.token_estimator import BaseTokenEstimator
 from context.budget.token_budget_manager import BaseTokenBudgetManager
 from utils.log.log import Logger, zap
 
@@ -44,6 +44,9 @@ class ReActTruncationConfig:
     tool_arg_max_chars: int = 300
     tool_result_max_chars: int = 500
     summary_provider: str = "deepseek"
+    keep_first_units: int = 1
+    keep_last_units: int = 3
+    summary_ratio: float = 0.20
 
 
 def _parse_reasoning_units(messages: list[LLMMessage]) -> list[ReasoningUnit]:
@@ -111,13 +114,13 @@ class ReActContextTruncator(ContextTruncator):
             raise ValueError("Effective estimator, request, and tool budget must be provided and non-zero")
 
         budget = self._budget_manager.allocate(total_budget)
-        estimation = effective_estimator.estimate(request)
+        estimation = effective_estimator.estimate(request, ["assistant", "tool"])
         msgs = list(request.messages)
 
         #TODO system and user truncation strategies if needed
 
-        assistant_budget = budget.role_budgets.get("assistant").token_budget
-        tool_budget = budget.role_budgets.get("tool").token_budget
+        assistant_budget = budget.role_budgets["assistant"].token_budget
+        tool_budget = budget.role_budgets["tool"].token_budget
 
         self._logger.info(
             "Truncation check",
@@ -130,16 +133,11 @@ class ReActContextTruncator(ContextTruncator):
         tokens_before = estimation["assistant"] + estimation["tool"]
         msgs_before = len(msgs)
 
-        if estimation["assistant"] < assistant_budget and estimation["tool"] < tool_budget:
+        if estimation["assistant"] <= assistant_budget and estimation["tool"] <= tool_budget:
             self._logger.info("No truncation needed, context within budget.")
             return TruncationResult(request=request, compacted_messages=None)
 
-        def fits(m: list[LLMMessage], role: str | list[str] | None) -> bool:
-            est = effective_estimator.estimate(LLMRequest(messages=m), role)
-            if role is None:
-                role = list(ALL_ROLES)
-            
-            return all(est[r] <= budget.role_budgets.get(r).token_budget for r in (role if isinstance(role, list) else [role]))
+        fits = self._make_fits_fn(budget, effective_estimator)
 
         def _log_truncation_result(strategy: str, msgs_after: list[LLMMessage]) -> None:
             est_after = effective_estimator.estimate(LLMRequest(messages=msgs_after), ["assistant", "tool"])
@@ -157,12 +155,12 @@ class ReActContextTruncator(ContextTruncator):
             )
 
         msgs = self._strategy_a_dedup(msgs)
-        if fits(msgs, ["assistant", "tool"]):
+        if fits(msgs):
             _log_truncation_result("Strategy A (dedup)", msgs)
             return self._make_result(request, msgs)
 
         msgs = self._strategy_b_remove_failed(msgs)
-        if fits(msgs, ["assistant", "tool"]):
+        if fits(msgs):
             _log_truncation_result("Strategy B (remove failed)", msgs)
             return self._make_result(request, msgs)
 
@@ -172,24 +170,24 @@ class ReActContextTruncator(ContextTruncator):
             msgs = self._strategy_c_trim_args(msgs)
         if est["tool"] > tool_budget:
             msgs = self._strategy_d_trim_results(msgs)
-        if fits(msgs, ["assistant", "tool"]):
+        if fits(msgs):
             _log_truncation_result("Strategy C/D (trim args/results)", msgs)
             return self._make_result(request, msgs)
 
-        if dropped := self._strategy_e_binary_drop(msgs, budget, effective_estimator):
-            if fits(dropped, ["assistant", "tool"]):
+        if dropped := self._strategy_e_binary_drop(msgs, fits):
+            if fits(dropped):
                 _log_truncation_result("Strategy E (binary drop)", dropped)
                 return self._make_result(request, dropped)
 
         if summarized := self._strategy_f_summarize(msgs):
             msgs = summarized
-            if fits(msgs, ["assistant", "tool"]):
+            if fits(msgs):
                 _log_truncation_result("Strategy F (summarize)", msgs)
                 return self._make_result(request, msgs)
 
-        if dropped := self._strategy_e_binary_drop(msgs, budget, effective_estimator):
+        if dropped := self._strategy_e_binary_drop(msgs, fits):
             msgs = dropped
-            if not fits(msgs, ["assistant", "tool"]):
+            if not fits(msgs):
                 est_after = effective_estimator.estimate(LLMRequest(messages=msgs), ["assistant", "tool"])
                 tokens_after = est_after["assistant"] + est_after["tool"]
                 ratio = (tokens_before - tokens_after) / tokens_before if tokens_before > 0 else 0.0
@@ -221,34 +219,39 @@ class ReActContextTruncator(ContextTruncator):
         if not drop_units:
             return messages
 
-        self._logger.info("Strategy A: removing duplicate reasoning units", dropped=len(drop_units))
         keep_msgs = {id(m) for i, u in enumerate(units) if i not in drop_units for m in _unit_to_messages(u)}
         unit_msg_ids = {id(m) for u in units for m in _unit_to_messages(u)}
         return [m for m in messages if id(m) not in unit_msg_ids or id(m) in keep_msgs]
 
     # ------------------------------------------------------------------
-    # Strategy B: remove failed reasoning units
+    # Strategy B: remove failed reasoning units (middle only)
     # ------------------------------------------------------------------
 
     def _strategy_b_remove_failed(self, messages: list[LLMMessage]) -> list[LLMMessage]:
         units = _parse_reasoning_units(messages)
-        failed_ids = {id(m) for u in units if _has_failed_tool(u) for m in _unit_to_messages(u)}
+        _, middle_units, _ = self._get_middle_units(units)
+        if not middle_units:
+            return messages
+        failed_ids = {id(m) for u in middle_units if _has_failed_tool(u) for m in _unit_to_messages(u)}
         if not failed_ids:
             return messages
         return [m for m in messages if id(m) not in failed_ids]
 
     # ------------------------------------------------------------------
-    # Strategy C: trim oversized tool call arguments
+    # Strategy C: trim oversized tool call arguments (middle only)
     # ------------------------------------------------------------------
 
     def _strategy_c_trim_args(self, messages: list[LLMMessage]) -> list[LLMMessage]:
         units = _parse_reasoning_units(messages)
-        latest_ids = {id(m) for m in _unit_to_messages(units[-1])} if units else set()
+        _, middle_units, _ = self._get_middle_units(units)
+        if not middle_units:
+            return messages
+        middle_ids = {id(m) for u in middle_units for m in _unit_to_messages(u)}
 
         result: list[LLMMessage] = []
         limit = self._cfg.tool_arg_max_chars
         for msg in messages:
-            if id(msg) in latest_ids or msg.role != "assistant" or not msg.metadata.get("tool_calls"):
+            if id(msg) not in middle_ids or msg.role != "assistant" or not msg.metadata.get("tool_calls"):
                 result.append(msg)
                 continue
             new_calls = []
@@ -274,17 +277,20 @@ class ReActContextTruncator(ContextTruncator):
         return result
 
     # ------------------------------------------------------------------
-    # Strategy D: trim oversized tool results
+    # Strategy D: trim oversized tool results (middle only)
     # ------------------------------------------------------------------
 
     def _strategy_d_trim_results(self, messages: list[LLMMessage]) -> list[LLMMessage]:
         units = _parse_reasoning_units(messages)
-        latest_ids = {id(m) for m in _unit_to_messages(units[-1])} if units else set()
+        _, middle_units, _ = self._get_middle_units(units)
+        if not middle_units:
+            return messages
+        middle_ids = {id(m) for u in middle_units for m in _unit_to_messages(u)}
 
         result: list[LLMMessage] = []
         limit = self._cfg.tool_result_max_chars
         for msg in messages:
-            if id(msg) not in latest_ids and msg.role == "tool" and len(msg.content) > limit:
+            if id(msg) in middle_ids and msg.role == "tool" and len(msg.content) > limit:
                 result.append(LLMMessage(
                     role=msg.role,
                     content=msg.content[:limit] + "(trimmed because too long)",
@@ -301,23 +307,20 @@ class ReActContextTruncator(ContextTruncator):
     def _strategy_e_binary_drop(
         self,
         messages: list[LLMMessage],
-        budget: BudgetResult,
-        estimator: BaseTokenEstimator,
+        fits: Callable[[list[LLMMessage]], bool],
     ) -> list[LLMMessage] | None:
         units = _parse_reasoning_units(messages)
-        if len(units) <= 2:
+        _, middle_units, _ = self._get_middle_units(units)
+        if not middle_units:
             return None
 
-        middle_units = units[1:-1]
-        max_drop = max(1, len(middle_units) // 10)
-
-        lo, hi = 1, max_drop
+        lo, hi = 1, len(middle_units)
         best: list[LLMMessage] | None = None
 
         while lo <= hi:
             k = (lo + hi) // 2
             candidate = self._drop_oldest_k(messages, units, middle_units, k)
-            if self._fits(candidate, budget, estimator):
+            if fits(candidate):
                 best = candidate
                 hi = k - 1
             else:
@@ -337,7 +340,7 @@ class ReActContextTruncator(ContextTruncator):
         return [m for m in messages if id(m) not in unit_ids or id(m) not in drop_ids]
 
     # ------------------------------------------------------------------
-    # Strategy F: LLM summary of middle 30% units
+    # Strategy F: LLM summary of oldest summary_ratio fraction of middle units
     # ------------------------------------------------------------------
 
     def _strategy_f_summarize(
@@ -345,15 +348,12 @@ class ReActContextTruncator(ContextTruncator):
         messages: list[LLMMessage],
     ) -> list[LLMMessage] | None:
         units = _parse_reasoning_units(messages)
-        if len(units) < 3:
+        _, middle_units, _ = self._get_middle_units(units)
+        if not middle_units:
             return None
 
-        n = len(units)
-        start = max(1, n // 2 - n // 6)
-        end = min(n - 1, start + max(1, n * 3 // 10))
-        summary_units = units[start:end]
-        if not summary_units:
-            return None
+        n_to_summarize = max(1, int(len(middle_units) * self._cfg.summary_ratio))
+        summary_units = middle_units[:n_to_summarize]
 
         summary_msgs = [m for u in summary_units for m in _unit_to_messages(u)]
         summary_msg = self._call_summary_llm(summary_msgs)
@@ -391,6 +391,7 @@ class ReActContextTruncator(ContextTruncator):
                 tools=[],
             )
             response = client.generate(summary_request)
+            self._logger.info("Strategy F: summary LLM response", content=response.assistant_message.content)
             return LLMMessage(
                 role="assistant",
                 content=response.assistant_message.content,
@@ -404,12 +405,16 @@ class ReActContextTruncator(ContextTruncator):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _fits(self, messages: list[LLMMessage], budget: BudgetResult, estimator: BaseTokenEstimator) -> bool:#TODO 有BUG修复
-        candidate = LLMRequest(
-            messages=messages,
-        )
-        estimation = estimator.estimate(candidate)
-        return estimation["total"] <= budget.available_tokens
+    def _get_middle_units(
+        self, units: list[ReasoningUnit]
+    ) -> tuple[list[ReasoningUnit], list[ReasoningUnit], list[ReasoningUnit]]:
+        kf = self._cfg.keep_first_units
+        kl = self._cfg.keep_last_units
+        head = units[:kf]
+        end_idx = len(units) - kl if kl > 0 else len(units)
+        tail = units[end_idx:] if kl > 0 else []
+        middle = units[kf:end_idx]
+        return head, middle, tail
 
     def _make_result(self, request: LLMRequest, messages: list[LLMMessage]) -> TruncationResult:
         new_request = LLMRequest(
@@ -418,6 +423,15 @@ class ReActContextTruncator(ContextTruncator):
             tools=request.tools,
         )
         return TruncationResult(request=new_request, compacted_messages=messages)
+
+    def _make_fits_fn(self, budget, estimator: BaseTokenEstimator) -> Callable[[list[LLMMessage]], bool]:
+        def fits(m: list[LLMMessage]) -> bool:
+            est = estimator.estimate(LLMRequest(messages=m), ["assistant", "tool"])
+            return (
+                est["assistant"] <= budget.role_budgets["assistant"].token_budget
+                and est["tool"] <= budget.role_budgets["tool"].token_budget
+            )
+        return fits
 
 
 class TruncatorFactory:
@@ -438,6 +452,9 @@ class TruncatorFactory:
                     config.get("context_truncation.react.summary_provider", "deepseek")
                     if config is not None else "deepseek"
                 ),
+                keep_first_units=int(config.get("context_truncation.react.keep_first_units", 1)) if config is not None else 1,
+                keep_last_units=int(config.get("context_truncation.react.keep_last_units", 3)) if config is not None else 3,
+                summary_ratio=float(config.get("context_truncation.react.summary_ratio", 0.20)) if config is not None else 0.20,
             )
             return ReActContextTruncator(budget_manager, llm_client_factory, logger, trunc_cfg)
         raise ValueError(f"Unknown truncation strategy: {strategy!r}")
