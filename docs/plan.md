@@ -108,6 +108,7 @@
 - [TODO]工具注册那里没有提供显示的注册能力，数据库工具注册那里恶心需要统一化
 - [Done]两个问题：（1）Strategy A触发说msg减去1，但是StrageC/D打印msg减2 （2）裁剪器里fits函数重构统一
 - [TODO]策略插入修改prompt，比如重复推理单元多，自修复能力等插值
+- [TODO]ReAct结合CoT和Plan-and-Execute必须要做
 
 ## ReAct Agent裁剪上下文设计
 - 根据token预算触发裁剪
