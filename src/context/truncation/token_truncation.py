@@ -410,6 +410,8 @@ class ReActContextTruncator(ContextTruncator):
     ) -> tuple[list[ReasoningUnit], list[ReasoningUnit], list[ReasoningUnit]]:
         kf = self._cfg.keep_first_units
         kl = self._cfg.keep_last_units
+        if len(units) < kf + kl:
+            return [], [], []
         head = units[:kf]
         end_idx = len(units) - kl if kl > 0 else len(units)
         tail = units[end_idx:] if kl > 0 else []
