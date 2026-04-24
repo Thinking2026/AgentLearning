@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from agent.strategy.impl.react.message_formatter import MessageFormatter
 from context.estimator.token_estimator import ClaudeTokenEstimator
 from context.truncation.token_truncation import (
     ReActContextTruncator,
@@ -156,6 +157,40 @@ def test_strategy_b_empty_middle_returns_unchanged():
     msgs = units_to_messages(units)
     result = t._strategy_b_remove_failed(msgs)
     assert result is msgs  # unchanged
+
+
+def test_strategy_b_recognizes_failed_tool_message_from_formatter():
+    cfg = ReActTruncationConfig(keep_first_units=1, keep_last_units=1)
+    t = make_truncator(cfg)
+    formatter = MessageFormatter()
+    tc_id = "tc_mid"
+
+    head = make_unit("head", "a", "ok", success=True)
+    assistant = LLMMessage(
+        role="assistant",
+        content="",
+        metadata={
+            "tool_calls": [
+                {"name": "mid", "arguments": {"q": "a"}, "llm_raw_tool_call_id": tc_id}
+            ]
+        },
+    )
+    failed_tool_msg = formatter.format_tool_observation(
+        tool_name="mid",
+        output="failed",
+        success=False,
+        llm_raw_tool_call_id=tc_id,
+    )
+    middle = ReasoningUnit(assistant_msg=assistant, tool_msgs=[failed_tool_msg])
+    tail = make_unit("tail", "a", "ok", success=True)
+
+    msgs = units_to_messages([head, middle, tail])
+    result = t._strategy_b_remove_failed(msgs)
+
+    removed_ids = {id(m) for m in _unit_to_messages(middle)}
+    assert len(result) == len(msgs) - 2
+    for m in result:
+        assert id(m) not in removed_ids
 
 
 # ---------------------------------------------------------------------------

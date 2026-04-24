@@ -22,6 +22,7 @@ class MessageFormatter:
         self,
         tool_name: str,
         output: str,
+        success: bool = True,
         llm_raw_tool_call_id: str | None = None,
     ) -> LLMMessage:
         return LLMMessage(
@@ -29,6 +30,7 @@ class MessageFormatter:
             content=output,
             metadata={
                 "tool_name": tool_name,
+                "success": success,
                 "llm_raw_tool_call_id": llm_raw_tool_call_id,
             },
         )

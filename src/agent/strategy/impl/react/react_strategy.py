@@ -130,5 +130,6 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
         return self._formatter.format_tool_observation(
             tool_name=tool_call.name,
             output=result.output,
+            success=result.success,
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
         )
