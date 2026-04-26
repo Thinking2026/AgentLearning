@@ -158,11 +158,13 @@ class ReActContextTruncator(ContextTruncator):
         if fits(msgs):
             _log_truncation_result("Strategy A (dedup)", msgs)
             return self._make_result(request, msgs)
+        self._logger.info("Strategy A insufficient, trying B")
 
         msgs = self._strategy_b_remove_failed(msgs)
         if fits(msgs):
             _log_truncation_result("Strategy B (remove failed)", msgs)
             return self._make_result(request, msgs)
+        self._logger.info("Strategy B insufficient, trying C/D")
 
         # C and D are applied selectively based on which role is over budget
         est = effective_estimator.estimate(LLMRequest(messages=msgs), ["assistant", "tool"])
@@ -173,17 +175,20 @@ class ReActContextTruncator(ContextTruncator):
         if fits(msgs):
             _log_truncation_result("Strategy C/D (trim args/results)", msgs)
             return self._make_result(request, msgs)
+        self._logger.info("Strategy C/D insufficient, trying E")
 
         if dropped := self._strategy_e_binary_drop(msgs, fits):
             if fits(dropped):
                 _log_truncation_result("Strategy E (binary drop)", dropped)
                 return self._make_result(request, dropped)
+        self._logger.info("Strategy E insufficient, trying F")
 
         if summarized := self._strategy_f_summarize(msgs):
             msgs = summarized
             if fits(msgs):
                 _log_truncation_result("Strategy F (summarize)", msgs)
                 return self._make_result(request, msgs)
+        self._logger.info("Strategy F insufficient, retrying E after summarize")
 
         if dropped := self._strategy_e_binary_drop(msgs, fits):
             msgs = dropped
