@@ -26,7 +26,7 @@ from schemas import (
 from schemas.message_convert import ui_to_llm
 from infra.db import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from infra.db.bootstrap_documents import load_seed_documents
-from agent.strategy.decision import FinalAnswer, InvokeTools, ResponseTruncated
+from agent.strategy.decision import FinalAnswer, ResponseTruncated
 from agent.strategy.impl import ReActStrategy
 from llm import (
     BaseLLMClient,
@@ -128,6 +128,7 @@ class AgentExecutor:
         )
 
         config_reader = ConfigValueReader(config)
+        self._tracer = tracer
         self._storage_registry = self._build_storage_registry(config)
         self._tool_registry = self._build_tool_registry(config, config_reader, tracer, logger)
         self._llm_provider_router = self._build_llm_provider_router(config, tracer)
@@ -286,7 +287,8 @@ class AgentExecutor:
             provider_name = client.provider_name
             estimator = TokenEstimatorFactory.get_estimator(provider_name)
             total_budget = self._get_provider_context_window(provider_name)
-            trunc_result = self._truncator.truncate(request, total_budget, estimator)
+            with self._start_span("context.truncate", {"provider": provider_name, "total_budget": total_budget}):
+                trunc_result = self._truncator.truncate(request, total_budget, estimator)
             current_request = trunc_result.request
             attempt = 0
 
@@ -333,16 +335,28 @@ class AgentExecutor:
                         continue  # retry without incrementing attempt
 
                     if exc.category == ErrorCategory.RESPONSE:
+                        self._logger.info(
+                            "Attempting self-repair",
+                            zap.any("provider", provider_name),
+                            zap.any("error", exc.message[:200]),
+                        )
                         repaired = _try_self_repair(client, current_request, exc)
                         if repaired is not None:
                             self._logger.info("Self-repair succeeded", zap.any("provider", provider_name))
                             return repaired
+                        self._logger.warning("Self-repair failed", zap.any("provider", provider_name))
                         break  # self-repair failed, skip to next provider
 
                     # TRANSIENT or RATE_LIMIT — backoff and retry
                     attempt += 1
                     if attempt < cfg.retry_max_attempts:
                         delay = exc.retry_after if exc.retry_after is not None else _backoff(cfg, attempt - 1)
+                        self._logger.info(
+                            "LLM retry backoff",
+                            zap.any("provider", provider_name),
+                            zap.any("attempt", attempt),
+                            zap.any("delay_seconds", round(delay, 2)),
+                        )
                         time.sleep(delay)
 
         raise build_error(
@@ -361,8 +375,15 @@ class AgentExecutor:
         defaults = {"claude": 200000, "deepseek": 64000, "openai": 128000}
         return defaults.get(provider_name, 32000)
 
+    def _start_span(self, name: str, attributes: dict | None = None):
+        from runtime.tracing import Span
+        if self._tracer is None:
+            return Span(None)
+        return self._tracer.start_span(name=name, type="agent", attributes=attributes)
+
     def _build_strategy(self, config: JsonConfig) -> Strategy:
         strategy_name = str(config.get("agent.strategy", "react")).strip()
+        self._logger.info("Agent strategy selected", zap.any("strategy", strategy_name))
         if strategy_name == "react":
             strategy = ReActStrategy()
         else:

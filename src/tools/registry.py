@@ -58,8 +58,14 @@ class ToolRegistry:
         module_names: list[str] | None = None,
         package_name: str | None = None,
     ) -> None:
-        for tool in discover_tools(module_names=module_names, package_name=package_name):
+        tools = discover_tools(module_names=module_names, package_name=package_name)
+        for tool in tools:
             self.register(tool)
+        self._logger.info(
+            "Tools auto-registered",
+            zap.any("count", len(tools)),
+            zap.any("names", [t.name for t in tools]),
+        )
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
@@ -74,6 +80,11 @@ class ToolRegistry:
         arguments: dict[str, Any],
         llm_raw_tool_call_id: str | None = None,
     ) -> ToolResult:
+        self._logger.info(
+            "Tool execution start",
+            zap.any("tool_name", name),
+            zap.any("argument_keys", list(arguments.keys())),
+        )
         tool_call = ToolCall(
             name=name,
             arguments=arguments,

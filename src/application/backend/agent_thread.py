@@ -72,6 +72,11 @@ class AgentThread(threading.Thread):
                     and self._executor is not None
                     and self._cur_attempt_iterations > self._max_attempt_iterations
                 ):
+                    self._logger.warning(
+                        "Max attempt iterations exceeded, aborting session",
+                        zap.any("cur_iterations", self._cur_attempt_iterations),
+                        zap.any("max_iterations", self._max_attempt_iterations),
+                    )
                     completion_message = UIMessage(
                         role="assistant",
                         content="Sorry, this question is too hard, i can not solve",

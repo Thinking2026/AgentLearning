@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+
+from llm.llm_api import classify_http_error, classify_agent_error, RetryConfig
+from llm.registry import LLMProviderRegistry
+from llm.routing.provider_router import LLMProviderRouter, RoutingDecision
+from schemas.errors import (
+    AgentError,
+    HttpError,
+    LLMError,
+    LLMErrorCode,
+    ErrorCategory,
+    LLM_NETWORK_ERROR,
+    LLM_TIMEOUT,
+    LLM_RESPONSE_PARSE_ERROR,
+    LLM_RESPONSE_ERROR,
+    LLM_CONFIG_ERROR,
+)
+from schemas.types import LLMRequest
+
+
+# ---------------------------------------------------------------------------
+# classify_http_error
+# ---------------------------------------------------------------------------
+
+def test_classify_429_is_rate_limited():
+    exc = HttpError(status=429, body="too many requests", retry_after=10.0)
+    err = classify_http_error(exc)
+    assert err.code == LLMErrorCode.RATE_LIMITED
+    assert err.category == ErrorCategory.RATE_LIMIT
+    assert err.retry_after == pytest.approx(10.0)
+
+
+def test_classify_401_is_auth_failed():
+    exc = HttpError(status=401, body="unauthorized")
+    err = classify_http_error(exc)
+    assert err.code == LLMErrorCode.AUTH_FAILED
+    assert err.category == ErrorCategory.AUTH
+
+
+def test_classify_403_is_auth_failed():
+    exc = HttpError(status=403, body="forbidden")
+    err = classify_http_error(exc)
+    assert err.code == LLMErrorCode.AUTH_FAILED
+
+
+def test_classify_400_context_too_long():
+    exc = HttpError(status=400, body="context_length_exceeded: too many tokens")
+    err = classify_http_error(exc)
+    assert err.code == LLMErrorCode.CONTEXT_TOO_LONG
+    assert err.category == ErrorCategory.CONTEXT
+
+
+def test_classify_400_context_too_long_variant():
+    exc = HttpError(status=400, body="maximum context length exceeded")
+    err = classify_http_error(exc)
+    assert err.code == LLMErrorCode.CONTEXT_TOO_LONG
+
+
+def test_classify_500_is_http_5xx():
+    exc = HttpError(status=500, body="internal server error")
+    err = classify_http_error(exc)
+    assert err.code == LLMErrorCode.HTTP_5XX
+    assert err.category == ErrorCategory.TRANSIENT
+
+
+def test_classify_400_non_context_is_5xx():
+    exc = HttpError(status=400, body="bad request unrelated")
+    err = classify_http_error(exc)
+    assert err.code == LLMErrorCode.HTTP_5XX
+
+
+# ---------------------------------------------------------------------------
+# classify_agent_error
+# ---------------------------------------------------------------------------
+
+def test_classify_network_error():
+    exc = AgentError(code=LLM_NETWORK_ERROR, message="connection refused")
+    err = classify_agent_error(exc)
+    assert err.code == LLMErrorCode.NETWORK_ERROR
+    assert err.category == ErrorCategory.TRANSIENT
+
+
+def test_classify_timeout():
+    exc = AgentError(code=LLM_TIMEOUT, message="timed out")
+    err = classify_agent_error(exc)
+    assert err.code == LLMErrorCode.TIMEOUT
+
+
+def test_classify_response_parse_error():
+    exc = AgentError(code=LLM_RESPONSE_PARSE_ERROR, message="parse failed")
+    err = classify_agent_error(exc)
+    assert err.code == LLMErrorCode.RESPONSE_PARSE_ERROR
+
+
+def test_classify_response_error():
+    exc = AgentError(code=LLM_RESPONSE_ERROR, message="bad response")
+    err = classify_agent_error(exc)
+    assert err.code == LLMErrorCode.RESPONSE_ERROR
+
+
+def test_classify_config_error():
+    exc = AgentError(code=LLM_CONFIG_ERROR, message="missing key")
+    err = classify_agent_error(exc)
+    assert err.code == LLMErrorCode.CONFIG_ERROR
+
+
+def test_classify_unknown_agent_error_defaults_to_response_error():
+    exc = AgentError(code="SOME_UNKNOWN_CODE", message="unknown")
+    err = classify_agent_error(exc)
+    assert err.code == LLMErrorCode.RESPONSE_ERROR
+
+
+# ---------------------------------------------------------------------------
+# RetryConfig
+# ---------------------------------------------------------------------------
+
+def test_retry_config_defaults():
+    cfg = RetryConfig()
+    assert cfg.retry_base == pytest.approx(0.5)
+    assert cfg.retry_max_delay == pytest.approx(60.0)
+    assert cfg.retry_max_attempts == 5
+
+
+def test_retry_config_custom():
+    cfg = RetryConfig(retry_base=1.0, retry_max_delay=30.0, retry_max_attempts=3)
+    assert cfg.retry_max_attempts == 3
+
+
+def test_retry_config_zero_attempts_raises():
+    with pytest.raises(Exception):
+        RetryConfig(retry_max_attempts=0)
+
+
+# ---------------------------------------------------------------------------
+# LLMProviderRegistry
+# ---------------------------------------------------------------------------
+
+def make_mock_provider(name: str):
+    provider = MagicMock()
+    provider.provider_name = name
+    return provider
+
+
+def test_registry_register_and_get():
+    registry = LLMProviderRegistry()
+    p = make_mock_provider("claude")
+    registry.register(p)
+    assert registry.get("claude") is p
+
+
+def test_registry_get_unknown_raises():
+    registry = LLMProviderRegistry()
+    with pytest.raises(Exception, match="Unknown LLM provider"):
+        registry.get("nonexistent")
+
+
+def test_registry_list_providers():
+    registry = LLMProviderRegistry()
+    registry.register(make_mock_provider("claude"))
+    registry.register(make_mock_provider("openai"))
+    providers = registry.list_providers()
+    assert sorted(providers) == ["claude", "openai"]
+
+
+def test_registry_init_with_providers():
+    p1 = make_mock_provider("claude")
+    p2 = make_mock_provider("openai")
+    registry = LLMProviderRegistry([p1, p2])
+    assert registry.get("claude") is p1
+    assert registry.get("openai") is p2
+
+
+def test_registry_overwrite_provider():
+    registry = LLMProviderRegistry()
+    p1 = make_mock_provider("claude")
+    p2 = make_mock_provider("claude")
+    registry.register(p1)
+    registry.register(p2)
+    assert registry.get("claude") is p2
+
+
+# ---------------------------------------------------------------------------
+# LLMProviderRouter
+# ---------------------------------------------------------------------------
+
+def make_router(names: list[str], enable_fallback: bool = False) -> LLMProviderRouter:
+    registry = LLMProviderRegistry()
+    for name in names:
+        registry.register(make_mock_provider(name))
+    return LLMProviderRouter(registry, priority_chain=names, enable_fallback=enable_fallback)
+
+
+def test_router_primary_is_first():
+    router = make_router(["claude", "openai"])
+    req = LLMRequest(messages=[])
+    decision = router.route(req)
+    assert decision.primary.provider_name == "claude"
+
+
+def test_router_no_fallback_by_default():
+    router = make_router(["claude", "openai"], enable_fallback=False)
+    req = LLMRequest(messages=[])
+    decision = router.route(req)
+    assert decision.fallbacks == []
+
+
+def test_router_with_fallback():
+    router = make_router(["claude", "openai", "deepseek"], enable_fallback=True)
+    req = LLMRequest(messages=[])
+    decision = router.route(req)
+    assert decision.primary.provider_name == "claude"
+    assert len(decision.fallbacks) == 2
+    assert decision.fallbacks[0].provider_name == "openai"
+    assert decision.fallbacks[1].provider_name == "deepseek"
+
+
+def test_router_single_provider_no_fallbacks():
+    router = make_router(["claude"], enable_fallback=True)
+    req = LLMRequest(messages=[])
+    decision = router.route(req)
+    assert decision.primary.provider_name == "claude"
+    assert decision.fallbacks == []
+
+
+def test_router_empty_priority_chain_raises():
+    registry = LLMProviderRegistry()
+    with pytest.raises(Exception):
+        LLMProviderRouter(registry, priority_chain=[])
