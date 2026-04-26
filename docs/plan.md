@@ -109,6 +109,9 @@
 - [Done]两个问题：（1）Strategy A触发说msg减去1，但是StrageC/D打印msg减2 （2）裁剪器里fits函数重构统一
 - [TODO]策略插入修改prompt，比如重复推理单元多，自修复能力等插值
 - [TODO]ReAct结合CoT和Plan-and-Execute必须要做
+- [TODO]在agent runtime上构建管道式任务
+- [TODO]主动智能，不要等用户来用，而是先一步帮他完成；context情景智能，收集信息，必要时使用；无感交互，不改变用户行为习惯更好解决问题
+- [TODO]Agent执行完一个工具调用需要更新memory?
 
 ## ReAct Agent裁剪上下文设计
 - 根据token预算触发裁剪
