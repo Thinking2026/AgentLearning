@@ -4,7 +4,7 @@ BIN_DIR ?= bin
 BINARY_NAME ?= nanoagent
 BINARY_PATH := $(BIN_DIR)/$(BINARY_NAME)
 
-.PHONY: install install-chromadb install-dev run check compile
+.PHONY: install install-chromadb install-dev run check compile test test-check
 
 install:
 	@$(PIP) install -r requirements.txt
@@ -35,3 +35,10 @@ compile: check
 		> $(BINARY_PATH)
 	@chmod +x $(BINARY_PATH)
 	@echo "Built $(BINARY_PATH)"
+
+test-check:
+	@$(PYTHON) -m compileall tests/ >/dev/null
+	@echo "Test compile check passed."
+
+test: test-check
+	@$(PYTHON) -m pytest tests/ -v

@@ -247,6 +247,7 @@ class ExcelTool(BaseTool):
             elif len(workbook.sheetnames) == 1 and workbook.active.max_row == 1 and workbook.active.max_column == 1 and workbook.active["A1"].value is None:
                 sheet = workbook.active
                 sheet.title = target_sheet_name
+                sheet.delete_rows(1)  # remove phantom empty row openpyxl adds to new workbooks
             else:
                 sheet = workbook.create_sheet(title=target_sheet_name)
             for row in rows:
