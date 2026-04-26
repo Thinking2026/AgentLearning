@@ -223,14 +223,16 @@ def test_search_includes_note_field(tool):
 # ---------------------------------------------------------------------------
 
 def test_provider_not_installed_error(tool):
-    import sys
-    import importlib
-    original = sys.modules.pop("ddgs", None)
-    try:
+    import builtins
+    real_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if name == "ddgs":
+            raise ModuleNotFoundError("No module named 'ddgs'")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", side_effect=mock_import):
         result = tool.run({"query": "test"})
-    finally:
-        if original is not None:
-            sys.modules["ddgs"] = original
     assert not result.success
     assert result.error.code == SEARCH_TOOL_PROVIDER_ERROR
 
@@ -254,9 +256,7 @@ def test_timeout_error(tool):
     with patch("ddgs.DDGS", return_value=mock_ddgs):
         result = tool.run({"query": "test"})
     assert not result.success
-    assert result.error.code == SEARCH_TOOL_PROVIDER_ERROR
-    assert not result.success
-    assert result.error.code == SEARCH_TOOL_PROVIDER_ERROR
+    assert result.error.code == SEARCH_TOOL_TIMEOUT
 
 
 # ---------------------------------------------------------------------------
