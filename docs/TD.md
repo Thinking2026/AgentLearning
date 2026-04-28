@@ -211,7 +211,7 @@ TaskReceived (E1)
 | E12  | TaskCancelled | UC-2 | Task | 取消是任务级终态，由 Task 状态机保证不可恢复 |
 | E13  | TaskTerminated | UC-5C | Task | 终止是任务级终态，与 TaskCancelled 同属 Task 状态机 |
 | E14  | TaskStepCompleted | 主干流程 | TaskStep | 步骤完成是步骤生命周期终态，由 TaskStep 保证状态不可逆 |
-| E15  | TaskStepSkipped | 主干流程 | TaskExecution | 跳过决策在 TaskExecution 调用 StartStepExecution 之前做出，不进入步骤层 |
+| E15  | TaskStepFailed | 主干流程 | TaskStep | 这一步失败了，比如工具调用超过指定次数，推理超过指定次数等等 |
 | E16  | TaskStepInterrupted | UC-3 | TaskStep | 中断是步骤生命周期终态，由 TaskStep 保证只能在 Running 状态触发 |
 | E18  | TaskQualityCheckPassed | 主干流程 | TaskExecution | 质检是执行完成后的验收，由 TaskExecution 保证所有步骤完成才能触发 |
 | E19  | TaskQualityCheckFailed | Agent能力3 | TaskExecution | 与 Passed 同属质检事务边界 |
@@ -459,8 +459,8 @@ TaskReceived (E1)
 | SE11 | ToolCallSucceeded | 工具调用成功，结果已返回 |
 | SE12 | ToolCallFailed | 工具调用失败（B类：需等待 C类：不可恢复）；A类失败（可立即重试）不产生此事件，错误信息直接注入上下文由 LLM 决策 |
 | SE13 | ToolResultInjected | 工具结果（成功或失败错误信息）已注入上下文，准备下一轮推理 |
-| SE14 | StepGoalAchieved | Agent 判断本步骤目标已达成，推理循环结束 |
-| SE15 | StepGoalUnachievable | 步骤目标无法达成（工具调用 C类失败 / 工具调用次数超限 / 推理循环达到上限） |
+| SE14 |  | Agent 判断本步骤目标已达成，推理循环结束 |
+| SE15 |  | 步骤目标无法达成（工具调用 C类失败 / 工具调用次数超限 / 推理循环达到上限） |
 | SE16 | StepResultProduced | 步骤最终结果已产出，准备进入步骤结果评测 |
 | SE17 | StepResultEvaluated | 步骤结果评测通过，结果符合步骤目标，准备交付给任务层 |
 | SE18 | StepResultEvaluationFailed | 步骤结果评测未通过，结果未达到步骤目标，需要重试步骤或上报任务层重规划 |
@@ -817,17 +817,17 @@ E1   TaskReceived
                     │                                         │                 │                 └─► [回到 SE5，下一轮推理]
                     │                                         │                 ├─ A类失败 ─► SE13 ToolResultInjected（错误信息，LLM决策）
                     │                                         │                 │              └─► [回到 SE5，LLM决定重试或换策略]
-                    │                                         │                 ├─ B类失败 ─► SE12 ToolCallFailed → SE15 StepGoalUnachievable
-                    │                                         │                 └─ C类失败 ─► SE12 ToolCallFailed → SE15 StepGoalUnachievable
+                    │                                         │                 ├─ B类失败 ─► SE12 ToolCallFailed → E14  TaskStepFailed
+                    │                                         │                 └─ C类失败 ─► SE12 ToolCallFailed → E14  TaskStepFailed
                     │                                         ├─ (目标未达成，无工具调用)
                     │                                         │   └─► [回到 SE5，下一轮推理（合法的多轮推理）]
                     │                                         └─ (目标达成)
-                    │                                             └─► SE14 StepGoalAchieved
+                    │                                             └─► E14 TaskStepCompleted
                     │                                                   └─► SE16 StepResultProduced
                     │                                                         └─► SE17 StepResultEvaluated（评测通过）
                     │   ── 步骤层结束，衔接任务层 ──────────────────────────────────
                     │
-                    ├─ 前序已达成本步目标 ─► E15  TaskStepSkipped（不进入步骤层）
+                  
                     └─ 正常完成          ─► E14  TaskStepCompleted
                     E22  TaskExecutionSnapshotSaved（异步，随时触发）
                     └─► [下一步骤，重复步骤循环]
@@ -858,10 +858,11 @@ E1   TaskReceived
 ```
 
 **UC-5B B类异常暂停与恢复**
+
 ```
 [步骤层推理循环中]
   SE12 ToolCallFailed（B类，需等待恢复）
-    └─► SE15 StepGoalUnachievable（步骤层上报任务层）
+    └─► SE15 TaskStepFailed（步骤层上报任务层）
           └─► E10  TaskPaused（任务层暂停）
                 └─► [等待异常恢复]
                       E5   UserResumeRequestProvided
@@ -873,7 +874,7 @@ E1   TaskReceived
 ```
 [步骤层推理循环中]
   SE12 ToolCallFailed（C类，不可恢复）
-    └─► SE15 StepGoalUnachievable（步骤层上报任务层）
+    └─► SE15 TaskStepFailed（步骤层上报任务层）
           └─► E13  TaskTerminated（终态，不可恢复，不可 resume）
 ```
 
@@ -892,7 +893,7 @@ E1   TaskReceived
 [步骤层 SE16 StepResultProduced 之后]
   SE18 StepResultEvaluationFailed
     ├─ 未超重试上限 ─► [回到 SE1，重新执行本步骤]
-    └─ 超过重试上限 ─► SE15 StepGoalUnachievable
+    └─ 超过重试上限 ─► SE15 TaskStepFailed
                           ├─ 可重规划 ─► E7  TaskPlanUpdated → E8 TaskExecutionStarted
                           └─ 不可恢复 ─► E13 TaskTerminated
 ```
@@ -900,7 +901,7 @@ E1   TaskReceived
 **工具调用次数超限**
 ```
 [步骤层推理循环中，工具调用次数达到上限]
-  SE15 StepGoalUnachievable（由 StepExecution 计数器触发）
+  SE15 TaskStepFailed（由 StepExecution 计数器触发）
     └─► [同上，上报任务层处理]
 ```
 
@@ -972,4 +973,567 @@ ReasoningCompleted (SE7)（目标未达成，无工具调用）
 终止条件由规则 SR1 保证：必须以 `StepGoalAchieved` 或 `StepGoalUnachievable` 结束，不允许无限循环。
 
 # 限界上下文划分
+
+### 划分原则
+
+本系统的限界上下文划分遵循以下原则：
+
+**业务能力内聚**：将围绕同一业务能力、共享同一语言模型（Ubiquitous Language）的聚合归入同一上下文。不同上下文中相同术语（如"步骤"）可以有不同含义，边界内保持语义一致。
+
+**变化频率对齐**：产品交互层（任务生命周期、用户感知）与 Agent 执行层（推理循环、工具调用）的变化驱动力不同，前者由产品需求驱动，后者由 AI 能力演进驱动，应分属不同上下文。
+
+**团队自治**：每个上下文可由独立团队负责，减少跨团队协调成本。上下文边界即团队协作边界。
+
+**技术演化独立性**：飞轮能力（偏好、知识）未来可能演化为独立的平台服务，需在边界上预留防腐层，避免与核心执行逻辑耦合。
+
+---
+
+### 限界上下文列表
+
+#### 1. 任务管理上下文（Task Management Context）
+
+| 属性 | 内容 |
+|------|------|
+| 职责 | 管理任务的完整生命周期，包括任务创建、计划制定、执行协调、质检流转和最终交付。是面向用户的核心业务上下文，承载产品侧的主要业务规则。 |
+| 包含聚合 | Task、TaskPlan、TaskExecution、TaskStep |
+| 对外输出事件 | `TaskSucceeded`、`TaskDelivered`、`TaskCancelled`、`TaskTerminated`、`TaskStepCreated`、`TaskStepCompleted`、`TaskStepInterrupted` |
+| 依赖输入事件 | `StepExecutionCompleted`、`StepExecutionFailed`（来自 Agent 执行上下文） |
+
+核心说明：TaskStep 是本上下文与 Agent 执行上下文的接缝聚合，它向下触发步骤执行，但屏蔽步骤层内部的推理细节，保证任务层的业务语义纯粹。
+
+---
+
+#### 2. Agent 执行上下文（Agent Execution Context）
+
+| 属性 | 内容 |
+|------|------|
+| 职责 | 负责单个步骤的 AI 推理循环执行，包括上下文组装、模型路由、工具调用编排和可复用知识加载。是系统的 AI 能力核心，对任务层屏蔽所有推理细节。 |
+| 包含聚合 | StepExecution、ContextManager、KnowledgeLoader、ModelRouter、ToolCallOrchestrator |
+| 对外输出事件 | `StepExecutionCompleted`、`StepExecutionFailed`、`ToolCallSucceeded`、`ToolCallFailed` |
+| 依赖输入事件 | `TaskStepCreated`（来自任务管理上下文）、`UserPreferenceUpdated`（来自用户偏好上下文） |
+
+核心说明：本上下文内部的推理循环、工具失败分类、上下文裁剪等细节不向外暴露。ContextManager 在组装上下文时会消费最新的用户偏好，通过订阅事件实现即时生效，而非直接调用偏好服务。
+
+---
+
+#### 3. 用户偏好上下文（User Preference Context）
+
+| 属性 | 内容 |
+|------|------|
+| 职责 | 管理用户的个性化偏好配置，支持任务执行期间的实时提交，并保证偏好变更即时影响后续步骤的上下文组装。 |
+| 包含聚合 | UserPreference |
+| 对外输出事件 | `UserPreferenceUpdated`（携带变更的偏好键值对及生效范围） |
+| 依赖输入事件 | 无 |
+
+核心说明：本上下文职责单一，是典型的支撑子域。独立划分的原因是偏好数据的读写模式（高频读、低频写）与执行上下文差异显著，且未来可能演化为跨产品的用户配置平台。
+
+---
+
+#### 4. 知识飞轮上下文（Knowledge Flywheel Context）
+
+| 属性 | 内容 |
+|------|------|
+| 职责 | 在任务成功完成后，从任务执行过程中提炼可复用知识并持久化，供后续任务的 Agent 执行阶段检索使用。实现系统的自我增强能力。 |
+| 包含聚合 | （知识条目聚合，当前建模中以 KnowledgeLoader 的检索侧体现，写入侧归属本上下文） |
+| 对外输出事件 | `KnowledgeExtracted`、`KnowledgeIndexed` |
+| 依赖输入事件 | `TaskSucceeded`（来自任务管理上下文） |
+
+核心说明：知识提取严格限定在 `TaskSucceeded` 事件触发后，通过异步消费保证与主执行链路解耦。KnowledgeLoader 的检索能力（读侧）归属 Agent 执行上下文，知识的生产和索引管理（写侧）归属本上下文，两者通过共享存储或查询 API 集成，形成读写分离的协作模式。
+
+---
+
+### 上下文映射图
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        用户 / 产品界面                                │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ 用户操作 / 偏好提交
+               ┌───────────────┼───────────────────┐
+               ▼                                   ▼
+┌──────────────────────────┐         ┌─────────────────────────┐
+│   任务管理上下文           │         │   用户偏好上下文          │
+│  Task Management         │         │  User Preference         │
+│                          │         │                          │
+│  Task                    │         │  UserPreference          │
+│  TaskPlan                │         │                          │
+│  TaskExecution           │         │  [输出]                  │
+│  TaskStep ◄──── 接缝      │         │  UserPreferenceUpdated   │
+│                          │         └──────────┬───────────────┘
+│  [输出]                  │                    │ 订阅（即时生效）
+│  TaskStepCreated ────────┼──────────┐         │
+│  TaskSucceeded ──────────┼──┐       │         │
+│  TaskDelivered           │  │       ▼         ▼
+│                          │  │  ┌──────────────────────────────┐
+│  [输入]                  │  │  │   Agent 执行上下文             │
+│  StepExecutionCompleted ◄┼──┼──│  Agent Execution             │
+│  StepExecutionFailed    ◄┼──┘  │                              │
+└──────────────────────────┘     │  StepExecution               │
+                                 │  ContextManager  ◄── 消费偏好 │
+         ┌───────────────────────│  KnowledgeLoader ◄── 检索知识 │
+         │  TaskSucceeded        │  ModelRouter                 │
+         │  （异步触发）          │  ToolCallOrchestrator        │
+         ▼                       │                              │
+┌─────────────────────────┐      │  [输出]                      │
+│   知识飞轮上下文          │      │  StepExecutionCompleted      │
+│  Knowledge Flywheel     │      │  StepExecutionFailed         │
+│                         │      └──────────────────────────────┘
+│  知识提取 & 索引          │
+│                         │
+│  [输出]                 │
+│  KnowledgeExtracted ────┼──────────────────────► Agent 执行上下文
+│  KnowledgeIndexed       │                        （KnowledgeLoader 检索）
+└─────────────────────────┘
+```
+
+**上下游关系说明：**
+
+| 上游（U） | 下游（D） | 关系模式 | 说明 |
+|-----------|-----------|----------|------|
+| 任务管理上下文 | Agent 执行上下文 | 客户/供应商（Customer/Supplier） | 任务管理是客户，定义步骤触发协议；Agent 执行是供应商，保证接口稳定 |
+| 用户偏好上下文 | Agent 执行上下文 | 发布/订阅（Pub/Sub） | 偏好上下文发布变更事件，执行上下文订阅后更新本地缓存，无直接依赖 |
+| 任务管理上下文 | 知识飞轮上下文 | 发布/订阅（Pub/Sub） | 任务成功事件异步触发知识提取，飞轮上下文对任务上下文透明 |
+| 知识飞轮上下文 | Agent 执行上下文 | 开放主机服务（Open Host Service） | 飞轮上下文提供知识检索 API，执行上下文通过防腐层（ACL）调用，隔离知识存储实现细节 |
+
+---
+
+### 上下文间集成方式
+
+#### 集成总览
+
+```
+集成点                          集成方式              一致性保证
+─────────────────────────────────────────────────────────────────
+TaskStep → StepExecution        领域事件（异步）       最终一致
+StepExecution → TaskStep        领域事件（异步）       最终一致
+UserPreference → ContextManager 领域事件（异步）       最终一致（步骤级生效）
+TaskSucceeded → 知识提取         领域事件（异步）       最终一致
+知识飞轮 → KnowledgeLoader       查询 API（同步）       读己之写（本地缓存）
+```
+
+#### 集成细节
+
+**1. 任务管理上下文 ↔ Agent 执行上下文**
+
+任务管理上下文通过发布 `TaskStepCreated` 事件触发步骤执行，事件载荷包含步骤 ID、任务上下文摘要和执行参数。Agent 执行上下文消费该事件，创建 `StepExecution` 聚合并启动推理循环。
+
+步骤执行结束后，Agent 执行上下文发布 `StepExecutionCompleted` 或 `StepExecutionFailed` 事件，任务管理上下文订阅后推进 `TaskStep` 状态机，进而驱动 `TaskExecution` 和 `Task` 的状态流转。
+
+步骤层内部的推理轮次、工具调用明细等事件不向任务管理上下文透传，严格遵守接缝隔离原则。
+
+**2. 用户偏好上下文 → Agent 执行上下文**
+
+用户在任务执行期间提交偏好变更时，用户偏好上下文发布 `UserPreferenceUpdated` 事件，携带变更的键值对和关联的任务 ID。
+
+Agent 执行上下文订阅该事件，在 `ContextManager` 的本地偏好缓存中更新对应条目。由于推理循环在每个步骤开始时重新组装上下文，偏好变更在下一个步骤的上下文组装阶段即时生效，无需中断当前步骤。
+
+**3. 任务管理上下文 → 知识飞轮上下文**
+
+`TaskSucceeded` 事件是知识提取的唯一触发条件，确保只有成功完成的任务才贡献知识。知识飞轮上下文异步消费该事件，从任务执行快照中提炼知识条目并建立索引。
+
+该集成为单向依赖，任务管理上下文对知识飞轮上下文完全透明，飞轮上下文的故障不影响任务主链路。
+
+**4. 知识飞轮上下文 → Agent 执行上下文（防腐层）**
+
+`KnowledgeLoader` 在组装上下文时需要检索相关知识，通过防腐层（ACL）调用知识飞轮上下文提供的查询接口。防腐层负责将飞轮上下文的知识模型翻译为 Agent 执行上下文的内部语言，隔离两侧的模型差异。
+
+检索失败时执行降级策略（跳过知识注入，不阻断步骤执行），保证执行链路的健壮性。
+
+# 建立领域模型
+
+## 领域模型总览图
+
+下图展示四个限界上下文内的聚合结构及跨上下文的 ID 引用关系。
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  任务管理上下文                                                               │
+│                                                                             │
+│  ┌──────────────────────┐        ┌──────────────────────┐                  │
+│  │ Task (聚合根)         │        │ TaskPlan (聚合根)     │                  │
+│  │──────────────────────│        │──────────────────────│                  │
+│  │ id: TaskId           │───────▶│ id: TaskPlanId        │                  │
+│  │ status: TaskStatus   │        │ taskId: TaskId        │                  │
+│  │ taskPlanId: TaskPlanId│       │ version: Int          │                  │
+│  │ taskExecutionId:     │        │ steps: PlanStep[]     │                  │
+│  │   TaskExecutionId    │        │ updateReason:         │                  │
+│  │ goal: TaskGoal       │        │   PlanUpdateReason    │                  │
+│  │ deliverable:         │        │ updateScope:          │                  │
+│  │   TaskDeliverable    │        │   PlanUpdateScope     │                  │
+│  └──────────────────────┘        └──────────────────────┘                  │
+│            │                                                                │
+│            ▼                                                                │
+│  ┌──────────────────────┐        ┌──────────────────────┐                  │
+│  │ TaskExecution (聚合根)│───────▶│ TaskStep (聚合根)     │                  │
+│  │──────────────────────│        │──────────────────────│                  │
+│  │ id: TaskExecutionId  │        │ id: TaskStepId        │                  │
+│  │ taskId: TaskId       │        │ taskExecutionId:      │                  │
+│  │ taskPlanId: TaskPlanId│       │   TaskExecutionId     │                  │
+│  │ status: ExecStatus   │        │ taskPlanId: TaskPlanId│                  │
+│  │ snapshot:            │        │ status: StepStatus    │                  │
+│  │   ExecutionSnapshot  │        │ stepIndex: Int        │                  │
+│  └──────────────────────┘        └──────────────────────┘                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+         │                                  │
+         │ taskId（跨上下文引用）              │ taskStepId（跨上下文引用）
+         ▼                                  ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Agent 执行上下文                                                             │
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │ StepExecution (聚合根)                                                │  │
+│  │ id: StepExecutionId  taskStepId: TaskStepId  taskPlanId: TaskPlanId  │  │
+│  │ reasoningRounds: Int  terminationReason: TerminationReason           │  │
+│  └──────┬──────────────────┬──────────────┬──────────────┬─────────────┘  │
+│         │                  │              │              │                  │
+│  ┌──────┴──────┐  ┌────────┴──────┐  ┌───┴────────┐  ┌─┴──────────────┐  │
+│  │ContextManager│  │KnowledgeLoader│  │ModelRouter │  │ToolCallOrchest-│  │
+│  │(聚合根)      │  │(聚合根)        │  │(聚合根)    │  │rator (聚合根)   │  │
+│  │─────────────│  │───────────────│  │────────────│  │────────────────│  │
+│  │stepExecution│  │stepExecutionId│  │stepExecution│  │stepExecutionId │  │
+│  │  Id         │  │taskId         │  │  Id         │  │activeToolCalls:│  │
+│  │contextVersion│  │entries:       │  │selectedModel│  │  ToolCallRecord│  │
+│  │contextWindow│  │  KnowledgeEnt-│  │            │  │  []            │  │
+│  │             │  │  ry[]         │  │            │  │failureClass:   │  │
+│  └─────────────┘  └───────────────┘  └────────────┘  │  ToolFailure-  │  │
+│                                                       │  Class         │  │
+│                                                       └────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────┐    ┌──────────────────────────────────────────┐
+│  用户偏好上下文            │    │  知识飞轮上下文                            │
+│  ┌────────────────────┐  │    │  ┌──────────────────────────────────┐   │
+│  │ UserPreference     │  │    │  │ 知识条目聚合 (聚合根)               │   │
+│  │ (聚合根)            │  │    │  │ id: KnowledgeEntryId              │   │
+│  │ userId: UserId     │  │    │  │ taskId: TaskId（来源引用）          │   │
+│  │ preferences:       │  │    │  │ content: KnowledgeContent         │   │
+│  │   Preference[]     │  │    │  │ tags: KnowledgeTag[]              │   │
+│  └────────────────────┘  │    │  │ embedding: Vector                 │   │
+└──────────────────────────┘    │  └──────────────────────────────────┘   │
+                                └──────────────────────────────────────────┘
+```
+
+---
+
+## 核心值对象定义
+
+### PlanStep
+
+TaskPlan 内嵌的步骤描述单元，不可变，版本随 TaskPlan 整体升版。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| stepIndex | Int | 步骤序号，同一版本 TaskPlan 内唯一 |
+| goal | String | 该步骤的目标描述 |
+| expectedOutput | String | 预期产出物描述 |
+| toolHints | String[] | 建议使用的工具列表（非强制） |
+| dependsOn | Int[] | 依赖的前置步骤序号 |
+
+不变量：同一 TaskPlan 版本内 stepIndex 不重复；dependsOn 中的序号必须小于自身 stepIndex。
+
+---
+
+### PlanUpdateReason
+
+记录 TaskPlan 被更新的原因，是 UpdatePlan 命令的必要参数。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| trigger | Enum | QualityCheckFailed / StepEvalFailed / UserCorrection / PlanEvalFailed |
+| description | String | 人工可读的原因说明 |
+
+不变量：trigger 必须为枚举值之一，description 不可为空。
+
+---
+
+### ExecutionSnapshot
+
+TaskExecution 保存的快照，用于 B 类异常后的断点续跑。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| snapshotId | SnapshotId | 快照唯一标识 |
+| capturedAt | Timestamp | 快照时间 |
+| completedStepIndexes | Int[] | 已完成的步骤序号列表 |
+| partialStepContext | String? | 当前步骤的中间状态（可选） |
+
+不变量：capturedAt 不可为未来时间；completedStepIndexes 内序号不重复。
+
+---
+
+### ToolCallRecord
+
+ToolCallOrchestrator 内追踪单次工具调用全生命周期的值对象。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| callId | ToolCallId | 调用唯一标识 |
+| toolName | String | 工具名称 |
+| input | JSON | 调用入参 |
+| status | Enum | Dispatched / Succeeded / Failed |
+| result | JSON? | 成功时的返回值 |
+| errorMessage | String? | 失败时的错误信息 |
+| failureClass | Enum? | A / B / C（仅失败时有值） |
+
+不变量：status 为 Succeeded 时 result 必须有值；status 为 Failed 时 failureClass 必须有值。
+
+---
+
+### ContextWindow
+
+ContextManager 组装后交给推理引擎的上下文快照。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| version | Int | 每次 ToolResultInjected 后递增 |
+| messages | Message[] | 按时序排列的消息列表 |
+| tokenCount | Int | 当前 token 总量 |
+| truncated | Boolean | 是否发生过截断 |
+
+不变量：version 单调递增；tokenCount 与 messages 实际内容保持一致。
+
+---
+
+### KnowledgeEntry
+
+知识飞轮上下文的核心值对象，KnowledgeLoader 加载后以只读形式使用。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| entryId | KnowledgeEntryId | 条目唯一标识 |
+| content | String | 知识正文 |
+| tags | String[] | 分类标签 |
+| sourceTaskId | TaskId | 来源任务 ID |
+| createdAt | Timestamp | 写入时间 |
+
+不变量：content 不可为空；sourceTaskId 必须指向一个已 Succeeded 的 Task。
+
+---
+
+### Preference
+
+UserPreference 聚合内的键值对单元。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| key | String | 偏好项标识，per user 唯一 |
+| value | String | 偏好值 |
+| updatedAt | Timestamp | 最后更新时间 |
+
+不变量：同一 userId 下 key 不重复；新值写入时直接覆盖，不保留历史。
+
+---
+
+## 聚合间关联关系汇总表
+
+| 持有方聚合 | 引用的聚合 | 引用字段 | 跨上下文 |
+|-----------|-----------|---------|---------|
+| Task | TaskPlan | taskPlanId | 否 |
+| Task | TaskExecution | taskExecutionId | 否 |
+| TaskPlan | Task | taskId | 否 |
+| TaskExecution | Task | taskId | 否 |
+| TaskExecution | TaskPlan | taskPlanId | 否 |
+| TaskStep | TaskExecution | taskExecutionId | 否 |
+| TaskStep | TaskPlan | taskPlanId | 否 |
+| StepExecution | TaskStep | taskStepId | 是 |
+| StepExecution | TaskPlan | taskPlanId | 是 |
+| ContextManager | StepExecution | stepExecutionId | 否 |
+| KnowledgeLoader | StepExecution | stepExecutionId | 否 |
+| KnowledgeLoader | Task | taskId | 是 |
+| ModelRouter | StepExecution | stepExecutionId | 否 |
+| ToolCallOrchestrator | StepExecution | stepExecutionId | 否 |
+| 知识条目聚合 | Task | sourceTaskId | 是 |
+| UserPreference | User | userId | — |
+
+跨上下文的引用均为只读 ID 引用，不持有对方聚合的对象引用，一致性通过领域事件异步保障。
+
+---
+
+## 领域服务
+
+领域服务承载跨聚合的协调逻辑，不属于任何单一聚合，但仍是领域层的一部分。
+
+### TaskOrchestrationService
+
+协调 Task、TaskPlan、TaskExecution 三个聚合的生命周期推进。
+
+职责：
+- 接收 SubmitTask 命令后，依次创建 Task、触发 MakeTaskPlan、创建 TaskExecution，并将各聚合 ID 回写到 Task。
+- 监听 TaskQualityCheckFailed 事件，判断是否需要触发 UpdatePlan（full）并重新驱动 TaskExecution。
+- 监听 TaskPlanReviewFailed 事件，协调 TaskPlan 版本升级与 TaskExecution 的重置。
+
+边界：不直接操作 StepExecution，步骤层的协调交由 StepOrchestrationService。
+
+---
+
+### StepOrchestrationService
+
+协调 Agent 执行上下文内 StepExecution 与其四个支撑聚合的协作。
+
+职责：
+- 在 StartStepExecution 时，触发 LoadKnowledge 和 SelectModel，将结果注入 ContextManager 完成上下文组装。
+- 在每轮 RunReasoning 前，将当前 ContextWindow 交给推理引擎。
+- 收到 LLM 返回的工具调用请求后，委托 ToolCallOrchestrator.DispatchToolCall，结果返回后调用 ContextManager.InjectToolResult 推进上下文版本。
+- 判断推理循环终止条件（StepGoalAchieved / StepGoalUnachievable），驱动 StepExecution 进入终态。
+
+边界：不感知 Task 层状态，仅通过 TaskStepId 和 TaskPlanId 获取必要的只读信息。
+
+---
+
+### KnowledgePersistenceService
+
+协调任务管理上下文与知识飞轮上下文之间的知识提取与写入。
+
+职责：
+- 监听 TaskSucceeded 事件，从 TaskExecution 的执行历史中提取可复用知识片段。
+- 将提取结果构造为 KnowledgeEntry，写入知识飞轮上下文的知识条目聚合。
+- 发布 TaskKnowledgeExtracted 和 TaskKnowledgePersisted 事件，回调 Task 聚合完成 PersistKnowledge 命令。
+
+边界：知识提取策略（摘要、去重、打标签）属于本服务的核心逻辑，不下沉到任何聚合。
+
+---
+
+### UserPreferenceApplicationService
+
+在任务启动阶段将用户偏好注入执行上下文。
+
+职责：
+- 在 SubmitTask 时读取 UserPreference，将相关偏好项转换为 ContextManager 的初始系统提示约束。
+- 偏好项的解释与映射逻辑（如将"简洁输出"偏好映射为特定 system prompt 片段）集中在本服务，不散落在各聚合内。
+
+边界：UserPreference 聚合本身只负责存取，不负责解释；本服务为应用层与领域层的桥接点。
+
+# 代码目录结构
+
+按功能模块组织顶层目录，模块内部保持浅层结构（models / services / events / handlers），不强制套用 DDD 完整分层。现有基础设施模块（llm / infra / runtime / utils）保留原结构，仅在需要时补充领域模型文件。
+
+```
+src/
+│
+├── shared/                        # 跨模块共享基础类型
+│   ├── domain.py                  # AggregateRoot 基类、DomainEvent 基类
+│   ├── types.py                   # 强类型 ID 别名（TaskId, UserId, StepId…）
+│   └── event_bus.py               # 事件总线接口（publish/subscribe）
+│
+├── task/                          # 任务管理功能模块
+│   │                              # 对应 TD: Task/TaskPlan/TaskExecution/TaskStep 聚合
+│   ├── models/
+│   │   ├── task.py                # Task 聚合根（生命周期状态机）
+│   │   ├── task_plan.py           # TaskPlan 聚合根（版本化执行计划）+ PlanStep 值对象
+│   │   ├── task_execution.py      # TaskExecution 聚合根 + ExecutionSnapshot 值对象
+│   │   └── task_step.py           # TaskStep 聚合根 + StepStatus 枚举
+│   ├── events/
+│   │   ├── task_events.py         # TaskReceived/Succeeded/Cancelled/Terminated…
+│   │   ├── plan_events.py         # TaskPlanFinalized/Updated/ReviewPassed/Failed…
+│   │   ├── execution_events.py    # TaskExecutionStarted/Paused/Resumed/Snapshot…
+│   │   └── step_events.py         # TaskStepCompleted/Skipped/Interrupted
+│   ├── services/
+│   │   └── task_orchestration.py  # TaskOrchestrationService（协调 Task/Plan/Execution）
+│   ├── handlers/                  # 命令处理器（SubmitTask/CancelTask/SubmitGuidance…）
+│   └── repository.py              # 持久化接口（TaskRepo/PlanRepo/ExecutionRepo/StepRepo）
+│
+├── execution/                     # Agent 执行功能模块
+│   │                              # 对应 TD: StepExecution + 四个支撑聚合
+│   ├── models/
+│   │   └── step_execution.py      # StepExecution 聚合根 + TerminationReason 值对象
+│   ├── events/
+│   │   └── step_events.py         # StepExecutionStarted/ReasoningStarted/LLMResponseReceived…
+│   ├── services/
+│   │   └── step_orchestration.py  # StepOrchestrationService（协调推理循环内五个聚合）
+│   ├── handlers/                  # StartStepExecutionHandler
+│   └── policies/                  # 跨聚合自动响应（OnContextAssembled/OnReasoningCompleted…）
+│
+├── context/                       # 上下文管理功能模块（现有目录保留，补充领域模型）
+│   │                              # 对应 TD: ContextManager 聚合根
+│   ├── manager.py                 # ContextManager 聚合根（组装/裁剪/版本管理）
+│   ├── models.py                  # ContextWindow 值对象、Message 值对象
+│   ├── events.py                  # ContextAssembled/ContextTruncated/ToolResultInjected
+│   ├── budget/                    # Token 预算管理（现有）
+│   ├── estimator/                 # Token 估算（现有）
+│   └── truncation/                # 上下文裁剪策略（现有）
+│
+├── llm/                           # LLM 集成功能模块（现有目录保留，补充领域模型）
+│   │                              # 对应 TD: ModelRouter 聚合根
+│   ├── router.py                  # ModelRouter 聚合根（模型选择策略）+ ModelSpec 值对象
+│   ├── events.py                  # ModelSelected 事件
+│   ├── providers/                 # 各 LLM 提供商适配器（现有）
+│   └── routing/                   # 路由规则实现（现有）
+│
+├── tools/                         # 工具执行功能模块（现有目录保留，补充领域模型）
+│   │                              # 对应 TD: ToolCallOrchestrator 聚合根
+│   ├── orchestrator.py            # ToolCallOrchestrator 聚合根（编排/失败分类）
+│   ├── models.py                  # ToolCallRecord 值对象、ToolFailureClass 枚举
+│   ├── events.py                  # ToolCallRequested/Dispatched/Succeeded/Failed
+│   ├── impl/                      # 具体工具实现（SQL/Excel/Shell…，现有）
+│   └── mock/                      # Mock 工具（现有）
+│
+├── knowledge/                     # 知识飞轮功能模块
+│   │                              # 对应 TD: KnowledgeEntry 聚合 + KnowledgeLoader 聚合
+│   ├── models/
+│   │   ├── knowledge_entry.py     # KnowledgeEntry 聚合根 + KnowledgeContent 值对象
+│   │   └── knowledge_loader.py    # KnowledgeLoader 聚合根（检索/失败降级）
+│   ├── events/
+│   │   └── knowledge_events.py    # KnowledgeExtracted/Indexed/ReusableKnowledgeLoaded
+│   ├── services/
+│   │   └── knowledge_persistence.py  # KnowledgePersistenceService（提取/去重/写入）
+│   ├── policies/
+│   │   └── on_task_succeeded.py   # 监听 TaskSucceeded → 触发知识提取
+│   └── repository.py
+│
+├── preference/                    # 用户偏好功能模块
+│   │                              # 对应 TD: UserPreference 聚合
+│   ├── models/
+│   │   └── user_preference.py     # UserPreference 聚合根 + Preference 值对象
+│   ├── events/
+│   │   └── preference_events.py   # UserPreferenceSubmitted/Saved
+│   ├── services/
+│   │   └── preference_application.py  # UserPreferenceApplicationService（偏好解释与映射）
+│   ├── handlers/
+│   └── repository.py
+│
+├── agent/                         # Agent 核心（现有目录保留）
+│   ├── personality/
+│   ├── strategy/
+│   │   └── impl/react/            # ReAct 策略
+│   └── session.py
+│
+├── runtime/                       # 运行时管理（现有目录保留）
+│   ├── checkpoint/
+│   ├── metrics/
+│   └── tracing/
+│
+├── infra/                         # 基础设施（现有目录保留）
+│   ├── cache/
+│   └── db/
+│       └── impl/                  # SQLite/MySQL/ChromaDB
+│
+├── application/                   # 应用入口（现有目录保留）
+│   ├── CLI/
+│   └── backend/
+│
+├── config/                        # 配置管理（现有目录保留）
+├── schemas/                       # 数据 Schema（现有目录保留）
+└── utils/                         # 工具函数（现有目录保留）
+    ├── concurrency/
+    ├── env_util/
+    ├── http/
+    ├── log/
+    └── time/
+```
+
+## 模块说明
+
+| 模块 | 职责 | 对应 TD 概念 |
+|------|------|------------|
+| `shared/` | 跨模块基础类型，不含业务逻辑 | AggregateRoot、DomainEvent、EventBus |
+| `task/` | 任务生命周期管理 | Task/TaskPlan/TaskExecution/TaskStep 聚合 + TaskOrchestrationService |
+| `execution/` | 步骤推理循环管理 | StepExecution 聚合 + StepOrchestrationService |
+| `context/` | 上下文组装与裁剪 | ContextManager 聚合（现有目录扩展） |
+| `llm/` | 模型选择与调用 | ModelRouter 聚合（现有目录扩展） |
+| `tools/` | 工具调用编排 | ToolCallOrchestrator 聚合（现有目录扩展） |
+| `knowledge/` | 知识检索与持久化 | KnowledgeEntry/KnowledgeLoader 聚合 + KnowledgePersistenceService |
+| `preference/` | 用户偏好存取与解释 | UserPreference 聚合 + UserPreferenceApplicationService |
+| `agent/` | Agent 策略与会话 | 现有目录保留 |
+| `runtime/` | 检查点、指标、追踪 | 现有目录保留 |
+| `infra/` | 数据库、缓存适配 | 现有目录保留 |
 
