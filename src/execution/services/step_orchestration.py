@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import random
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from config import ConfigValueReader
 from context.manager import AgentContext
@@ -26,8 +26,8 @@ from schemas import (
 from schemas.message_convert import ui_to_llm
 from infra.db import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from infra.db.bootstrap_documents import load_seed_documents
-from execution.strategies.decision import FinalAnswer, ResponseTruncated
-from execution.strategies.impl import ReActStrategy
+from execution.models.strategies.decision import FinalAnswer, ResponseTruncated
+from execution.models.strategies.impl import ReActStrategy
 from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
@@ -65,7 +65,7 @@ from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from config import JsonConfig
-    from execution.strategies.strategy import Strategy
+    from execution.models.strategies.strategy import Strategy
     from infra.observability.tracing import Tracer
 
 
@@ -628,3 +628,39 @@ class AgentExecutor:
                     storage=storage,
                     backend_name=backend_name,
                 ))
+
+
+class StepOrchestrationService:
+    """步骤层执行入口，封装 AgentExecutor 的 ReAct 循环。"""
+
+    def __init__(self, executor: AgentExecutor, max_iterations: int = 60) -> None:
+        self._executor = executor
+        self._max_iterations = max_iterations
+
+    def reset(self) -> None:
+        self._executor.reset(archive_current_task=False)
+
+    def release_resources(self) -> None:
+        self._executor.release_resources()
+
+    def run_step(
+        self,
+        task_step: "TaskStep",
+        on_message: Callable[[UIMessage], None],
+    ) -> str:
+        user_message: UIMessage | None = UIMessage(role="user", content=task_step.goal)
+        last_content = ""
+        iterations = 0
+        while iterations < self._max_iterations:
+            result = self._executor.run(user_message)
+            for msg in result.user_messages:
+                on_message(msg)
+                if msg.role == "assistant" and msg.content.strip():
+                    last_content = msg.content
+            if result.task_completed:
+                return last_content
+            if result.error is not None and result.error.code == LLM_ALL_PROVIDERS_FAILED:
+                raise result.error
+            iterations += 1
+            user_message = None
+        return last_content

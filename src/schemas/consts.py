@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from enum import StrEnum
+from enum import Enum
 
 
-class SessionStatus(StrEnum):
+class SessionStatus(str, Enum):
     NEW_TASK = "NEW_TASK"
     IN_PROGRESS = "IN_PROGRESS"

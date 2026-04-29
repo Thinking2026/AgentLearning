@@ -9,7 +9,7 @@ from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
-from schemas import UIMessage, SessionStatus
+from schemas import UIMessage
 from utils.log.log import Logger, zap
 from utils.env_util.runtime_env import (
     get_project_root,
@@ -69,8 +69,6 @@ class UserThread(threading.Thread):
         self._prompt_file_path = get_task_prompt_file(
             self._task_source_dir / "prompt.txt"
         )
-        self._ui_session_status = SessionStatus.NEW_TASK
-        self._last_prompt_status: SessionStatus | None = None
         self._last_progress_notice_at = 0.0
         self._task_started = False
         self._task_completed = False
@@ -108,18 +106,13 @@ class UserThread(threading.Thread):
             self.stop()
 
     def _print_prompt_if_needed(self, displayed_any_message: bool) -> None:
-        status = self._ui_session_status
-        if status == self._last_prompt_status:
-            now = time.monotonic()
-            if not displayed_any_message and now - self._last_progress_notice_at >= self._progress_notice_interval_seconds:
-                print("Assistant: Task in progress, you can input supplementary information to assist the AI")
-                self._last_progress_notice_at = now
-            return
-        if status == SessionStatus.NEW_TASK:
+        if not self._task_started:
             print(f"Assistant: Loading task `{self._task_name}` from {self._prompt_file_path}")
-        else:
+            return
+        now = time.monotonic()
+        if not displayed_any_message and now - self._last_progress_notice_at >= self._progress_notice_interval_seconds:
             print("Assistant: Task in progress, you can input supplementary information to assist the AI")
-        self._last_prompt_status = status
+            self._last_progress_notice_at = now
 
     def _drain_agent_messages(self) -> bool:
         displayed_any_message = False
@@ -231,9 +224,6 @@ class UserThread(threading.Thread):
         return " ".join(words[:word_limit]) + " ..."
 
     def _sync_session_status_from_agent_message(self, message: UIMessage) -> None:
-        session_status = message.metadata.get("session_status")
-        if session_status != self._ui_session_status:
-            self._ui_session_status = session_status
         if message.metadata.get("task_completed"):
             self._task_completed = True
 

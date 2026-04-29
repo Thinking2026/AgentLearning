@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import threading
 
-from schemas import SessionStatus
+from schemas.consts import SessionStatus
 
 
 class Session:
     def __init__(self, status: SessionStatus = SessionStatus.NEW_TASK) -> None:
         self._status = status
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
 
     def get_status(self) -> SessionStatus:
         with self._lock:

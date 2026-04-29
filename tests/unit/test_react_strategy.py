@@ -4,9 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from execution.strategies.decision import FinalAnswer, InvokeTools, ResponseTruncated
-from execution.strategies.react.message_formatter import MessageFormatter
-from execution.strategies.react.react_strategy import ReActStrategy
+from execution.models.strategies.decision import FinalAnswer, InvokeTools, ResponseTruncated
+from execution.models.strategies.react.message_formatter import MessageFormatter
+from execution.models.strategies.react.react_strategy import ReActStrategy
 from schemas.types import LLMMessage, LLMRequest, LLMResponse, ToolCall, UIMessage
 
 

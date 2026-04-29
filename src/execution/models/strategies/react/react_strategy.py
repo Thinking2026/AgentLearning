@@ -2,15 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from execution.strategies.decision import FinalAnswer, InvokeTools, ResponseTruncated, StrategyDecision
-from execution.strategies.react.message_formatter import MessageFormatter
-from execution.strategies.strategy import Strategy
+from execution.models.strategies.decision import FinalAnswer, InvokeTools, ResponseTruncated, StrategyDecision
+from execution.models.strategies.react.message_formatter import MessageFormatter
+from execution.models.strategies.strategy import Strategy
 from schemas import (
     LLMMessage,
     LLMRequest,
     LLMResponse,
     LLM_RESPONSE_TRUNCATED,
-    SessionStatus,
     ToolCall,
     ToolResult,
     UIMessage,
@@ -116,7 +115,6 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
                 role="assistant",
                 content=assistant_msg.content,
                 metadata={
-                    "session_status": SessionStatus.NEW_TASK,
                     "task_completed": True,
                 },
             )

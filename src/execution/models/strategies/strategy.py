@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from execution.strategies.decision import StrategyDecision
+from execution.models.strategies.decision import StrategyDecision
 from schemas import LLMMessage, LLMRequest, LLMResponse
 
 if TYPE_CHECKING:
