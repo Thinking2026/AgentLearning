@@ -49,7 +49,7 @@ def _event(event_type: type[DomainEvent], **kwargs: Any) -> DomainEvent:
 
 
 class TaskStatus(str, Enum):
-    INIT = "Init"
+    PENDING = "Pending"
     PLANNING = "Planning"
     EXECUTING = "Executing"
     QUALITY_CHECKING = "QualityChecking"
@@ -57,15 +57,14 @@ class TaskStatus(str, Enum):
     DELIVERED = "Delivered"
     CANCELLED = "Cancelled"
     TERMINATED = "Terminated"
+    PAUSED = "Paused"
 
 
 @dataclass
 class Task(AggregateRoot):
-    """Task Management aggregate root for the user-visible task lifecycle."""
-
     id: TaskId
     description: str
-    status: TaskStatus = TaskStatus.INIT
+    status: TaskStatus = TaskStatus.PENDING
     plan_id: TaskPlanId | None = None
     execution_id: TaskExecutionId | None = None
     result: str | None = None

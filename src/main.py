@@ -7,7 +7,7 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root / "src"))
 
-from application import AgentApplication
+from agent import AgentApplication
 from config import load_config
 from utils.env_util.env_loader import load_dotenv
 from utils.log.log import Logger, zap
