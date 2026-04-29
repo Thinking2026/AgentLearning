@@ -5,7 +5,7 @@ from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
 from agent.application.task_application import TaskApplication
-from agent.services.task_service import AgentExecutor, StepOrchestrationService
+from agent.services.task_service import AgentExecutor, AgentRuntime
 from agent.models.task.task_entities import Task
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
@@ -39,7 +39,7 @@ class AgentThread(threading.Thread):
         self._stop_callback = stop_callback
         self._logger = logger
         self._executor: AgentExecutor | None = None
-        self._task_orchestration: TaskApplication | None = None
+        self._task_app: TaskApplication | None = None
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
         self._load_tracing_config()
@@ -66,7 +66,7 @@ class AgentThread(threading.Thread):
                 self._start_session_trace(user_message)
                 task = Task.submit(user_message.content)
                 try:
-                    self._task_orchestration.run_task(
+                    self._task_app.run_task(
                         task=task,
                         on_message=self._agent_to_user_queue.send_agent_message,
                     )
@@ -101,8 +101,8 @@ class AgentThread(threading.Thread):
             logger=self._logger,
         )
         max_iter = int(self._config.get("agent.max_attempt_iterations", 60))
-        step_svc = StepOrchestrationService(executor, max_iterations=max_iter)
-        self._task_orchestration = TaskApplication(step_svc)
+        runtime = AgentRuntime(executor, max_iterations=max_iter)
+        self._task_app = TaskApplication(runtime)
         return executor
 
     def _load_tracing_config(self) -> None:
@@ -152,7 +152,7 @@ class AgentThread(threading.Thread):
         if self._executor is not None:
             self._executor.release_resources()
         self._executor = None
-        self._task_orchestration = None
+        self._task_app = None
         self._session_span = None
         self._tracer = None
 

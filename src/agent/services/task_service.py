@@ -631,7 +631,7 @@ class AgentExecutor:
                 ))
 
 
-class StepOrchestrationService:
+class AgentRuntime:
     """步骤层执行入口，封装 AgentExecutor 的 ReAct 循环。"""
 
     def __init__(self, executor: AgentExecutor, max_iterations: int = 60) -> None:

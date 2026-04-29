@@ -7,18 +7,18 @@ from agent.models.task.runtime_entities import TaskExecution
 from agent.models.task.task_entities import Task, TaskStep
 
 if TYPE_CHECKING:
-    from agent.services.task_service import StepOrchestrationService
+    from agent.services.task_service import AgentRuntime
     from schemas import UIMessage
 
 
 class TaskApplication:
     """领域服务：协调 Task/TaskPlan/TaskExecution/TaskStep 生命周期。"""
 
-    def __init__(self, step_service: "StepOrchestrationService") -> None:
-        self._step_service = step_service
+    def __init__(self, runtime: "AgentRuntime") -> None:
+        self._runtime = runtime
 
     def run_task(self, task: Task, on_message: Callable[["UIMessage"], None]) -> None:
-        self._step_service.reset()
+        self._runtime.reset()
 
         plan = TaskPlanFactory.create_plan(task.id, task.description)
         plan.review(passed=True)
@@ -44,7 +44,7 @@ class TaskApplication:
             step_id=step_id,
         )
 
-        result = self._step_service.run_step(task_step, on_message)
+        result = self._runtime.run_step(task_step, on_message)
 
         task_track.mark_step_completed(0, result)
         task_track.check_quality(passed=True)
