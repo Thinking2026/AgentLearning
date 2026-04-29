@@ -225,25 +225,3 @@ class TaskStep(AggregateRoot):
                 guidance=guidance,
             )
         )
-
-
-def _normalize_steps(
-    steps: list[PlanStep] | tuple[PlanStep, ...],
-    *,
-    start_order: int = 0,
-) -> tuple[PlanStep, ...]:
-    if not steps:
-        raise DomainRuleViolation("plan must contain at least one step")
-    normalized: list[PlanStep] = []
-    for offset, step in enumerate(steps):
-        if not step.goal.strip():
-            raise DomainRuleViolation("plan step goal must not be empty")
-        normalized.append(
-            PlanStep(
-                id=step.id or TaskStepId(_new_id("step")),
-                goal=step.goal,
-                order=start_order + offset,
-                metadata=dict(step.metadata),
-            )
-        )
-    return tuple(normalized)
