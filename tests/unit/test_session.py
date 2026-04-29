@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from execution.models.step_execution import Session
+from agent.models.task.runtime_entities import Session
 from schemas.consts import SessionStatus
 
 

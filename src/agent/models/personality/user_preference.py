@@ -5,7 +5,7 @@ from typing import Any
 
 from schemas.domain import AggregateRoot, DomainEvent
 from schemas.ids import TaskId, UserId
-from task.models.entities import DomainRuleViolation, TaskStatus
+from agent.models.task.task_entities import DomainRuleViolation, TaskStatus
 
 
 def _event(event_type: type[DomainEvent], **kwargs: Any) -> DomainEvent:

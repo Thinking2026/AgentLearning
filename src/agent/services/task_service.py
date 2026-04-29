@@ -5,8 +5,14 @@ import random
 import time
 from typing import TYPE_CHECKING, Callable
 
+from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
+from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
+from agent.models.context.manager import AgentContext
+from agent.models.context.truncation.token_truncation import ContextTruncator, TruncatorFactory
+from agent.models.reasoning.decision import FinalAnswer, ResponseTruncated
+from agent.models.reasoning.impl import ReActStrategy
+from agent.models.task.task_entities import TaskStep
 from config import ConfigValueReader
-from context.manager import AgentContext
 from schemas import (
     AGENT_EXECUTION_ERROR,
     AGENT_STRATEGY_NOT_FOUND,
@@ -26,8 +32,6 @@ from schemas import (
 from schemas.message_convert import ui_to_llm
 from infra.db import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from infra.db.bootstrap_documents import load_seed_documents
-from execution.models.strategies.decision import FinalAnswer, ResponseTruncated
-from execution.models.strategies.impl import ReActStrategy
 from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
@@ -42,7 +46,6 @@ from llm import (
     SingleProviderClient,
 )
 from llm.routing import LLMProviderRouter, RoutingDecision
-from task.models.entities import TaskStep
 from tools import (
     SQLQueryTool,
     SQLSchemaTool,
@@ -59,14 +62,11 @@ from tools import (
     build_vector_schema_tool_name,
     create_default_tool_registry,
 )
-from context.budget.token_budget_manager import TokenBudgetManagerFactory
-from context.estimator.token_estimator import TokenEstimatorFactory
-from context.truncation.token_truncation import TruncatorFactory, ContextTruncator
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from config import JsonConfig
-    from execution.models.strategies.strategy import Strategy
+    from agent.models.reasoning.strategy import Strategy
     from infra.observability.tracing import Tracer
 
 

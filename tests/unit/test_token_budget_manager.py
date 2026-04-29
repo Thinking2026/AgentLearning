@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from config.config import JsonConfig
-from context.budget.token_budget_manager import (
+from agent.models.context.budget.token_budget_manager import (
     ReActTokenBudgetManager,
     TokenBudgetManagerFactory,
 )

@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from context.manager import AgentContext
+from agent.models.context.manager import AgentContext
 from schemas.types import LLMMessage
 
 

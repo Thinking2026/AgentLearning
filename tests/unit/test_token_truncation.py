@@ -4,9 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from execution.models.strategies.react.message_formatter import MessageFormatter
-from context.estimator.token_estimator import ClaudeTokenEstimator
-from context.truncation.token_truncation import (
+from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
+from agent.models.context.estimator.token_estimator import ClaudeTokenEstimator
+from agent.models.context.truncation.token_truncation import (
     ReActContextTruncator,
     ReActTruncationConfig,
     ReasoningUnit,

@@ -1,5 +1,5 @@
 from schemas.ids import TaskId, TaskStepId
-from task.models.entities import PlanStep, TaskPlan
+from agent.models.task.plan_entities import PlanStep, TaskPlan
 
 class TaskPlanFactory:
     """工厂：负责创建 TaskPlan 实例。"""

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from execution.models.strategies.decision import FinalAnswer, InvokeTools, ResponseTruncated, StrategyDecision
-from execution.models.strategies.react.message_formatter import MessageFormatter
-from execution.models.strategies.strategy import Strategy
+from agent.models.reasoning.decision import FinalAnswer, InvokeTools, ResponseTruncated, StrategyDecision
+from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
+from agent.models.reasoning.strategy import Strategy
 from schemas import (
     LLMMessage,
     LLMRequest,
@@ -17,7 +17,7 @@ from schemas import (
 )
 
 if TYPE_CHECKING:
-    from context.manager import AgentContext
+    from agent.models.context.manager import AgentContext
     from tools import ToolRegistry
 
 

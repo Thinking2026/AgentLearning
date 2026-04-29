@@ -6,7 +6,7 @@ from typing import Callable
 from config import ConfigValueReader, JsonConfig
 from agent.application.task_application import TaskApplication
 from agent.services.task_service import AgentExecutor, StepOrchestrationService
-from task.models.entities import Task
+from agent.models.task.task_entities import Task
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
     AGENT_THREAD_ERROR,

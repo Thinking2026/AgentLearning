@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from schemas.domain import AggregateRoot, DomainEvent
 from schemas.ids import KnowledgeEntryId, TaskId
-from task.models.entities import DomainRuleViolation
+from agent.models.task.task_entities import DomainRuleViolation
 
 
 def _new_id(prefix: str) -> str:

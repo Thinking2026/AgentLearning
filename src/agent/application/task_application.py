@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from schemas.ids import TaskPlanId, TaskStepId
-from task.models.entities import Task, TaskProcessor, TaskStep
-from task.factory.task_plan_factory import TaskPlanFactory
+from agent.factory.task_plan_factory import TaskPlanFactory
+from agent.models.task.runtime_entities import TaskExecution
+from agent.models.task.task_entities import Task, TaskStep
 
 if TYPE_CHECKING:
     from agent.services.task_service import StepOrchestrationService
@@ -27,7 +27,7 @@ class TaskApplication:
             raise Exception("Plan review failed, cannot execute task")
         task.attach_plan(plan.id)
 
-        task_track = TaskProcessor.start(
+        task_track = TaskExecution.start(
             task_id=task.id,
             plan_id=plan.id,
             step_ids=[step.id for step in plan.steps],
