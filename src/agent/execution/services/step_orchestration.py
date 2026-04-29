@@ -42,7 +42,6 @@ from llm import (
     SingleProviderClient,
 )
 from llm.routing import LLMProviderRouter, RoutingDecision
-from task.models.entities import TaskStep
 from tools import (
     SQLQueryTool,
     SQLSchemaTool,

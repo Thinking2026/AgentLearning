@@ -252,6 +252,9 @@ class TaskPlan(AggregateRoot):
                 from_step_index=from_cursor,
             )
         )
+    
+    def check_review_result(self) -> bool:
+        return self.review_passed
 
     def review(self, passed: bool, feedback: str = "") -> None:
         if not self.versions:
@@ -303,7 +306,7 @@ class ManagedStepStatus(str, Enum):
 
 
 @dataclass
-class TaskExecution(AggregateRoot):
+class TaskProcessor(AggregateRoot):
     """Coordinates task-level step progress, snapshots, pause and quality checks."""
 
     id: TaskExecutionId
@@ -329,7 +332,7 @@ class TaskExecution(AggregateRoot):
         step_ids: list[TaskStepId] | tuple[TaskStepId, ...],
         from_step: int = 0,
         execution_id: TaskExecutionId | None = None,
-    ) -> TaskExecution:
+    ) -> TaskProcessor:
         if from_step < 0:
             raise DomainRuleViolation("from_step must be non-negative")
         execution = cls(
