@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING
 
 from config import ConfigValueReader
-from context.agent_context import AgentContext
+from context.manager import AgentContext
 from schemas import (
     AGENT_EXECUTION_ERROR,
     AGENT_STRATEGY_NOT_FOUND,
@@ -26,8 +26,8 @@ from schemas import (
 from schemas.message_convert import ui_to_llm
 from infra.db import ChromaDBStorage, MySQLStorage, SQLiteStorage, StorageRegistry
 from infra.db.bootstrap_documents import load_seed_documents
-from agent.strategy.decision import FinalAnswer, ResponseTruncated
-from agent.strategy.impl import ReActStrategy
+from execution.strategies.decision import FinalAnswer, ResponseTruncated
+from execution.strategies.impl import ReActStrategy
 from llm import (
     BaseLLMClient,
     ClaudeLLMClient,
@@ -65,8 +65,8 @@ from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from config import JsonConfig
-    from agent.strategy.strategy import Strategy
-    from runtime.tracing import Tracer
+    from execution.strategies.strategy import Strategy
+    from infra.observability.tracing import Tracer
 
 
 # ---------------------------------------------------------------------------
@@ -376,7 +376,7 @@ class AgentExecutor:
         return defaults.get(provider_name, 32000)
 
     def _start_span(self, name: str, attributes: dict | None = None):
-        from runtime.tracing import Span
+        from infra.observability.tracing import Span
         if self._tracer is None:
             return Span(None)
         return self._tracer.start_span(name=name, type="agent", attributes=attributes)

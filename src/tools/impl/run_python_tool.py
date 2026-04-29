@@ -12,7 +12,7 @@ from schemas import (
     ToolResult,
     build_error,
 )
-from tools.tools import BaseTool, build_tool_output
+from tools.models import BaseTool, build_tool_output
 
 # ---------------------------------------------------------------------------
 # Allowed top-level imports (whitelist)

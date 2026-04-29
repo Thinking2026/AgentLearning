@@ -3,9 +3,9 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
-from agent import AgentExecutor
+from execution.services.step_orchestration import AgentExecutor
 from config import ConfigValueReader, JsonConfig
-from agent.session import Session
+from execution.models.step_execution import Session
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
@@ -16,7 +16,7 @@ from schemas import (
     SessionStatus,
     build_error,
 )
-from runtime.tracing import Span, Tracer
+from infra.observability.tracing import Span, Tracer
 from utils.log.log import Logger, zap
 from utils.concurrency.thread_event import ThreadEvent
 

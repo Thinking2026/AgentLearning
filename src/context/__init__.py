@@ -1,4 +1,4 @@
-from .agent_context import AgentContext
+from .manager import AgentContext
 from .estimator import (
     BaseTokenEstimator,
     ClaudeTokenEstimator,

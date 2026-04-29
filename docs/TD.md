@@ -1417,7 +1417,7 @@ UserPreference 聚合内的键值对单元。
 ```
 src/
 │
-├── shared/                        # 跨模块共享基础类型
+├── schemas/                        #  数据 Schema（现有目录保留）+ 新文件
 │   ├── domain.py                  # AggregateRoot 基类、DomainEvent 基类
 │   ├── types.py                   # 强类型 ID 别名（TaskId, UserId, StepId…）
 │   └── event_bus.py               # 事件总线接口（publish/subscribe）
@@ -1514,7 +1514,6 @@ src/
 │   │—— user_thread.py        
 │
 ├── config/                        # 配置管理（现有目录保留）
-├── schemas/                       # 数据 Schema（现有目录保留）
 └── utils/                         # 工具函数（现有目录保留）
     ├── concurrency/
     ├── env_util/

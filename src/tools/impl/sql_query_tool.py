@@ -4,7 +4,7 @@ from typing import Any
 
 from schemas import AGENT_EXECUTION_ERROR, AgentError, SQL_QUERY_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_error
 from infra.db import RelationalStorage, SQLQueryRequest
-from tools.tools import BaseTool, build_tool_output
+from tools.models import BaseTool, build_tool_output
 
 
 def build_sql_query_tool_name(backend_name: str) -> str:

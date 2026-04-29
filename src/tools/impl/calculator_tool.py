@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 from schemas import CALCULATION_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_error
-from tools.tools import BaseTool, build_tool_output
+from tools.models import BaseTool, build_tool_output
 
 
 class CalculatorTool(BaseTool):

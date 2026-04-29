@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from schemas import FILE_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_error
-from tools.tools import BaseTool, build_tool_output
+from tools.models import BaseTool, build_tool_output
 from utils.env_util.runtime_env import get_task_runtime_dir
 
 

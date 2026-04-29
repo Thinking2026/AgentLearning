@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.strategy.impl.react.message_formatter import MessageFormatter
+from execution.strategies.react.message_formatter import MessageFormatter
 from context.estimator.token_estimator import ClaudeTokenEstimator
 from context.truncation.token_truncation import (
     ReActContextTruncator,

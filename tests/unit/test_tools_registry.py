@@ -8,8 +8,8 @@ import pytest
 
 from schemas.types import ToolCall, ToolResult
 from schemas.errors import AgentError, TOOL_NOT_FOUND, TOOL_TIMEOUT, TOOL_EXECUTION_ERROR
-from tools.tools import BaseTool, build_tool_output
-from tools.registry import (
+from tools.models import BaseTool, build_tool_output
+from tools.orchestrator import (
     ToolRegistry,
     ToolChainRouter,
     ToolHandlerNode,

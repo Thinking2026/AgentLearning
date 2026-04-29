@@ -13,8 +13,8 @@ from utils.env_util.runtime_env import (
 )
 from utils.concurrency.thread_event import ThreadEvent
 
-from .CLI import UserThread
-from .backend import AgentThread
+from .user_thread import UserThread
+from .agent_thread import AgentThread
 
 
 class AgentApplication:

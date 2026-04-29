@@ -4,7 +4,7 @@ from typing import Any
 
 from schemas import AgentError, ToolResult, VECTOR_SCHEMA_TOOL_ERROR, build_error
 from infra.db import VectorStorage
-from tools.tools import BaseTool, build_tool_output
+from tools.models import BaseTool, build_tool_output
 
 
 def build_vector_schema_tool_name(backend_name: str) -> str:

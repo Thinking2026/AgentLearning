@@ -3,12 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from agent.strategy.decision import StrategyDecision
+from execution.strategies.decision import StrategyDecision
 from schemas import LLMMessage, LLMRequest, LLMResponse
 
 if TYPE_CHECKING:
-    from agent.agent_executor import AgentExecutor
-    from context.agent_context import AgentContext
+    from execution.services.step_orchestration import AgentExecutor
+    from context.manager import AgentContext
     from schemas import ToolCall, ToolResult
     from tools import ToolRegistry
 
