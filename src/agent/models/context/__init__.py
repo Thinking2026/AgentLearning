@@ -1,4 +1,4 @@
-from .manager import AgentContext
+from .manager import ContextManager
 from .estimator import (
     BaseTokenEstimator,
     ClaudeTokenEstimator,
@@ -7,7 +7,7 @@ from .estimator import (
 )
 
 __all__ = [
-    "AgentContext",
+    "ContextManager",
     "BaseTokenEstimator",
     "ClaudeTokenEstimator",
     "OpenAICompatibleTokenEstimator",

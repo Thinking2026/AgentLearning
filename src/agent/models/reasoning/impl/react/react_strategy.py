@@ -17,7 +17,7 @@ from schemas import (
 )
 
 if TYPE_CHECKING:
-    from agent.models.context.manager import AgentContext
+    from agent.models.context.manager import ContextManager
     from tools import ToolRegistry
 
 
@@ -78,7 +78,7 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
 
     def build_llm_request(
         self,
-        agent_context: AgentContext,
+        agent_context: ContextManager,
         tool_registry: ToolRegistry,
     ) -> LLMRequest:
         return self._formatter.build_request(

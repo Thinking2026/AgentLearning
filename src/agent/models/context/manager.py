@@ -4,7 +4,7 @@ import threading
 
 from schemas import LLMMessage
 
-class AgentContext:
+class ContextManager:
     def __init__(self) -> None:
         self._system_prompt = ""
         self._archived_tasks: list[list[LLMMessage]] = []

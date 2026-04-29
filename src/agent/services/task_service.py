@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable
 
 from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
 from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
-from agent.models.context.manager import AgentContext
+from agent.models.context.manager import ContextManager
 from agent.models.context.truncation.token_truncation import ContextTruncator, TruncatorFactory
 from agent.models.reasoning.decision import FinalAnswer, ResponseTruncated
 from agent.models.reasoning.impl import ReActStrategy
@@ -121,7 +121,7 @@ class AgentExecutor:
     ) -> None:
         self._logger = logger
         self._config = config
-        self._agent_context = AgentContext()
+        self._agent_context = ContextManager()
         self._retry_config = RetryConfig(
             retry_base=float(config.get("llm.retry.base", 0.5)),
             retry_max_delay=float(config.get("llm.retry.max_delay", 60.0)),

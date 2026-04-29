@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from agent.models.context.manager import AgentContext
+from agent.models.context.manager import ContextManager
 from schemas.types import LLMMessage
 
 
@@ -21,27 +21,27 @@ def make_msg(role: str, content: str) -> LLMMessage:
 # ---------------------------------------------------------------------------
 
 def test_set_and_get_system_prompt():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.set_system_prompt("You are an agent.")
     assert ctx.get_system_prompt() == "You are an agent."
 
 
 def test_append_system_prompt():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.set_system_prompt("Hello")
     ctx.append_system_prompt(" World")
     assert ctx.get_system_prompt() == "Hello World"
 
 
 def test_append_system_prompt_line():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.set_system_prompt("Line1")
     ctx.append_system_prompt_line("Line2")
     assert ctx.get_system_prompt() == "Line1\nLine2"
 
 
 def test_default_system_prompt_is_empty():
-    ctx = AgentContext()
+    ctx = ContextManager()
     assert ctx.get_system_prompt() == ""
 
 
@@ -50,7 +50,7 @@ def test_default_system_prompt_is_empty():
 # ---------------------------------------------------------------------------
 
 def test_append_and_get_conversation():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.append_conversation_message(make_msg("user", "hello"))
     ctx.append_conversation_message(make_msg("assistant", "hi"))
     history = ctx.get_conversation_history()
@@ -60,7 +60,7 @@ def test_append_and_get_conversation():
 
 
 def test_get_conversation_history_returns_copies():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.append_conversation_message(make_msg("user", "original"))
     history = ctx.get_conversation_history()
     history[0].content = "modified"
@@ -69,14 +69,14 @@ def test_get_conversation_history_returns_copies():
 
 
 def test_clear_conversation_history():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.append_conversation_message(make_msg("user", "msg"))
     ctx.clear_conversation_history()
     assert ctx.get_conversation_history() == []
 
 
 def test_clear_current_task():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.append_conversation_message(make_msg("user", "msg"))
     ctx.clear_current_task()
     assert ctx.get_current_task_messages() == []
@@ -87,7 +87,7 @@ def test_clear_current_task():
 # ---------------------------------------------------------------------------
 
 def test_archive_current_task():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.append_conversation_message(make_msg("user", "task1"))
     ctx.archive_current_task()
     assert ctx.get_current_task_messages() == []
@@ -97,13 +97,13 @@ def test_archive_current_task():
 
 
 def test_archive_empty_task_does_nothing():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.archive_current_task()
     assert ctx.get_archived_tasks() == []
 
 
 def test_archived_tasks_included_in_history():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.append_conversation_message(make_msg("user", "task1"))
     ctx.archive_current_task()
     ctx.append_conversation_message(make_msg("user", "task2"))
@@ -114,7 +114,7 @@ def test_archived_tasks_included_in_history():
 
 
 def test_multiple_archives():
-    ctx = AgentContext()
+    ctx = ContextManager()
     for i in range(3):
         ctx.append_conversation_message(make_msg("user", f"task{i}"))
         ctx.archive_current_task()
@@ -127,7 +127,7 @@ def test_multiple_archives():
 # ---------------------------------------------------------------------------
 
 def test_replace_conversation_history():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.append_conversation_message(make_msg("user", "old"))
     ctx.archive_current_task()
     new_msgs = [make_msg("user", "new1"), make_msg("assistant", "new2")]
@@ -139,7 +139,7 @@ def test_replace_conversation_history():
 
 
 def test_replace_conversation_history_returns_copies():
-    ctx = AgentContext()
+    ctx = ContextManager()
     msgs = [make_msg("user", "original")]
     ctx.replace_conversation_history(msgs)
     msgs[0].content = "modified"
@@ -151,7 +151,7 @@ def test_replace_conversation_history_returns_copies():
 # ---------------------------------------------------------------------------
 
 def test_release_clears_everything():
-    ctx = AgentContext()
+    ctx = ContextManager()
     ctx.set_system_prompt("prompt")
     ctx.append_conversation_message(make_msg("user", "msg"))
     ctx.archive_current_task()
@@ -166,7 +166,7 @@ def test_release_clears_everything():
 # ---------------------------------------------------------------------------
 
 def test_concurrent_appends():
-    ctx = AgentContext()
+    ctx = ContextManager()
     errors = []
 
     def append_messages():
