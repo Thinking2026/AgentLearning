@@ -3,11 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 
 from schemas.ids import TaskPlanId, TaskStepId
-from task.models.entities import PlanStep, Task, TaskProcessor, TaskPlan, TaskStep
+from task.models.entities import Task, TaskProcessor, TaskStep
 from task.factory.task_plan_factory import TaskPlanFactory
 
 if TYPE_CHECKING:
-    from execution.services.step_orchestration import StepOrchestrationService
+    from agent.services.task_service import StepOrchestrationService
     from schemas import UIMessage
 
 
@@ -30,9 +30,11 @@ class TaskApplication:
         task_track = TaskProcessor.start(
             task_id=task.id,
             plan_id=plan.id,
+            step_ids=[step.id for step in plan.steps],
         )
         task.start_execution(task_track.id)
         task_track.execute_step(0)
+        step_id = plan.steps[0].id
 
         task_step = TaskStep.start(
             execution_id=task_track.id,

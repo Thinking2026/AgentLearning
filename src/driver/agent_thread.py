@@ -3,10 +3,10 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
-from execution.services.step_orchestration import AgentExecutor, StepOrchestrationService
 from config import ConfigValueReader, JsonConfig
+from agent.application.task_application import TaskApplication
+from agent.services.task_service import AgentExecutor, StepOrchestrationService
 from task.models.entities import Task
-from task.services.task_orchestration import TaskOrchestrationService
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import (
     AGENT_THREAD_ERROR,
@@ -39,7 +39,7 @@ class AgentThread(threading.Thread):
         self._stop_callback = stop_callback
         self._logger = logger
         self._executor: AgentExecutor | None = None
-        self._task_orchestration: TaskOrchestrationService | None = None
+        self._task_orchestration: TaskApplication | None = None
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
         self._load_tracing_config()
@@ -102,7 +102,7 @@ class AgentThread(threading.Thread):
         )
         max_iter = int(self._config.get("agent.max_attempt_iterations", 60))
         step_svc = StepOrchestrationService(executor, max_iterations=max_iter)
-        self._task_orchestration = TaskOrchestrationService(step_svc)
+        self._task_orchestration = TaskApplication(step_svc)
         return executor
 
     def _load_tracing_config(self) -> None:
