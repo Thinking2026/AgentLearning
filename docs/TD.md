@@ -1405,7 +1405,14 @@ UserPreference 聚合内的键值对单元。
 
 # 代码目录结构
 
-按功能模块组织顶层目录，模块内部保持浅层结构（models / services / events / handlers），不强制套用 DDD 完整分层。现有基础设施模块（llm / infra / runtime / utils）保留原结构，仅在需要时补充领域模型文件。
+按功能模块组织顶层目录。模块内部分层规则：
+- `models/` — 聚合根、值对象（领域层）
+- `events/` — 领域事件（领域层）
+- `services/` — **领域服务**：跨聚合但在同一限界上下文内的领域逻辑，使用领域语言，不依赖基础设施
+- `handlers/` — 命令处理器（应用层入口）
+- `policies/` — 跨聚合自动响应策略
+
+跨限界上下文的编排逻辑（**应用服务**）统一放在顶层 `application/services/`，不下沉到各业务模块。
 
 ```
 src/
@@ -1415,7 +1422,7 @@ src/
 │   ├── types.py                   # 强类型 ID 别名（TaskId, UserId, StepId…）
 │   └── event_bus.py               # 事件总线接口（publish/subscribe）
 │
-├── task/                          # 任务管理功能模块
+├── task/                          # 任务管理上下文
 │   │                              # 对应 TD: Task/TaskPlan/TaskExecution/TaskStep 聚合
 │   ├── models/
 │   │   ├── task.py                # Task 聚合根（生命周期状态机）
@@ -1428,22 +1435,24 @@ src/
 │   │   ├── execution_events.py    # TaskExecutionStarted/Paused/Resumed/Snapshot…
 │   │   └── step_events.py         # TaskStepCompleted/Skipped/Interrupted
 │   ├── services/
-│   │   └── task_orchestration.py  # TaskOrchestrationService（协调 Task/Plan/Execution）
+│   │   └── task_orchestration.py  # 领域服务：协调 Task/Plan/Execution 状态流转（同一BC内）
 │   ├── handlers/                  # 命令处理器（SubmitTask/CancelTask/SubmitGuidance…）
 │   └── repository.py              # 持久化接口（TaskRepo/PlanRepo/ExecutionRepo/StepRepo）
 │
-├── execution/                     # Agent 执行功能模块
+├── execution/                     # Agent 执行上下文
 │   │                              # 对应 TD: StepExecution + 四个支撑聚合
 │   ├── models/
 │   │   └── step_execution.py      # StepExecution 聚合根 + TerminationReason 值对象
 │   ├── events/
 │   │   └── step_events.py         # StepExecutionStarted/ReasoningStarted/LLMResponseReceived…
 │   ├── services/
-│   │   └── step_orchestration.py  # StepOrchestrationService（协调推理循环内五个聚合）
+│   │   └── step_orchestration.py  # 领域服务：协调推理循环内五个聚合（同一BC内）
+│   ├── strategies/
+│   │   └── react/                 # ReAct 推理循环策略实现
 │   ├── handlers/                  # StartStepExecutionHandler
 │   └── policies/                  # 跨聚合自动响应（OnContextAssembled/OnReasoningCompleted…）
 │
-├── context/                       # 上下文管理功能模块（现有目录保留，补充领域模型）
+├── context/                       # 上下文管理上下文（现有目录保留，补充领域模型）
 │   │                              # 对应 TD: ContextManager 聚合根
 │   ├── manager.py                 # ContextManager 聚合根（组装/裁剪/版本管理）
 │   ├── models.py                  # ContextWindow 值对象、Message 值对象
@@ -1452,14 +1461,14 @@ src/
 │   ├── estimator/                 # Token 估算（现有）
 │   └── truncation/                # 上下文裁剪策略（现有）
 │
-├── llm/                           # LLM 集成功能模块（现有目录保留，补充领域模型）
+├── llm/                           # LLM 集成上下文（现有目录保留，补充领域模型）
 │   │                              # 对应 TD: ModelRouter 聚合根
 │   ├── router.py                  # ModelRouter 聚合根（模型选择策略）+ ModelSpec 值对象
 │   ├── events.py                  # ModelSelected 事件
 │   ├── providers/                 # 各 LLM 提供商适配器（现有）
 │   └── routing/                   # 路由规则实现（现有）
 │
-├── tools/                         # 工具执行功能模块（现有目录保留，补充领域模型）
+├── tools/                         # 工具执行上下文（现有目录保留，补充领域模型）
 │   │                              # 对应 TD: ToolCallOrchestrator 聚合根
 │   ├── orchestrator.py            # ToolCallOrchestrator 聚合根（编排/失败分类）
 │   ├── models.py                  # ToolCallRecord 值对象、ToolFailureClass 枚举
@@ -1467,49 +1476,42 @@ src/
 │   ├── impl/                      # 具体工具实现（SQL/Excel/Shell…，现有）
 │   └── mock/                      # Mock 工具（现有）
 │
-├── knowledge/                     # 知识飞轮功能模块
+├── knowledge/                     # 知识飞轮上下文
 │   │                              # 对应 TD: KnowledgeEntry 聚合 + KnowledgeLoader 聚合
 │   ├── models/
 │   │   ├── knowledge_entry.py     # KnowledgeEntry 聚合根 + KnowledgeContent 值对象
 │   │   └── knowledge_loader.py    # KnowledgeLoader 聚合根（检索/失败降级）
 │   ├── events/
 │   │   └── knowledge_events.py    # KnowledgeExtracted/Indexed/ReusableKnowledgeLoaded
-│   ├── services/
-│   │   └── knowledge_persistence.py  # KnowledgePersistenceService（提取/去重/写入）
 │   ├── policies/
 │   │   └── on_task_succeeded.py   # 监听 TaskSucceeded → 触发知识提取
 │   └── repository.py
 │
-├── preference/                    # 用户偏好功能模块
+├── personality/                    # 用户偏好上下文
 │   │                              # 对应 TD: UserPreference 聚合
 │   ├── models/
 │   │   └── user_preference.py     # UserPreference 聚合根 + Preference 值对象
 │   ├── events/
 │   │   └── preference_events.py   # UserPreferenceSubmitted/Saved
-│   ├── services/
-│   │   └── preference_application.py  # UserPreferenceApplicationService（偏好解释与映射）
 │   ├── handlers/
 │   └── repository.py
 │
-├── agent/                         # Agent 核心（现有目录保留）
-│   ├── personality/
-│   ├── strategy/
-│   │   └── impl/react/            # ReAct 策略
-│   └── session.py
-│
-├── runtime/                       # 运行时管理（现有目录保留）
-│   ├── checkpoint/
-│   ├── metrics/
-│   └── tracing/
-│
 ├── infra/                         # 基础设施（现有目录保留）
 │   ├── cache/
+│   ├── checkpoint/                # ExecutionSnapshot 持久化实现
+│   ├── observability/
+│   │   ├── metrics/               # 指标采集
+│   │   └── tracing/               # 链路追踪
 │   └── db/
 │       └── impl/                  # SQLite/MySQL/ChromaDB
 │
-├── application/                   # 应用入口（现有目录保留）
-│   ├── CLI/
-│   └── backend/
+├── orchestration/                 # 应用服务：跨限界上下文编排            
+│   │——knowledge_persistence.py   # KnowledgePersistenceService（跨 task BC 和 knowledge BC）
+│   │——preference_application.py  # UserPreferenceApplicationService（跨 preference BC 和 execution BC）
+|
+|—— agent/
+│   ├── agent_thread.py
+│   │—— user_thread.py        
 │
 ├── config/                        # 配置管理（现有目录保留）
 ├── schemas/                       # 数据 Schema（现有目录保留）
@@ -1523,17 +1525,18 @@ src/
 
 ## 模块说明
 
-| 模块 | 职责 | 对应 TD 概念 |
-|------|------|------------|
-| `shared/` | 跨模块基础类型，不含业务逻辑 | AggregateRoot、DomainEvent、EventBus |
-| `task/` | 任务生命周期管理 | Task/TaskPlan/TaskExecution/TaskStep 聚合 + TaskOrchestrationService |
-| `execution/` | 步骤推理循环管理 | StepExecution 聚合 + StepOrchestrationService |
-| `context/` | 上下文组装与裁剪 | ContextManager 聚合（现有目录扩展） |
-| `llm/` | 模型选择与调用 | ModelRouter 聚合（现有目录扩展） |
-| `tools/` | 工具调用编排 | ToolCallOrchestrator 聚合（现有目录扩展） |
-| `knowledge/` | 知识检索与持久化 | KnowledgeEntry/KnowledgeLoader 聚合 + KnowledgePersistenceService |
-| `preference/` | 用户偏好存取与解释 | UserPreference 聚合 + UserPreferenceApplicationService |
-| `agent/` | Agent 策略与会话 | 现有目录保留 |
-| `runtime/` | 检查点、指标、追踪 | 现有目录保留 |
-| `infra/` | 数据库、缓存适配 | 现有目录保留 |
+| 模块 | 层次 | 职责 | 对应 TD 概念 |
+|------|------|------|------------|
+| `shared/` | 领域层 | 跨模块基础类型，不含业务逻辑 | AggregateRoot、DomainEvent、EventBus |
+| `task/` | 领域层 | 任务生命周期管理；`services/` 为领域服务（BC 内跨聚合协调） | Task/TaskPlan/TaskExecution/TaskStep 聚合 + TaskOrchestrationService |
+| `execution/` | 领域层 | 步骤推理循环管理；`services/` 为领域服务（BC 内跨聚合协调） | StepExecution 聚合 + StepOrchestrationService；`strategies/react/` 为 ReAct 实现 |
+| `context/` | 领域层 | 上下文组装与裁剪 | ContextManager 聚合（现有目录扩展） |
+| `llm/` | 领域层 | 模型选择与调用 | ModelRouter 聚合（现有目录扩展） |
+| `tools/` | 领域层 | 工具调用编排 | ToolCallOrchestrator 聚合（现有目录扩展） |
+| `knowledge/` | 领域层 | 知识检索与持久化（写侧） | KnowledgeEntry/KnowledgeLoader 聚合 |
+| `personality/` | 领域层 | 用户偏好存取 | UserPreference 聚合 |
+| `orchestration/` | 应用层 | **应用服务**：跨限界上下文编排，处理用例事务边界 | KnowledgePersistenceService、UserPreferenceApplicationService |
+| `agent/user_thread.py` | 应用层 | CLI 适配器，负责 stdin/stdout I/O 和消息格式化，原 `UserThread` | 用户界面适配器 |
+| `agent/agent_thread.py` | 应用层 | 任务执行驱动，管理 Session 生命周期并驱动执行循环，原 `AgentThread` | TaskExecution 应用层驱动 |
+| `infra/` | 基础设施层 | 数据库、缓存、快照持久化、可观测性 | 现有目录重组：`checkpoint/` 和 `observability/` 从原 `runtime/` 迁入 |
 
