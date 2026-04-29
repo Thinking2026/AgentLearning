@@ -1409,7 +1409,7 @@ UserPreference 聚合内的键值对单元。
 - `models/` — 聚合根、值对象（领域层）
 - `events/` — 领域事件（领域层）
 - `services/` — **领域服务**：跨聚合但在同一限界上下文内的领域逻辑，使用领域语言，不依赖基础设施
-- `handlers/` — 命令处理器（应用层入口）
+- `applicaiton/` — 领域内应用层
 - `policies/` — 跨聚合自动响应策略
 
 跨限界上下文的编排逻辑（**应用服务**）统一放在顶层 `application/services/`，不下沉到各业务模块。
@@ -1436,7 +1436,7 @@ src/
 │   │   └── step_events.py         # TaskStepCompleted/Skipped/Interrupted
 │   ├── services/
 │   │   └── task_orchestration.py  # 领域服务：协调 Task/Plan/Execution 状态流转（同一BC内）
-│   ├── handlers/                  # 命令处理器（SubmitTask/CancelTask/SubmitGuidance…）
+│   ├── application/                  # 命令处理器（SubmitTask/CancelTask/SubmitGuidance…）
 │   └── repository.py              # 持久化接口（TaskRepo/PlanRepo/ExecutionRepo/StepRepo）
 │
 ├── execution/                     # Agent 执行上下文
@@ -1449,7 +1449,7 @@ src/
 │   │   └── step_orchestration.py  # 领域服务：协调推理循环内五个聚合（同一BC内）
 │   ├── strategies/
 │   │   └── react/                 # ReAct 推理循环策略实现
-│   ├── handlers/                  # StartStepExecutionHandler
+│   ├── application/                  # StartStepExecutionHandler
 │   └── policies/                  # 跨聚合自动响应（OnContextAssembled/OnReasoningCompleted…）
 │
 ├── context/                       # 上下文管理上下文（现有目录保留，补充领域模型）
@@ -1493,7 +1493,7 @@ src/
 │   │   └── user_preference.py     # UserPreference 聚合根 + Preference 值对象
 │   ├── events/
 │   │   └── preference_events.py   # UserPreferenceSubmitted/Saved
-│   ├── handlers/
+│   ├── application/
 │   └── repository.py
 │
 ├── infra/                         # 基础设施（现有目录保留）
