@@ -791,6 +791,151 @@ StepExecution 终态映射到任务层：
 > 缩进表示层次：任务层事件顶格，步骤层事件缩进一级，步骤内推理循环缩进两级。
 > 步骤层事件不向任务层透传，两层通过 SE17 StepResultEvaluated → E14 TaskStepCompleted 衔接。
 
+### 聚合
+
+1. Planner -聚合根，输出一个Plan表达，负责根据任务生成计划，评审计划
+
+   **analyze**：方法，负责输出任务性质
+
+   **build_plan**:方法，输出执行计划信息
+
+   **evaluate**：方法，评估计划，输出评审意见，利用意见重新构建计划
+
+   **revise(stage_id)**
+
+2. Pipeline - 应用层，负责编排整个执行流
+
+   （1）实体SnapshotProcessor
+
+   **save**: 存储快照
+
+   **restore**:
+
+   **delete**
+
+   **list**
+
+   **get**
+
+   
+
+   （2）实体KnowledgeManager
+
+   **extract**
+
+   **save**
+
+   **delete**
+
+   
+
+   （3）TaskQualityEvaluator
+
+   **evaluate**
+
+3. StageExecutor - 聚合根，负责每一个步骤的循环
+
+   **run**
+
+   
+
+   
+
+   ****
+
+   （1）实体KnowledgeLoader
+
+   **query**
+
+   （2）ModelSelector
+
+   **select**
+
+   （3）ContextManager messages给LLM的 ，history完整历史
+
+   **get_context：返回完整信息**
+
+   **add_message(role, content, metadata)**
+
+   **update_message(message_id, content)**
+
+   **delete_message(message_id)**
+
+   **reset()**
+
+   
+
+   **set_system_prompt(prompt)**
+
+   **get_system_prompt()**
+
+   **set_variables(variables)**:如果用户偏好
+
+   **get_variables()**
+
+   
+
+   **get_history(limit, offset)**
+
+   **get_message_by_id(message_id)**
+
+   **filter_by_role(role)**
+
+   
+
+   **get_token_count()**
+
+   **trim_to_max_tokens(max_tokens)**
+
+   **summarize(strategy)**:允许更换策略
+
+   **get_context_window()**：裁剪等逻辑后返回LLM的东西，包括tool call配对，给LLM最后一步
+
+   
+
+   ****
+
+   
+
+   
+
+   ReasoningManager
+
+   ****
+
+   **set_strategy(strategy)** - strategy 决定 reasoning unit <-> 怎么和messages联动呢？
+
+   **get_strategy()**
+
+   | 方法                                     | 职责                                                 |
+   | ---------------------------------------- | ---------------------------------------------------- |
+   |                                          |                                                      |
+   |                                          |                                                      |
+   | `format_tool_request(tool_name, params)` | 将推理结论格式化为工具调用                           |
+   | execute_reasoning():next decision        | 基于当前推理决定下一步行动（回答/调用工具/继续思考） |
+
+   
+
+   
+
+   LLMGateway实体 —— 带调用容错，屏蔽LLM Provider细节，返回标准协议
+
+   **call_llm**
+
+   
+
+   
+
+   ToolRegistry实体 —— 提供一套调用标准协议，带基础容错，涉及推理需要的容错在StageExecutor层
+
+   **invoke_tool()**
+
+   
+
+   QualityEvaluator（统一）
+
+   **evaluate**
+
 ### 主干流程（Happy Path）
 
 ```
