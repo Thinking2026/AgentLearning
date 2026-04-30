@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from schemas import UIMessage
 
 
-class TaskApplication:
+class Pipeline:
     """领域服务：协调 Task/TaskPlan/TaskExecution/TaskStep 生命周期。"""
 
     def __init__(self, runtime: "AgentRuntime") -> None:

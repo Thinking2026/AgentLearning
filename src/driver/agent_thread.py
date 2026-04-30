@@ -4,7 +4,7 @@ import threading
 from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
-from agent.application.task_application import TaskApplication
+from agent.application.task_application import Pipeline
 from agent.services.task_service import AgentExecutor, AgentRuntime
 from agent.models.task.task_entities import Task
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
@@ -39,7 +39,7 @@ class AgentThread(threading.Thread):
         self._stop_callback = stop_callback
         self._logger = logger
         self._executor: AgentExecutor | None = None
-        self._task_app: TaskApplication | None = None
+        self._task_app: Pipeline | None = None
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
         self._load_tracing_config()
@@ -102,7 +102,7 @@ class AgentThread(threading.Thread):
         )
         max_iter = int(self._config.get("agent.max_attempt_iterations", 60))
         runtime = AgentRuntime(executor, max_iterations=max_iter)
-        self._task_app = TaskApplication(runtime)
+        self._task_app = Pipeline(runtime)
         return executor
 
     def _load_tracing_config(self) -> None:
