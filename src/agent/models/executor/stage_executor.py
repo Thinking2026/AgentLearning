@@ -125,12 +125,6 @@ class StageExecutor:
             plan_step_description=plan_step_description,
         )
         self._current_stage = stage
-
-        if not resume_existing_context:
-            # Load reusable knowledge and seed the step goal once per fresh step.
-            self._load_knowledge(plan_step_goal)
-            self._context_manager.add_message("user", plan_step_goal)
-
         last_answer = ""
         while stage.iteration_count < self._max_iterations:
             # Check for interrupt / pause
