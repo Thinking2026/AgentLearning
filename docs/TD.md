@@ -356,9 +356,11 @@ KnowledgeEntryId = NewType("KnowledgeEntryId", str)  # 知识条目唯一标识
 id: PlanId
 task_id: TaskId
 task_description: str
-analysis: TaskAnalysis | None  # 任务分析结果，build_plan 前填充
-steps: list[PlanStep]          # 有序步骤列表
-version: int                   # 从 1 开始，每次 renew/revise 递增
+analysis: TaskAnalysis | None       # 任务分析结果，build_plan 前填充
+steps: list[PlanStep]               # 有序步骤列表
+version: int                        # 从 1 开始，每次 renew/revise 递增
+_llm_gateway: LLMGateway            # 注入依赖，用于任务分析和计划制定
+_knowledge_loader: KnowledgeLoader  # 注入依赖，制定计划时检索已有知识
 ```
 
 #### 值对象：PlanStep
@@ -376,25 +378,23 @@ class PlanStep:
 
 ```python
 @classmethod
-def create(cls, task_id: TaskId, task_description: str) -> "Planner":
-    """创建空 Planner，尚未制定计划"""
+def create(cls, task_id: TaskId, task_description: str,
+           llm_gateway: LLMGateway,
+           knowledge_loader: KnowledgeLoader) -> "Planner":
+    """创建空 Planner，注入 LLMGateway 和 KnowledgeLoader，尚未制定计划"""
 
-def analyze(self, llm_gateway: LLMGateway) -> "Planner":
+def analyze(self) -> "Planner":
     """调用 LLM 分析任务特征，填充 self.analysis，返回 self 支持链式调用"""
 
-def build_plan(self, llm_gateway: LLMGateway,
-               knowledge_hint: str = "") -> None:
-    """调用 LLM 制定整个计划，填充 self.steps，version=1，
-    发布 TaskPlanFinalized(E6)"""
+def build_plan(self, knowledge_hint: str = "") -> None:
+    """检索已有知识（KnowledgeLoader）后调用 LLM 制定整个计划，
+    填充 self.steps，version=1，发布 TaskPlanFinalized(E6)"""
 
-def renew(self, llm_gateway: LLMGateway,
-          trigger: PlanUpdateTrigger,
-          feedback: str = "") -> None:
+def renew(self, trigger: PlanUpdateTrigger, feedback: str = "") -> None:
     """全量重新制定计划（质检不通过/计划评测不通过），
     version+1，发布 TaskPlanRenewal(E7)"""
 
 def revise(self, step_id: PlanStepId,
-           llm_gateway: LLMGateway,
            trigger: PlanUpdateTrigger,
            feedback: str = "") -> None:
     """局部更新某步骤的 goal/description（步骤评测不通过/用户建议/步骤无法完成），
@@ -451,14 +451,16 @@ Pipeline 负责编排Agent解决问题的执行流：
 #### 成员变量
 
 ```python
-_stage_executor: StageExecutor      # 执行引擎
+_planner: Planner                           # 计划制定与更新
+_stage_executor: StageExecutor              # Stage 执行引擎
 _checkpoint_processor: CheckpointProcessor
 _knowledge_manager: KnowledgeManager
 _quality_evaluator: QualityEvaluator
-_llm_gateway: LLMGateway
+_model_selector: ModelSelector              # 选择主 Provider 及备选链
+_llm_provider_registry: LLMProviderRegistry # 按需构建 LLMGateway 实例
 _event_bus: EventBus
-_max_plan_retries: int              # 计划重试上限，防止无限循环，默认 3
-_max_stage_retries: int             # 单步骤重试上限，默认 2
+_max_plan_retries: int                      # 计划重试上限，防止无限循环，默认 3
+_max_stage_retries: int                     # 单步骤重试上限，默认 2
 ```
 
 #### 方法签名
@@ -717,8 +719,11 @@ class StageStatus(str, Enum):
 #### 成员变量
 
 ```python
-_reasoning_manager: ReasoningManager   # 单轮推理
+_reasoning_manager: ReasoningManager   # 单轮推理，持有当前 LLMGateway
 _context_manager: ContextManager       # 对话历史与上下文管理
+_tool_registry: ToolRegistry           # 工具调用分发
+_quality_evaluator: QualityEvaluator   # 步骤结果评测
+_knowledge_loader: KnowledgeLoader     # 步骤开始前加载可复用知识
 _current_stage: Stage | None
 _max_iterations: int                   # 单 Stage 最大推理轮次，默认 60
 ```
@@ -754,34 +759,200 @@ def reset_for_next_stage(self) -> None:
 
 ### ReasoningManager（实体，属于 StageExecutor 聚合）
 
+**文件**：`src/agent/models/reasoning/reasoning_manager.py`
 
+**职责**：执行单轮 LLM 推理。调用 Strategy 将当前上下文组装为 LLMRequest，调用 LLMGateway 执行一次 API 调用，再由 Strategy 将 LLMResponse 解析为标准 NextDecision。ReasoningManager 不处理工具执行、上下文写入、Provider 切换等逻辑，这些由 StageExecutor 负责。
+
+#### 成员变量
+
+```python
+_llm_gateway: LLMGateway   # 当前使用的 Provider 网关，由 StageExecutor 注入
+_strategy: Strategy        # 推理策略（ReAct 等），决定如何组装请求和解析响应
+```
+
+#### 值对象：NextDecision
+
+```python
+# src/agent/models/reasoning/decision.py
+class NextDecisionType(str, Enum):
+    TOOL_CALL            = "TOOL_CALL"            # 需要调用工具
+    FINAL_ANSWER         = "FINAL_ANSWER"         # 产出最终答案，Stage 结束
+    CONTINUE             = "CONTINUE"             # 普通推理，继续下一轮
+    CLARIFICATION_NEEDED = "CLARIFICATION_NEEDED" # 需要用户澄清，暂停 Stage
+
+@dataclass(frozen=True)
+class NextDecision:
+    decision_type: NextDecisionType
+    tool_calls: list[ToolCall] = field(default_factory=list)  # TOOL_CALL 时有值
+    answer: str = ""                                           # FINAL_ANSWER 时有值
+    message: str = ""                                          # CONTINUE/CLARIFICATION_NEEDED 时有值
+    raw_response: LLMResponse | None = None                    # 原始 LLM 响应，供调试用
+```
+
+#### 方法签名
+
+```python
+def reason_once(self, context_manager: ContextManager,
+                tool_registry: ToolRegistry) -> NextDecision:
+    """执行单轮推理：
+    1. strategy.build_llm_request(context_manager, tool_registry) → LLMRequest
+    2. llm_gateway.call(request) → LLMResponse
+    3. strategy.parse_llm_response(response) → NextDecision
+    发布 ReasoningStarted(E27)、NextDecisionMade(E32)
+    LLMGateway 抛出的 AgentError 直接向上传播，由 StageExecutor 处理"""
+
+def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:
+    """Provider 降级时由 StageExecutor 调用，替换当前网关"""
+```
+
+#### 发布事件
+
+`ReasoningStarted(E27)`, `NextDecisionMade(E32)`
 
 ---
 
 ### LLMGateway（实体）
 
+**文件**：`src/llm/llm_gateway.py`
 
+**职责**：封装对单个 LLM Provider 的一次 API 调用。负责将标准 LLMRequest 转换为该 Provider 的具体协议格式，调用 Provider API，将响应转换回标准 LLMResponse。同时处理围绕这一次调用的基本容错：超时控制、对 A 类可重试错误（TRANSIENT、RATE_LIMITED）的退避抖动重试。
 
----
-
-### Infra基础设施对象构建（基础设施工厂）
-
-
-
----
-
-### ModelSelector（实体，属于 StageExecutor 聚合）
-
-**文件**：`src/agent/models/model_routing/provider_router.py`
-
-**职责**：根据推理策略、延迟偏好、token 预算选定主模型和备选模型链。
-
-对应代码中的 `LLMProviderRouter`。
+LLMGateway **不负责** Provider 选择、跨 Provider 降级、上下文裁剪等逻辑，这些由 StageExecutor / Pipeline 负责。
 
 #### 成员变量
 
 ```python
-_clients: list[SingleProviderClient]   # 按优先级排列
+_provider: SingleProviderClient     # 具体 Provider 实现（Claude/OpenAI/Qwen 等）
+_max_retries: int                   # A 类错误最大重试次数，默认 3
+_retry_delays: tuple[float, ...]    # 退避延迟序列（秒），如 (1.0, 2.0, 4.0)
+_timeout: float                     # 单次调用超时（秒），默认 60.0
+```
+
+#### 方法签名
+
+```python
+def call(self, provider_name: str, request: LLMRequest) -> LLMResponse:
+    """执行一次 LLM API 调用：
+    1. 调用provider_name对应的provider （含超时控制）
+    2. 对 LLM.A.TRANSIENT / LLM.A.RATE_LIMITED 按 _retry_delays 退避重试（加 jitter）
+    3. 超出重试次数后抛出原始 AgentError，由调用方决定是否切换 Provider
+    所有 Provider 原始异常均在 _provider 内部转换为 AgentError（见错误码映射表）"""
+```
+
+#### 已实现 Provider
+
+| Provider | 文件 | 协议 |
+|---|---|---|
+| claude | providers/claude_api.py | Anthropic Messages API |
+| openai | providers/openai_api.py | OpenAI Chat Completions API |
+| qwen | providers/qwen_api.py | OpenAI-compatible |
+| kimi | providers/kimi_api.py | OpenAI-compatible |
+| minmax | providers/minmax_api.py | OpenAI-compatible |
+| glm | providers/glm_api.py | OpenAI-compatible |
+| deepseek | providers/deepseek_api.py | OpenAI-compatible |
+
+---
+
+### Infra基础设施对象构建
+
+**文件**：`src/agent/factory/agent_factory.py`
+
+**职责**：从配置文件读取参数，构建所有基础设施对象和领域对象，完成依赖注入，返回可直接使用的 Pipeline 实例。是系统的唯一组装入口，领域对象本身不感知配置格式。
+
+#### LLMProviderRegistry
+
+```python
+# src/llm/registry.py
+class LLMProviderRegistry:
+    """持有所有已注册的 SingleProviderClient，按名称索引。"""
+
+    def register(self, client: SingleProviderClient) -> None
+    def get(self, provider_name: str) -> SingleProviderClient
+    def list_providers(self) -> list[str]
+
+    def build_gateway(self, provider_name: str,
+                      max_retries: int = 3,
+                      retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
+                      timeout: float = 60.0) -> LLMGateway:
+        """从已注册的 Provider 构建 LLMGateway 实例"""
+```
+
+#### AgentFactory
+
+```python
+# src/agent/factory/agent_factory.py
+class AgentFactory:
+    """从 AgentConfig 构建完整的 Pipeline 及其所有依赖。"""
+
+    @classmethod
+    def from_config(cls, config: AgentConfig) -> "AgentFactory":
+        """读取 config/config.json，初始化 AgentFactory"""
+
+    # ── 基础设施层 ────────────────────────────────────────────────
+    def build_event_bus(self) -> EventBus
+    def build_storage_registry(self) -> StorageRegistry
+    def build_llm_provider_registry(self) -> LLMProviderRegistry
+    def build_tool_registry(self) -> ToolRegistry
+
+    # ── LLM 网关 ──────────────────────────────────────────────────
+    def build_llm_gateway(self, provider_name: str) -> LLMGateway:
+        """委托给 LLMProviderRegistry.build_gateway()"""
+
+    # ── 领域对象 ──────────────────────────────────────────────────
+    def build_model_selector(self) -> ModelSelector
+    def build_reasoning_manager(self, provider_name: str) -> ReasoningManager
+    def build_context_manager(self) -> ContextManager
+    def build_knowledge_loader(self) -> KnowledgeLoader
+    def build_stage_executor(self, provider_name: str) -> StageExecutor
+    def build_planner(self, task_id: TaskId, task_description: str) -> Planner
+    def build_quality_evaluator(self, task_id: TaskId,
+                                task_description: str) -> QualityEvaluator
+    def build_knowledge_manager(self, task_id: TaskId) -> KnowledgeManager
+    def build_checkpoint_processor(self, task_id: TaskId) -> CheckpointProcessor
+
+    # ── 顶层入口 ──────────────────────────────────────────────────
+    def build_pipeline(self) -> Pipeline:
+        """构建完整 Pipeline，注入所有依赖，返回可直接调用 run() 的实例"""
+```
+
+#### 构建顺序与依赖关系
+
+```
+AgentConfig
+  ├─► EventBus
+  ├─► StorageRegistry
+  │     └─► [sqlite / mysql / chromadb 后端按配置注册]
+  ├─► LLMProviderRegistry
+  │     └─► [claude / openai / qwen 等 Provider 按配置注册]
+  ├─► ToolRegistry
+  │     └─► [工具按配置自动注册]
+  ├─► ModelSelector ◄── LLMProviderRegistry
+  ├─► KnowledgeLoader ◄── StorageRegistry(chromadb)
+  ├─► ContextManager
+  ├─► ReasoningManager ◄── LLMGateway(primary_provider), Strategy
+  ├─► StageExecutor ◄── ReasoningManager, ContextManager, ToolRegistry,
+  │                      QualityEvaluator, KnowledgeLoader
+  ├─► Planner ◄── LLMGateway(default_provider), KnowledgeLoader
+  ├─► QualityEvaluator ◄── LLMGateway(default_provider)
+  ├─► KnowledgeManager ◄── LLMGateway(default_provider), StorageRegistry(chromadb)
+  ├─► CheckpointProcessor ◄── StorageRegistry(sqlite)
+  └─► Pipeline ◄── Planner, StageExecutor, CheckpointProcessor,
+                    KnowledgeManager, QualityEvaluator,
+                    ModelSelector, LLMProviderRegistry, EventBus
+```
+
+---
+
+### ModelSelector（实体，由 Pipeline 持有）
+
+**文件**：`src/agent/models/model_routing/provider_router.py`
+
+**职责**：根据推理策略、延迟偏好、token 预算选定主 Provider 及备选链。由 Pipeline 在任务开始时调用，返回 RoutingDecision；Pipeline 据此从 LLMProviderRegistry 构建对应的 LLMGateway 并注入 StageExecutor。
+
+#### 成员变量
+
+```python
+_priority_chain: list[str]   # Provider 名称列表，按优先级排列
 _enable_fallback: bool
 ```
 
@@ -799,7 +970,7 @@ class RoutingDecision:
 ```python
 def route(self, model_hint: str | None = None,
           enable_fallback: bool = True) -> RoutingDecision:
-    """发布 ModelSelected(E28)"""
+    """返回主 Provider 及备选链；发布 ModelSelected(E28)"""
 ```
 
 
@@ -940,8 +1111,8 @@ class Strategy(ABC):
         """调用 context_manager.get_context_window() 获取裁剪后的上下文，
         组装 LLMRequest（system_prompt + messages + 工具 schema）"""
 
-    def parse_llm_response(self, response: LLMResponse) -> StrategyDecision:
-        """解析 LLMResponse，返回三种决策之一"""
+    def parse_llm_response(self, response: LLMResponse) -> NextDecision:
+        """解析 LLMResponse，返回标准 NextDecision"""
 
     def format_tool_observation(self, tool_call: ToolCall,
                                  result: ToolResult) -> LLMMessage:
@@ -1027,23 +1198,22 @@ class BaseTool(ABC):
 
 | 调用方 | 被调用方 | 协作方式 | 触发场景 |
 |--------|----------|----------|----------|
-| Planner          | KnowledgeLoader     | 直接调用         | 制定计划时可能需要已有知识                     |
+| Planner          | KnowledgeLoader     | 直接调用         | 制定计划时检索已有知识                         |
 | Pipeline         | Planner             | 直接调用         | 制定计划、renew/revise 计划                    |
-| Pipeline         | QualityEvaluator    | 直接调用         | 评审计划、评估 Stage 结果、评估整体结果        |
+| Pipeline         | QualityEvaluator    | 直接调用         | 评审计划、评估整体结果                         |
 | Pipeline         | StageExecutor       | 直接调用         | 执行每个 Stage                                 |
 | Pipeline         | CheckpointProcessor | 直接调用（异步） | Stage 完成后保存快照；从终止态恢复时 restore   |
 | Pipeline         | KnowledgeManager    | 直接调用（异步） | 任务成功后提炼并持久化知识                     |
-| Pipeline         | ModelSelector       | 直接调用         | 选择本次任务的模型                             |
-| StageExecutor    | ReasoningManager    | 直接调用         | 每轮 ReAct 推理（call）                        |
+| Pipeline         | ModelSelector       | 直接调用         | 任务开始时选择主 Provider 及备选链             |
+| StageExecutor    | ReasoningManager    | 直接调用         | 每轮推理循环调用 reason_once()                 |
 | StageExecutor    | ToolRegistry        | 直接调用         | 执行工具调用                                   |
 | StageExecutor    | ContextManager      | 直接调用         | 读写对话历史（add_message/get_context_window） |
-| StageExecutor    | QualityEvaluator    | 直接调用         | 对某个步骤是否满足目标进行评价                 |
+| StageExecutor    | QualityEvaluator    | 直接调用         | 步骤完成后评测结果是否满足步骤目标             |
+| StageExecutor    | KnowledgeLoader     | 直接调用         | Stage 开始前加载可复用知识注入上下文           |
+| ReasoningManager | LLMGateway          | 直接调用         | 执行单轮 LLM 推理                              |
 | Planner          | LLMGateway          | 直接调用         | 任务分析、计划制定、步骤更新                   |
 | QualityEvaluator | LLMGateway          | 直接调用         | 评估结果/计划                                  |
 | KnowledgeManager | LLMGateway          | 直接调用         | 提炼知识摘要                                   |
-|                  |                     |                  |                                                |
-|  |  | |  |
-|  |  | |  |
 
 ### Pipeline驱动方式
 

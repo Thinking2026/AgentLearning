@@ -106,7 +106,7 @@ class BaseLLMClient(ABC):
 # SingleProviderClient — thin passthrough; retry logic lives in AgentExecutor
 # ---------------------------------------------------------------------------
 
-class SingleProviderClient(BaseLLMClient):
+class LLMGateway(BaseLLMClient):
     """Delegates to a concrete provider. Raises LLMError on failure."""
 
     def __init__(self, provider: BaseLLMClient) -> None:
