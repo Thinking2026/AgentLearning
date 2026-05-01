@@ -11,7 +11,7 @@ from schemas.types import LLMMessage, LLMRequest
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
-    from llm.llm_api import BaseLLMClient
+    from llm.llm_gateway import BaseLLMClient
     from config.config import JsonConfig
 
 # ===========================================================================

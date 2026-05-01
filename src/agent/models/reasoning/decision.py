@@ -1,25 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 
-from schemas import AgentError, LLMMessage, ToolCall, UIMessage
-
-
-@dataclass
-class InvokeTools:
-    assistant_message: LLMMessage
-    tool_calls: list[ToolCall]
+from schemas import LLMMessage, LLMResponse, ToolCall
 
 
-@dataclass
-class FinalAnswer:
-    message: UIMessage
+class NextDecisionType(str, Enum):
+    TOOL_CALL            = "TOOL_CALL"
+    FINAL_ANSWER         = "FINAL_ANSWER"
+    CONTINUE             = "CONTINUE"
+    CLARIFICATION_NEEDED = "CLARIFICATION_NEEDED"
 
 
-@dataclass
-class ResponseTruncated:
-    message: UIMessage
-    error: AgentError
-
-
-StrategyDecision = InvokeTools | FinalAnswer | ResponseTruncated
+@dataclass(frozen=True)
+class NextDecision:
+    decision_type: NextDecisionType
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    answer: str = ""
+    message: str = ""
+    assistant_message: LLMMessage | None = None
+    raw_response: LLMResponse | None = None

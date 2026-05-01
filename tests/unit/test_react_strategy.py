@@ -4,10 +4,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.models.reasoning.decision import FinalAnswer, InvokeTools, ResponseTruncated
+from agent.models.reasoning.decision import NextDecision, NextDecisionType
 from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
 from agent.models.reasoning.impl.react.react_strategy import ReActStrategy
-from schemas.types import LLMMessage, LLMRequest, LLMResponse, ToolCall, UIMessage
+from schemas.types import LLMMessage, LLMRequest, LLMResponse, ToolCall
 
 
 # ---------------------------------------------------------------------------
@@ -82,10 +82,9 @@ def test_parse_final_answer():
     strategy = make_strategy()
     resp = make_response(content="The answer is 42.")
     decision = strategy.parse_llm_response(resp)
-    assert isinstance(decision, FinalAnswer)
-    assert decision.message.content == "The answer is 42."
-    assert decision.message.role == "assistant"
-    assert decision.message.metadata.get("task_completed") is True
+    assert isinstance(decision, NextDecision)
+    assert decision.decision_type == NextDecisionType.FINAL_ANSWER
+    assert decision.answer == "The answer is 42."
 
 
 def test_parse_invoke_tools():
@@ -93,9 +92,11 @@ def test_parse_invoke_tools():
     tc = ToolCall(name="calc", arguments={"expression": "1+1"}, llm_raw_tool_call_id="tc1")
     resp = make_response(tool_calls=[tc])
     decision = strategy.parse_llm_response(resp)
-    assert isinstance(decision, InvokeTools)
+    assert isinstance(decision, NextDecision)
+    assert decision.decision_type == NextDecisionType.TOOL_CALL
     assert len(decision.tool_calls) == 1
     assert decision.tool_calls[0].name == "calc"
+    assert decision.assistant_message is not None
     assert decision.assistant_message.role == "assistant"
 
 
@@ -103,9 +104,9 @@ def test_parse_response_truncated():
     strategy = make_strategy()
     resp = make_response(content="partial...", finish_reason="length")
     decision = strategy.parse_llm_response(resp)
-    assert isinstance(decision, ResponseTruncated)
-    assert decision.message.content == "partial..."
-    assert decision.error is not None
+    assert isinstance(decision, NextDecision)
+    assert decision.decision_type == NextDecisionType.CONTINUE
+    assert decision.message == "partial..."
 
 
 def test_parse_multiple_tool_calls():
@@ -116,7 +117,7 @@ def test_parse_multiple_tool_calls():
     ]
     resp = make_response(tool_calls=tcs)
     decision = strategy.parse_llm_response(resp)
-    assert isinstance(decision, InvokeTools)
+    assert decision.decision_type == NextDecisionType.TOOL_CALL
     assert len(decision.tool_calls) == 2
 
 
@@ -164,27 +165,29 @@ def test_format_tool_observation_failure():
 
 
 # ---------------------------------------------------------------------------
-# Decision dataclasses
+# NextDecision dataclass
 # ---------------------------------------------------------------------------
 
-def test_final_answer_dataclass():
-    msg = UIMessage(role="assistant", content="done")
-    fa = FinalAnswer(message=msg)
-    assert fa.message is msg
+def test_next_decision_final_answer():
+    d = NextDecision(decision_type=NextDecisionType.FINAL_ANSWER, answer="done")
+    assert d.decision_type == NextDecisionType.FINAL_ANSWER
+    assert d.answer == "done"
+    assert d.tool_calls == []
 
 
-def test_invoke_tools_dataclass():
-    msg = LLMMessage(role="assistant", content="")
+def test_next_decision_tool_call():
     tc = ToolCall(name="calc", arguments={})
-    it = InvokeTools(assistant_message=msg, tool_calls=[tc])
-    assert it.assistant_message is msg
-    assert len(it.tool_calls) == 1
+    d = NextDecision(decision_type=NextDecisionType.TOOL_CALL, tool_calls=[tc])
+    assert d.decision_type == NextDecisionType.TOOL_CALL
+    assert len(d.tool_calls) == 1
 
 
-def test_response_truncated_dataclass():
-    from schemas.errors import AgentError
-    msg = UIMessage(role="assistant", content="partial")
-    err = AgentError(code="ERR", message="truncated")
-    rt = ResponseTruncated(message=msg, error=err)
-    assert rt.message is msg
-    assert rt.error is err
+def test_next_decision_continue():
+    d = NextDecision(decision_type=NextDecisionType.CONTINUE, message="thinking...")
+    assert d.decision_type == NextDecisionType.CONTINUE
+    assert d.message == "thinking..."
+
+
+def test_next_decision_clarification():
+    d = NextDecision(decision_type=NextDecisionType.CLARIFICATION_NEEDED, message="what do you mean?")
+    assert d.decision_type == NextDecisionType.CLARIFICATION_NEEDED

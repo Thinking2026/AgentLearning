@@ -25,17 +25,7 @@ from schemas.errors import (
     CONFIG_ERROR,
     TOOL_NOT_FOUND,
 )
-from schemas.consts import SessionStatus
 from schemas.message_convert import ui_to_llm, llm_to_ui
-
-
-# ---------------------------------------------------------------------------
-# SessionStatus
-# ---------------------------------------------------------------------------
-
-def test_session_status_values():
-    assert SessionStatus.NEW_TASK == "NEW_TASK"
-    assert SessionStatus.IN_PROGRESS == "IN_PROGRESS"
 
 
 # ---------------------------------------------------------------------------

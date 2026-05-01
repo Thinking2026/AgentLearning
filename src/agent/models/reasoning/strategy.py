@@ -3,12 +3,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from agent.models.reasoning.decision import StrategyDecision
+from agent.models.reasoning.decision import NextDecision
 from schemas import LLMMessage, LLMRequest, LLMResponse
 
 if TYPE_CHECKING:
     from agent.models.context.manager import ContextManager
-    from agent.services.task_service import AgentExecutor
     from schemas import ToolCall, ToolResult
     from tools import ToolRegistry
 
@@ -24,7 +23,7 @@ class Strategy(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def parse_llm_response(self, response: LLMResponse) -> StrategyDecision:
+    def parse_llm_response(self, response: LLMResponse) -> NextDecision:
         """Parse an LLMResponse into a structured decision."""
         raise NotImplementedError
 

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Iterable
 from schemas import build_error
 
 if TYPE_CHECKING:
-    from llm.llm_api import BaseLLMClient
+    from llm.llm_gateway import BaseLLMClient, LLMGateway
 
 
 class LLMProviderRegistry:
@@ -29,3 +29,20 @@ class LLMProviderRegistry:
 
     def list_providers(self) -> list[str]:
         return sorted(self._providers)
+
+    def build_gateway(
+        self,
+        provider_name: str,
+        max_retries: int = 3,
+        retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
+        timeout: float = 60.0,
+    ) -> LLMGateway:
+        """Build an LLMGateway wrapping the named provider."""
+        from llm.llm_gateway import LLMGateway as _LLMGateway
+        provider = self.get(provider_name)
+        return _LLMGateway(
+            provider=provider,
+            max_retries=max_retries,
+            retry_delays=retry_delays,
+            timeout=timeout,
+        )

@@ -7,7 +7,10 @@ from uuid import uuid4
 
 from schemas.domain import AggregateRoot, DomainEvent
 from schemas.ids import KnowledgeEntryId, TaskId
-from agent.models.task.task_entities import DomainRuleViolation
+
+
+class DomainRuleViolation(Exception):
+    """Raised when a domain invariant is violated."""
 
 
 def _new_id(prefix: str) -> str:

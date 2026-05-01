@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from llm.llm_api import BaseLLMClient, classify_agent_error, classify_http_error
+from llm.llm_gateway import BaseLLMClient, classify_agent_error, classify_http_error
 from schemas import (
     AgentError,
     HttpError,

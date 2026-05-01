@@ -4,9 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm.llm_api import classify_http_error, classify_agent_error, RetryConfig
+from llm.llm_gateway import classify_http_error, classify_agent_error, RetryConfig
 from llm.registry import LLMProviderRegistry
-from llm.routing.provider_router import LLMProviderRouter, RoutingDecision
+from agent.models.model_routing.provider_router import LLMProviderRouter, RoutingDecision
 from schemas.errors import (
     AgentError,
     HttpError,

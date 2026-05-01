@@ -2,18 +2,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.models.reasoning.decision import FinalAnswer, InvokeTools, ResponseTruncated, StrategyDecision
+from agent.models.reasoning.decision import NextDecision, NextDecisionType
 from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
 from agent.models.reasoning.strategy import Strategy
 from schemas import (
     LLMMessage,
     LLMRequest,
     LLMResponse,
-    LLM_RESPONSE_TRUNCATED,
     ToolCall,
     ToolResult,
-    UIMessage,
-    build_error,
 )
 
 if TYPE_CHECKING:
@@ -87,37 +84,31 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
             tools=tool_registry.get_tool_schemas(),
         )
 
-    def parse_llm_response(self, response: LLMResponse) -> StrategyDecision:
+    def parse_llm_response(self, response: LLMResponse) -> NextDecision:
         response = self._formatter.parse_response(response)
         assistant_msg = response.assistant_message
 
         if response.finish_reason == "length":
-            return ResponseTruncated(
-                message=UIMessage(
-                    role="assistant",
-                    content=assistant_msg.content,
-                    metadata={"source": "llm"},
-                ),
-                error=build_error(
-                    LLM_RESPONSE_TRUNCATED,
-                    "LLM response was truncated because it hit the token limit.",
-                ),
+            return NextDecision(
+                decision_type=NextDecisionType.CONTINUE,
+                message=assistant_msg.content,
+                assistant_message=assistant_msg,
+                raw_response=response,
             )
 
         if response.tool_calls:
-            return InvokeTools(
-                assistant_message=assistant_msg,
+            return NextDecision(
+                decision_type=NextDecisionType.TOOL_CALL,
                 tool_calls=response.tool_calls,
+                assistant_message=assistant_msg,
+                raw_response=response,
             )
 
-        return FinalAnswer(
-            message=UIMessage(
-                role="assistant",
-                content=assistant_msg.content,
-                metadata={
-                    "task_completed": True,
-                },
-            )
+        return NextDecision(
+            decision_type=NextDecisionType.FINAL_ANSWER,
+            answer=assistant_msg.content,
+            assistant_message=assistant_msg,
+            raw_response=response,
         )
 
     def format_tool_observation(
