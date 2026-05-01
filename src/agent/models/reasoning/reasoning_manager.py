@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from agent.models.context.manager import ContextManager
     from agent.models.reasoning.strategy import Strategy
     from llm.llm_gateway import LLMGateway
+    from schemas import LLMMessage, ToolCall, ToolResult
     from tools.tool_registry import ToolRegistry
 
 
@@ -48,3 +49,11 @@ class ReasoningManager:
     def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:
         """Replace the current gateway (called by StageExecutor on provider fallback)."""
         self._llm_gateway = llm_gateway
+
+    def format_tool_observation(
+        self,
+        tool_call: ToolCall,
+        result: ToolResult,
+    ) -> LLMMessage:
+        """Format a ToolResult for context injection using the active strategy."""
+        return self._strategy.format_tool_observation(tool_call, result)
