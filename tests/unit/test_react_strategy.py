@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -128,7 +129,11 @@ def test_parse_multiple_tool_calls():
 def test_build_llm_request():
     strategy = make_strategy()
     context = MagicMock()
-    context.get_conversation_history.return_value = [LLMMessage(role="user", content="hi")]
+    context.get_context_window.return_value = SimpleNamespace(
+        system_prompt="",
+        messages=[LLMMessage(role="user", content="hi")],
+        token_count=1,
+    )
     tool_registry = MagicMock()
     tool_registry.get_tool_schemas.return_value = [{"name": "calc"}]
 

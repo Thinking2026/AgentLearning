@@ -82,9 +82,14 @@ class AgentThread(threading.Thread):
                     result = pipeline.run(
                         task_id=task_id,
                         task_description=task_description,
-                        on_message=self._agent_to_user_queue.send_agent_message,
                     )
-                    if not result.succeeded and result.error_reason:
+                    if result.succeeded and result.result:
+                        self._agent_to_user_queue.send_agent_message(UIMessage(
+                            role="assistant",
+                            content=result.result,
+                            metadata={"source": "task_result"},
+                        ))
+                    elif result.error_reason:
                         self._agent_to_user_queue.send_agent_message(UIMessage(
                             role="assistant",
                             content=result.error_reason,

@@ -78,9 +78,10 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
         agent_context: ContextManager,
         tool_registry: ToolRegistry,
     ) -> LLMRequest:
+        context_window = agent_context.get_context_window()
         return self._formatter.build_request(
-            system_prompt=self.SYSTEM_PROMPT,
-            conversation=agent_context.get_conversation_history(),
+            system_prompt=self._merge_system_prompt(context_window.system_prompt),
+            conversation=context_window.messages,
             tools=tool_registry.get_tool_schemas(),
         )
 
@@ -122,3 +123,8 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
             success=result.success,
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
         )
+
+    def _merge_system_prompt(self, context_prompt: str) -> str:
+        if not context_prompt:
+            return self.SYSTEM_PROMPT
+        return f"{self.SYSTEM_PROMPT}\n\n{context_prompt}"

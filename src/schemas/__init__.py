@@ -61,6 +61,7 @@ from .types import (
     LLMMessage,
     LLMRequest,
     LLMResponse,
+    LLMUsage,
     SQLQueryRequest,
     ToolCall,
     ToolResult,
@@ -124,6 +125,7 @@ __all__ = [
     "HttpError",
     "LLMError",
     "LLMErrorCode",
+    "LLMUsage",
     "ProviderFailure",
     "build_error",
 ]

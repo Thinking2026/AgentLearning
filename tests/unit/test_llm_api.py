@@ -6,7 +6,7 @@ import pytest
 
 from llm.llm_gateway import classify_http_error, classify_agent_error, RetryConfig
 from llm.registry import LLMProviderRegistry
-from agent.models.model_routing.provider_router import LLMProviderRouter, RoutingDecision
+from agent.models.model_routing.provider_router import ModelSelector, RoutingDecision
 from schemas.errors import (
     AgentError,
     HttpError,
@@ -184,49 +184,39 @@ def test_registry_overwrite_provider():
 
 
 # ---------------------------------------------------------------------------
-# LLMProviderRouter
+# ModelSelector
 # ---------------------------------------------------------------------------
 
-def make_router(names: list[str], enable_fallback: bool = False) -> LLMProviderRouter:
-    registry = LLMProviderRegistry()
-    for name in names:
-        registry.register(make_mock_provider(name))
-    return LLMProviderRouter(registry, priority_chain=names, enable_fallback=enable_fallback)
+def make_selector(names: list[str], enable_fallback: bool = False) -> ModelSelector:
+    return ModelSelector(priority_chain=names, enable_fallback=enable_fallback)
 
 
-def test_router_primary_is_first():
-    router = make_router(["claude", "openai"])
-    req = LLMRequest(messages=[])
-    decision = router.route(req)
-    assert decision.primary.provider_name == "claude"
+def test_model_selector_primary_is_first():
+    selector = make_selector(["claude", "openai"])
+    decision = selector.route()
+    assert decision.primary == "claude"
 
 
-def test_router_no_fallback_by_default():
-    router = make_router(["claude", "openai"], enable_fallback=False)
-    req = LLMRequest(messages=[])
-    decision = router.route(req)
+def test_model_selector_no_fallback_by_default():
+    selector = make_selector(["claude", "openai"], enable_fallback=False)
+    decision = selector.route()
     assert decision.fallbacks == []
 
 
-def test_router_with_fallback():
-    router = make_router(["claude", "openai", "deepseek"], enable_fallback=True)
-    req = LLMRequest(messages=[])
-    decision = router.route(req)
-    assert decision.primary.provider_name == "claude"
-    assert len(decision.fallbacks) == 2
-    assert decision.fallbacks[0].provider_name == "openai"
-    assert decision.fallbacks[1].provider_name == "deepseek"
+def test_model_selector_with_fallback():
+    selector = make_selector(["claude", "openai", "deepseek"], enable_fallback=True)
+    decision = selector.route()
+    assert decision.primary == "claude"
+    assert decision.fallbacks == ["openai", "deepseek"]
 
 
-def test_router_single_provider_no_fallbacks():
-    router = make_router(["claude"], enable_fallback=True)
-    req = LLMRequest(messages=[])
-    decision = router.route(req)
-    assert decision.primary.provider_name == "claude"
+def test_model_selector_single_provider_no_fallbacks():
+    selector = make_selector(["claude"], enable_fallback=True)
+    decision = selector.route()
+    assert decision.primary == "claude"
     assert decision.fallbacks == []
 
 
-def test_router_empty_priority_chain_raises():
-    registry = LLMProviderRegistry()
+def test_model_selector_empty_priority_chain_raises():
     with pytest.raises(Exception):
-        LLMProviderRouter(registry, priority_chain=[])
+        ModelSelector(priority_chain=[])

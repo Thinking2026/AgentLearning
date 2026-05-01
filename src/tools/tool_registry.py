@@ -76,26 +76,27 @@ class ToolRegistry:
 
     def execute(
         self,
-        name: str,
-        arguments: dict[str, Any],
+        tool_call: ToolCall,
+        arguments: dict[str, Any] | None = None,
         llm_raw_tool_call_id: str | None = None,
     ) -> ToolResult:
+        if not isinstance(tool_call, ToolCall):
+            tool_call = ToolCall(
+                name=str(tool_call),
+                arguments=arguments or {},
+                llm_raw_tool_call_id=llm_raw_tool_call_id,
+            )
         self._logger.info(
             "Tool execution start",
-            zap.any("tool_name", name),
-            zap.any("argument_keys", list(arguments.keys())),
-        )
-        tool_call = ToolCall(
-            name=name,
-            arguments=arguments,
-            llm_raw_tool_call_id=llm_raw_tool_call_id,
+            zap.any("tool_name", tool_call.name),
+            zap.any("argument_keys", list(tool_call.arguments.keys())),
         )
         with self._start_span(
-            f"tool.execute.{name}",
+            f"tool.execute.{tool_call.name}",
             attributes={
-                "tool_name": name,
-                "arguments": arguments,
-                "llm_raw_tool_call_id": llm_raw_tool_call_id,
+                "tool_name": tool_call.name,
+                "arguments": tool_call.arguments,
+                "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
             },
         ) as span:
             result = self._router.route(tool_call)
@@ -109,10 +110,10 @@ class ToolRegistry:
             if not result.success and result.error is not None and self._logger is not None:
                 self._logger.error(
                     "Tool call failed",
-                    zap.any("tool_name", name),
+                    zap.any("tool_name", tool_call.name),
                     zap.any("error_code", result.error.code),
                     zap.any("error_message", result.error.message),
-                    zap.any("arguments", arguments),
+                    zap.any("arguments", tool_call.arguments),
                 )
             return result
 

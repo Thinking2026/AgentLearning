@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from schemas import LLMRequest, LLM_CONFIG_ERROR, build_error
-from llm.llm_gateway import LLMGateway as SingleProviderClient
-from llm.registry import LLMProviderRegistry
+from schemas import LLM_CONFIG_ERROR, build_error
 
 # ---------------------------------------------------------------------------
 # ModelSelector — TD-specified entity held by Pipeline
@@ -38,10 +36,14 @@ class ModelSelector:
         self,
         model_hint: str | None = None,
         enable_fallback: bool | None = None,
+        excluded_providers: set[str] | None = None,
     ) -> RoutingDecision:
         """Return primary provider name and fallback chain."""
         use_fallback = enable_fallback if enable_fallback is not None else self._enable_fallback
-        chain = self._priority_chain
+        excluded = excluded_providers or set()
+        chain = [provider for provider in self._priority_chain if provider not in excluded]
+        if not chain:
+            raise build_error(LLM_CONFIG_ERROR, "no available providers after applying exclusions")
         if model_hint and model_hint in chain:
             chain = [model_hint] + [p for p in chain if p != model_hint]
         primary = chain[0]

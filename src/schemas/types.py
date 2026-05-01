@@ -48,14 +48,24 @@ class LLMRequest:
     messages: list[LLMMessage]
     system_prompt: str | None = None
     tools: list[dict[str, Any]] | None = None
+    max_tokens: int = 1024
+    temperature: float = 0.0
+
+
+@dataclass(slots=True)
+class LLMUsage:
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
 
 
 @dataclass(slots=True)
 class LLMResponse:
     assistant_message: LLMMessage
     tool_calls: list[ToolCall] = field(default_factory=list)
-    raw_response: dict[str, Any] = field(default_factory=dict)
     finish_reason: str = "stop"
+    usage: LLMUsage | None = None
+    raw_response: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

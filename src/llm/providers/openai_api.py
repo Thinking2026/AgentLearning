@@ -10,6 +10,7 @@ from schemas import (
     LLMMessage,
     LLMRequest,
     LLMResponse,
+    LLMUsage,
     LLM_CONFIG_ERROR,
     LLM_RESPONSE_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
@@ -72,6 +73,8 @@ class OpenAILLMClient(BaseLLMClient):
                 payload = {
                     "model": self._model,
                     "messages": self._serialize_messages(request),
+                    "max_tokens": request.max_tokens,
+                    "temperature": request.temperature,
                 }
                 tools = self._serialize_tools(request.tools)
                 if tools:
@@ -83,7 +86,6 @@ class OpenAILLMClient(BaseLLMClient):
                 raise classify_http_error(exc) from exc
             except AgentError as exc:
                 raise classify_agent_error(exc) from exc
-            usage = response_data.get("usage") or {}
             span.add_attributes(
                 {
                     "finish_reason": response.finish_reason,
@@ -92,8 +94,8 @@ class OpenAILLMClient(BaseLLMClient):
                         {"name": tc.name, "llm_raw_tool_call_id": tc.llm_raw_tool_call_id}
                         for tc in response.tool_calls
                     ],
-                    "prompt_tokens": usage.get("prompt_tokens"),
-                    "completion_tokens": usage.get("completion_tokens"),
+                    "prompt_tokens": response.usage.prompt_tokens if response.usage else None,
+                    "completion_tokens": response.usage.completion_tokens if response.usage else None,
                     "response_text": response.assistant_message.content,
                 }
             )
@@ -104,7 +106,9 @@ class OpenAILLMClient(BaseLLMClient):
 
     @staticmethod
     def _serialize_messages(request: LLMRequest) -> list[dict]:
-        serialized_messages: list[dict] = [{"role": "system", "content": request.system_prompt}]
+        serialized_messages: list[dict] = []
+        if request.system_prompt:
+            serialized_messages.append({"role": "system", "content": request.system_prompt})
         for message in request.messages:
             serialized = {"role": message.role, "content": message.content}
             if message.role == "assistant":
@@ -121,7 +125,9 @@ class OpenAILLMClient(BaseLLMClient):
         return serialized_messages
 
     @staticmethod
-    def _serialize_tools(tools: list[dict]) -> list[dict]:
+    def _serialize_tools(tools: list[dict] | None) -> list[dict]:
+        if not tools:
+            return []
         return [
             {
                 "type": "function",
@@ -164,6 +170,10 @@ class OpenAILLMClient(BaseLLMClient):
             raise build_error(LLM_RESPONSE_ERROR, f"OpenAI API returned no choices: {response_data}")
         first_choice = choices[0]
         message = first_choice.get("message") or {}
+        usage_data = response_data.get("usage") or {}
+        finish_reason = first_choice.get("finish_reason", "stop")
+        if finish_reason == "tool_calls":
+            finish_reason = "tool_use"
         try:
             tool_calls = [
                 ToolCall(
@@ -195,6 +205,11 @@ class OpenAILLMClient(BaseLLMClient):
                 },
             ),
             tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            usage=LLMUsage(
+                prompt_tokens=int(usage_data.get("prompt_tokens") or 0),
+                completion_tokens=int(usage_data.get("completion_tokens") or 0),
+                total_tokens=int(usage_data.get("total_tokens") or 0),
+            ) if usage_data else None,
             raw_response=response_data,
-            finish_reason=first_choice.get("finish_reason", "stop"),
         )

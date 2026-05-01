@@ -4,21 +4,27 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from schemas.domain import AggregateRoot
 from schemas.ids import PlanStepId, StageId, TaskId
-from schemas.types import LLMMessage, ToolCall, ToolResult, UIMessage
-from schemas.errors import AgentError, LLMError, ErrorCategory
+from schemas.types import LLMMessage, ToolCall, ToolResult
+from schemas.errors import AgentError, LLMError
 
 from agent.events import (
+    ContextAssembled,
     TaskExecutionStarted,
     TaskStepInterrupted,
     TaskPaused,
     TaskResumed,
     StepResultProduced,
+    ReasoningStarted,
+    NextDecisionMade,
     ToolCallRequested,
+    ToolCallDispatched,
+    ToolCallSucceeded,
+    ToolCallFailed,
     ResultInjected,
     ClarificationRequested,
 )
@@ -95,7 +101,7 @@ class StageExecutor(AggregateRoot):
         plan_step_id: PlanStepId,
         plan_step_goal: str,
         plan_step_description: str,
-        on_message: Callable[[UIMessage], None] | None = None,
+        resume_existing_context: bool = False,
     ) -> Stage:
         """Execute one Stage end-to-end.
 
@@ -120,13 +126,10 @@ class StageExecutor(AggregateRoot):
             task_id=task_id, stage_id=stage.id, step_id=plan_step_id,
         ))
 
-        # Load reusable knowledge and inject into context
-        self._load_knowledge(plan_step_goal)
-
-        # Seed the context with the step goal
-        self._context_manager.append_conversation_message(
-            LLMMessage(role="user", content=plan_step_goal)
-        )
+        if not resume_existing_context:
+            # Load reusable knowledge and seed the step goal once per fresh step.
+            self._load_knowledge(plan_step_goal)
+            self._context_manager.add_message("user", plan_step_goal)
 
         last_answer = ""
         while stage.iteration_count < self._max_iterations:
@@ -141,16 +144,23 @@ class StageExecutor(AggregateRoot):
                 break
 
             try:
+                self._record(ContextAssembled(
+                    event_type="", aggregate_id=str(task_id),
+                    task_id=task_id,
+                    token_count=self._estimate_context_tokens(),
+                ))
+                self._record(ReasoningStarted(
+                    event_type="", aggregate_id=str(task_id),
+                    task_id=task_id,
+                    stage_id=stage.id,
+                    iteration=stage.iteration_count + 1,
+                ))
                 decision = self._reasoning_manager.reason_once(
                     self._context_manager,
                     self._tool_registry,
                 )
             except LLMError as exc:
-                if exc.category in (ErrorCategory.AUTH, ErrorCategory.CONFIG):
-                    stage.status = StageStatus.FAILED
-                    stage.result = f"LLM error: {exc.message}"
-                    break
-                # For transient/rate-limit errors, propagate so Pipeline can handle
+                # Let Pipeline classify provider fallback vs pause/resume.
                 raise
             except AgentError as exc:
                 stage.status = StageStatus.FAILED
@@ -158,15 +168,15 @@ class StageExecutor(AggregateRoot):
                 break
 
             stage.iteration_count += 1
+            self._record(NextDecisionMade(
+                event_type="", aggregate_id=str(task_id),
+                task_id=task_id,
+                stage_id=stage.id,
+                decision_type=decision.decision_type.value,
+            ))
 
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
                 last_answer = decision.answer
-                if on_message:
-                    on_message(UIMessage(
-                        role="assistant",
-                        content=decision.answer,
-                        metadata={"task_completed": True},
-                    ))
                 stage.status = StageStatus.COMPLETED
                 stage.result = last_answer
                 stage.completed_at = datetime.now(timezone.utc)
@@ -180,11 +190,7 @@ class StageExecutor(AggregateRoot):
             if decision.decision_type == NextDecisionType.CONTINUE:
                 # Truncated or plain reasoning — inject and continue
                 content = decision.message or (decision.assistant_message.content if decision.assistant_message else "")
-                if content and on_message:
-                    on_message(UIMessage(role="assistant", content=content, metadata={"source": "llm"}))
-                self._context_manager.append_conversation_message(
-                    LLMMessage(role="assistant", content=content)
-                )
+                self._context_manager.add_message("assistant", content)
                 self._record(ResultInjected(
                     event_type="", aggregate_id=str(task_id),
                     task_id=task_id, stage_id=stage.id,
@@ -192,16 +198,13 @@ class StageExecutor(AggregateRoot):
                 continue
 
             if decision.decision_type == NextDecisionType.TOOL_CALL:
-                # Stream assistant thinking content if any
-                if decision.assistant_message and decision.assistant_message.content.strip() and on_message:
-                    on_message(UIMessage(
-                        role="assistant",
-                        content=decision.assistant_message.content,
-                        metadata={"source": "llm"},
-                    ))
                 if decision.assistant_message:
-                    self._context_manager.append_conversation_message(decision.assistant_message)
-                self._dispatch_tool_calls(task_id, stage, decision.tool_calls, on_message)
+                    self._context_manager.add_message(
+                        decision.assistant_message.role,
+                        decision.assistant_message.content,
+                        decision.assistant_message.metadata,
+                    )
+                self._dispatch_tool_calls(task_id, stage, decision.tool_calls)
                 continue
 
             if decision.decision_type == NextDecisionType.CLARIFICATION_NEEDED:
@@ -260,10 +263,26 @@ class StageExecutor(AggregateRoot):
 
     def reset_for_next_stage(self) -> None:
         """Clear context for the next Stage execution."""
-        self._context_manager.clear_current_task()
+        self._context_manager.reset()
         self._current_stage = None
         self._interrupted.clear()
         self._paused.clear()
+
+    def archive_current_stage_context(self) -> None:
+        """Preserve the just-completed Stage context for later stages/checkpoints."""
+        return
+
+    def append_user_clarification(self, clarification: str) -> None:
+        self._context_manager.add_message("user", f"Clarification: {clarification}")
+
+    def set_llm_gateway(self, llm_gateway: object) -> None:
+        self._reasoning_manager.set_llm_gateway(llm_gateway)  # type: ignore[arg-type]
+
+    def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
+        self._context_manager.replace_conversation_history(messages)
+
+    def get_conversation_history(self) -> list[LLMMessage]:
+        return self._context_manager.get_conversation_history()
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -273,40 +292,38 @@ class StageExecutor(AggregateRoot):
         entries = self._knowledge_loader.load(query)
         if entries:
             snippets = "\n".join(f"- {e.content}" for e in entries)
-            self._context_manager.append_system_prompt(
-                f"\n\nRelevant prior knowledge:\n{snippets}"
-            )
+            variables = self._context_manager.get_variables()
+            variables["reusable_knowledge"] = snippets
+            self._context_manager.set_variables(variables)
 
     def _dispatch_tool_calls(
         self,
         task_id: TaskId,
         stage: Stage,
         tool_calls: list[ToolCall],
-        on_message: Callable[[UIMessage], None] | None,
     ) -> None:
         for tool_call in tool_calls:
             self._record(ToolCallRequested(
                 event_type="", aggregate_id=str(task_id),
                 task_id=task_id, tool_name=tool_call.name,
             ))
+            self._record(ToolCallDispatched(
+                event_type="", aggregate_id=str(task_id),
+                task_id=task_id, tool_name=tool_call.name,
+            ))
 
-            result: ToolResult = self._tool_registry.execute(
-                tool_call.name,
-                tool_call.arguments,
-                tool_call.llm_raw_tool_call_id,
-            )
-
-            if on_message:
-                on_message(UIMessage(
-                    role="assistant",
-                    content=f"[tool:{tool_call.name}] {result.output}",
-                    metadata={
-                        "source": "tool",
-                        "tool_name": tool_call.name,
-                        "tool_arguments": tool_call.arguments,
-                        "tool_result": result.output,
-                        "tool_success": result.success,
-                    },
+            result: ToolResult = self._tool_registry.execute(tool_call)
+            if result.success:
+                self._record(ToolCallSucceeded(
+                    event_type="", aggregate_id=str(task_id),
+                    task_id=task_id, tool_name=tool_call.name,
+                ))
+            else:
+                error_code = result.error.code if result.error is not None else ""
+                self._record(ToolCallFailed(
+                    event_type="", aggregate_id=str(task_id),
+                    task_id=task_id, tool_name=tool_call.name,
+                    error_code=error_code,
                 ))
 
             # Format and inject tool result into context
@@ -314,8 +331,19 @@ class StageExecutor(AggregateRoot):
                 tool_call=tool_call,
                 result=result,
             )
-            self._context_manager.append_conversation_message(observation)
+            self._context_manager.add_message(
+                observation.role,
+                observation.content,
+                observation.metadata,
+            )
             self._record(ResultInjected(
                 event_type="", aggregate_id=str(task_id),
                 task_id=task_id, stage_id=stage.id,
             ))
+
+    def _estimate_context_tokens(self) -> int:
+        """Cheap provider-neutral estimate used only for ContextAssembled events."""
+        messages = self._context_manager.get_conversation_history()
+        chars = len(self._context_manager.get_system_prompt())
+        chars += sum(len(message.content) for message in messages)
+        return max(1, chars // 4) if chars else 0

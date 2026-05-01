@@ -11,6 +11,7 @@ from schemas import (
     LLMMessage,
     LLMRequest,
     LLMResponse,
+    LLMUsage,
     LLM_CONFIG_ERROR,
     LLM_RESPONSE_ERROR,
     LLM_RESPONSE_PARSE_ERROR,
@@ -81,9 +82,11 @@ class ClaudeLLMClient(BaseLLMClient):
             try:
                 payload: dict[str, object] = {
                     "model": self._model,
-                    "max_tokens": self._max_tokens,
+                    "max_tokens": request.max_tokens or self._max_tokens,
                     "messages": self._serialize_messages(request),
                 }
+                if request.temperature is not None:
+                    payload["temperature"] = request.temperature
                 if request.system_prompt:
                     payload["system"] = request.system_prompt
 
@@ -99,7 +102,6 @@ class ClaudeLLMClient(BaseLLMClient):
                 raise classify_http_error(exc) from exc
             except AgentError as exc:
                 raise classify_agent_error(exc) from exc
-            usage = response_data.get("usage") or {}
             span.add_attributes(
                 {
                     "finish_reason": response.finish_reason,
@@ -108,8 +110,8 @@ class ClaudeLLMClient(BaseLLMClient):
                         {"name": tc.name, "llm_raw_tool_call_id": tc.llm_raw_tool_call_id}
                         for tc in response.tool_calls
                     ],
-                    "prompt_tokens": usage.get("input_tokens"),
-                    "completion_tokens": usage.get("output_tokens"),
+                    "prompt_tokens": response.usage.prompt_tokens if response.usage else None,
+                    "completion_tokens": response.usage.completion_tokens if response.usage else None,
                     "response_text": response.assistant_message.content,
                 }
             )
@@ -172,7 +174,9 @@ class ClaudeLLMClient(BaseLLMClient):
         return None
 
     @staticmethod
-    def _serialize_tools(tools: list[dict]) -> list[dict[str, object]]:
+    def _serialize_tools(tools: list[dict] | None) -> list[dict[str, object]]:
+        if not tools:
+            return []
         return [
             {
                 "name": tool["name"],
@@ -217,6 +221,15 @@ class ClaudeLLMClient(BaseLLMClient):
                         f"Claude API returned an invalid tool use payload: {exc}",
                     ) from exc
 
+        raw_finish_reason = str(response_data.get("stop_reason", "stop"))
+        finish_reason_map = {
+            "end_turn": "stop",
+            "tool_use": "tool_use",
+            "max_tokens": "length",
+        }
+        usage_data = response_data.get("usage") or {}
+        prompt_tokens = int(usage_data.get("input_tokens") or 0)
+        completion_tokens = int(usage_data.get("output_tokens") or 0)
         return LLMResponse(
             assistant_message=LLMMessage(
                 role="assistant",
@@ -234,6 +247,11 @@ class ClaudeLLMClient(BaseLLMClient):
                 },
             ),
             tool_calls=tool_calls,
+            finish_reason=finish_reason_map.get(raw_finish_reason, raw_finish_reason),
+            usage=LLMUsage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+            ) if usage_data else None,
             raw_response=response_data,
-            finish_reason=str(response_data.get("stop_reason", "stop")),
         )

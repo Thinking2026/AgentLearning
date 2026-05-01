@@ -248,7 +248,7 @@ NanoAgent/
 │   │       ├── evaluate/         # QualityEvaluator 聚合
 │   │       ├── executor/         # StageExecutor 聚合
 │   │       ├── knowledge/        # KnowledgeManager 聚合 + KnowledgeLoader聚合
-│   │       ├── model_routing/    # ModelSelector（LLMProviderRouter）
+│   │       ├── model_routing/    # ModelSelector
 │   │       │   ├── capability/
 │   │       │   ├── cost_model/
 │   │       │   └── policy/
@@ -1659,4 +1659,3 @@ AgentError 到达 Pipeline / StageExecutor
     └─ SYSTEM.C.*
         └─ TaskTerminated(E13)
 ```
-

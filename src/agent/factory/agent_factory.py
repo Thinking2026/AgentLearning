@@ -234,7 +234,6 @@ class AgentFactory:
     def build_pipeline(self, task_id: TaskId, task_description: str) -> Pipeline:
         """Build a fully-wired Pipeline for a single task."""
         primary = self._primary_provider_name()
-        event_bus = self.build_event_bus()
         llm_registry = self.build_llm_provider_registry()
         model_selector = self.build_model_selector()
         quality_evaluator = self.build_quality_evaluator(task_id, task_description)
@@ -252,7 +251,6 @@ class AgentFactory:
             quality_evaluator=quality_evaluator,
             model_selector=model_selector,
             llm_provider_registry=llm_registry,
-            event_bus=event_bus,
             max_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
             max_stage_retries=int(self._config.get("agent.max_stage_retries", 2)),
             max_quality_retries=int(self._config.get("agent.max_quality_retries", 2)),
