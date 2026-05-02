@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 from uuid import uuid4
 
 from schemas.domain import AggregateRoot, DomainEvent
 from schemas.ids import KnowledgeEntryId, TaskId
+from schemas.task import KnowledgeEntryStatus, KnowledgeExtracted, KnowledgeIndexed
 
 
 class DomainRuleViolation(Exception):
@@ -19,32 +19,6 @@ def _new_id(prefix: str) -> str:
 
 def _event(event_type: type[DomainEvent], **kwargs: Any) -> DomainEvent:
     return event_type(event_type="", aggregate_id="", **kwargs)
-
-
-class KnowledgeEntryStatus(str, Enum):
-    EXTRACTED = "Extracted"
-    INDEXED = "Indexed"
-
-
-@dataclass
-class KnowledgeExtracted(DomainEvent):
-    knowledge_entry_id: KnowledgeEntryId = field(default="")
-    task_id: TaskId = field(default="")
-    content: str = field(default="")
-
-    def __post_init__(self) -> None:
-        self.event_type = "KnowledgeExtracted"
-        self.aggregate_id = self.knowledge_entry_id
-
-
-@dataclass
-class KnowledgeIndexed(DomainEvent):
-    knowledge_entry_id: KnowledgeEntryId = field(default="")
-    task_id: TaskId = field(default="")
-
-    def __post_init__(self) -> None:
-        self.event_type = "KnowledgeIndexed"
-        self.aggregate_id = self.knowledge_entry_id
 
 
 @dataclass

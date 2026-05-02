@@ -39,9 +39,9 @@ class LLMProviderRegistry:
     ) -> LLMGateway:
         """Build an LLMGateway wrapping the named provider."""
         from llm.llm_gateway import LLMGateway as _LLMGateway
-        provider = self.get(provider_name)
         return _LLMGateway(
-            provider=provider,
+            registry=self,
+            provider_name=provider_name,
             max_retries=max_retries,
             retry_delays=retry_delays,
             timeout=timeout,

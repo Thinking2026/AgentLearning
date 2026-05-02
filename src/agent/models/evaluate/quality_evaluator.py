@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from schemas.domain import AggregateRoot
 from schemas.ids import PlanStepId, TaskId
+from schemas.task import EvaluationRecord, PlanStep
 from schemas.types import LLMMessage, LLMRequest
 
 from agent.events import (
@@ -19,23 +19,8 @@ from agent.events import (
 )
 
 if TYPE_CHECKING:
-    from agent.models.plan.planner import Planner, PlanStep
+    from agent.models.plan.planner import Planner
     from llm.llm_gateway import LLMGateway
-
-
-# ---------------------------------------------------------------------------
-# Value object
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class EvaluationRecord:
-    target_type: str   # "task" | "step" | "plan"
-    target_id: str
-    passed: bool
-    feedback: str
-    evaluated_at: datetime
-    need_user_clarification: bool = field(default=False)
-    clarification_question: str = field(default="")
 
 
 # ---------------------------------------------------------------------------

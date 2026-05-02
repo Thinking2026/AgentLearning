@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from schemas.domain import AggregateRoot
 from schemas.ids import PlanId, PlanStepId, TaskId
+from schemas.task import PlanStep, PlanUpdateTrigger, TaskFeature
 from schemas.types import LLMMessage, LLMRequest
 
 from agent.events import TaskPlanFinalized, TaskPlanRenewal, TaskPlanRevised
@@ -15,45 +14,6 @@ from agent.events import TaskPlanFinalized, TaskPlanRenewal, TaskPlanRevised
 if TYPE_CHECKING:
     from llm.llm_gateway import LLMGateway
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader
-
-
-# ---------------------------------------------------------------------------
-# Value objects
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class PlanStep:
-    id: PlanStepId
-    goal: str
-    description: str
-    order: int
-
-
-@dataclass(frozen=True)
-class TaskAnalysis:
-    task_type: str
-    complexity: str
-    required_tools: list[str]
-    estimated_steps: int
-    notes: str
-    # routing hints — populated by analyze(), consumed by ModelSelector
-    preferred_scenarios: list[str] = field(default_factory=list)
-    required_strengths: list[str] = field(default_factory=list)
-    min_context_size: int = 0
-    prefer_low_cost: bool = False
-    prefer_low_latency: bool = False
-
-
-# ---------------------------------------------------------------------------
-# Enum
-# ---------------------------------------------------------------------------
-
-class PlanUpdateTrigger(str, Enum):
-    QUALITY_CHECK_FAILED = "QUALITY_CHECK_FAILED"
-    PLAN_REVIEW_FAILED   = "PLAN_REVIEW_FAILED"
-    STAGE_EVAL_FAILED    = "STAGE_EVAL_FAILED"
-    USER_GUIDANCE        = "USER_GUIDANCE"
-    STAGE_INFEASIBLE     = "STAGE_INFEASIBLE"
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +35,7 @@ class Planner(AggregateRoot):
         self.id = id
         self.task_id = task_id
         self.task_description = task_description
-        self.analysis: TaskAnalysis | None = None
+        self.task_feat: TaskFeature | None = None
         self.steps: list[PlanStep] = []
         self.version: int = 0
         self._llm_gateway = llm_gateway
@@ -131,7 +91,7 @@ class Planner(AggregateRoot):
         response = self._llm_gateway.generate(
             LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
         )
-        self.analysis = self._parse_analysis(response.assistant_message.content)
+        self.task_feat = self._parse_analysis(response.assistant_message.content)
         return self
 
     def build_plan(self, knowledge_hint: str = "") -> None:
@@ -147,11 +107,11 @@ class Planner(AggregateRoot):
             knowledge_context += f"\nAdditional hint: {knowledge_hint}\n"
 
         analysis_context = ""
-        if self.analysis is not None:
+        if self.task_feat is not None:
             analysis_context = (
-                f"\nTask analysis: type={self.analysis.task_type}, "
-                f"complexity={self.analysis.complexity}, "
-                f"estimated_steps={self.analysis.estimated_steps}\n"
+                f"\nTask analysis: type={self.task_feat.task_type}, "
+                f"complexity={self.task_feat.complexity}, "
+                f"estimated_steps={self.task_feat.estimated_steps}\n"
             )
 
         prompt = (
@@ -272,10 +232,10 @@ class Planner(AggregateRoot):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _parse_analysis(self, content: str) -> TaskAnalysis:
+    def _parse_analysis(self, content: str) -> TaskFeature:
         try:
             data = json.loads(_extract_json(content))
-            return TaskAnalysis(
+            return TaskFeature(
                 task_type=str(data.get("task_type", "general")),
                 complexity=str(data.get("complexity", "medium")),
                 required_tools=list(data.get("required_tools", [])),
@@ -288,7 +248,7 @@ class Planner(AggregateRoot):
                 prefer_low_latency=bool(data.get("prefer_low_latency", False)),
             )
         except Exception:
-            return TaskAnalysis(
+            return TaskFeature(
                 task_type="general",
                 complexity="medium",
                 required_tools=[],

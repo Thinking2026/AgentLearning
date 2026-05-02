@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from schemas import (
     AgentError,
@@ -21,6 +22,9 @@ from schemas import (
 from infra.observability.tracing import Span, Tracer
 from utils.http.http_client import HttpClient
 from utils.log.log import Logger, zap
+
+if TYPE_CHECKING:
+    from llm.registry import LLMProviderRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +108,7 @@ class BaseLLMClient(ABC):
 
 
 class LLMGateway(BaseLLMClient):
-    """Wraps a single provider with backoff-jitter retry for A-class errors.
+    """Wraps a provider (resolved from LLMProviderRegistry) with backoff-jitter retry.
 
     Retries on TRANSIENT and RATE_LIMITED errors up to _max_retries times.
     AUTH/CONFIG errors are not retried — they propagate immediately.
@@ -113,21 +117,34 @@ class LLMGateway(BaseLLMClient):
 
     def __init__(
         self,
-        provider: BaseLLMClient,
+        registry: LLMProviderRegistry,
+        provider_name: str,
         max_retries: int = 3,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         timeout: float = 60.0,
     ) -> None:
         import random as _random
-        self._provider = provider
+        self._registry = registry
+        self._provider = registry.get(provider_name)
+        self._provider_name = provider_name
         self._max_retries = max_retries
         self._retry_delays = retry_delays
         self._timeout = timeout
         self._random = _random
 
+    def for_provider(self, provider_name: str) -> LLMGateway:
+        """Return a new LLMGateway for a different provider, reusing retry config."""
+        return LLMGateway(
+            registry=self._registry,
+            provider_name=provider_name,
+            max_retries=self._max_retries,
+            retry_delays=self._retry_delays,
+            timeout=self._timeout,
+        )
+
     @property
     def provider_name(self) -> str:  # type: ignore[override]
-        return self._provider.provider_name
+        return self._provider_name
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         import time as _time

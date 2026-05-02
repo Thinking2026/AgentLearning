@@ -7,9 +7,7 @@ from typing import TYPE_CHECKING
 
 from schemas.ids import TaskId
 from schemas.errors import AgentError, LLMError, ErrorCategory
-
-from agent.models.executor.stage_executor import StageStatus
-from agent.models.plan.planner import PlanUpdateTrigger
+from schemas.task import PlanUpdateTrigger, StageStatus, Task, TaskResult
 
 if TYPE_CHECKING:
     from agent.models.checkpoint.checkpoint_processor import CheckpointProcessor
@@ -18,17 +16,7 @@ if TYPE_CHECKING:
     from agent.models.knowledge.knowledge_manager import KnowledgeManager
     from agent.models.model_routing.provider_router import ModelSelector
     from agent.models.plan.planner import Planner
-    from llm.registry import LLMProviderRegistry
-
-
-@dataclass(frozen=True)
-class TaskResult:
-    task_id: TaskId
-    succeeded: bool
-    result: str
-    error_reason: str
-    delivered_at: datetime
-
+    from llm.llm_gateway import LLMGateway
 
 class Pipeline:
     """Application-layer orchestrator for the full task lifecycle.
@@ -45,27 +33,33 @@ class Pipeline:
         knowledge_manager: KnowledgeManager,
         quality_evaluator: QualityEvaluator,
         model_selector: ModelSelector,
-        llm_provider_registry: LLMProviderRegistry,
+        llm_gateway: LLMGateway,
         max_plan_retries: int = 3,
         max_stage_retries: int = 2,
         max_quality_retries: int = 2,
     ) -> None:
-        self._planner = planner
+        #操作聚合根
+        self._planner = planner #内部和knowledge_loader交互，获取可能的背景知识
         self._stage_executor = stage_executor
         self._checkpoint_processor = checkpoint_processor
         self._knowledge_manager = knowledge_manager
         self._quality_evaluator = quality_evaluator
         self._model_selector = model_selector
-        self._llm_provider_registry = llm_provider_registry
+        self._llm_gateway = llm_gateway
+
+        #运行控制参数
         self._max_plan_retries = max_plan_retries
         self._max_stage_retries = max_stage_retries
         self._max_quality_retries = max_quality_retries
 
+        #任务信息参数
+        self._task: Task | None = None
+
+        #与Agent Thread交互的状态
         self._cancelled = threading.Event()
-        self._guidance: str | None = None
-        self._clarification: str | None = None
         self._resume_event = threading.Event()
-        self._current_task_id: TaskId | None = None
+        self._guidance: str | None = None #TODO不需要存，直接使用
+        self._clarification: str | None = None #TODO不需要存，直接使用
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -81,7 +75,11 @@ class Pipeline:
         self._guidance = None
         self._clarification = None
         self._resume_event.clear()
-        self._current_task_id = task_id
+        self._task = Task(
+            id=task_id,
+            description=task_description,
+            created_at=datetime.now(timezone.utc),
+        )
 
         # Build plan
         plan_retries = 0
@@ -119,10 +117,9 @@ class Pipeline:
                     )
                 continue
             break
-
+        self._task.task_feat = self._planner.task_feat.task_feat
         #model routing
-        analysis = self._planner.analysis
-        routing = self._model_selector.route(analysis)
+        routing = self._model_selector.route(self._task.task_feat)
         provider_chain = [routing.primary, *routing.fallbacks]
         provider_index = 0
         self._update_reasoning_gateway(provider_chain[provider_index])
@@ -336,7 +333,7 @@ class Pipeline:
 
     def _update_reasoning_gateway(self, provider_name: str) -> None:
         """Build a new LLMGateway for the given provider and inject into ReasoningManager."""
-        gateway = self._llm_provider_registry.build_gateway(provider_name)
+        gateway = self._llm_gateway.for_provider(provider_name)
         self._stage_executor.set_llm_gateway(gateway)
 
     @staticmethod

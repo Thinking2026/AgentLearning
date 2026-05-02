@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -11,7 +10,7 @@ from schemas.ids import PlanStepId, StageId, TaskId
 from schemas.types import LLMMessage, ToolCall, ToolResult
 from schemas.errors import AgentError, LLMError, TOOL_NOT_FOUND, TOOL_ARGUMENT_ERROR, build_error
 
-from agent.models.reasoning.decision import NextDecisionType
+from schemas.task import NextDecisionType, StageStatus
 
 if TYPE_CHECKING:
     from agent.models.context.manager import ContextManager
@@ -19,14 +18,6 @@ if TYPE_CHECKING:
     from agent.models.reasoning.reasoning_manager import ReasoningManager
     from agent.models.evaluate.quality_evaluator import QualityEvaluator
     from tools.tool_registry import ToolRegistry
-
-
-class StageStatus(str, Enum):
-    RUNNING      = "RUNNING"
-    COMPLETED    = "COMPLETED"
-    INTERRUPTED  = "INTERRUPTED"
-    PAUSED       = "PAUSED"
-    FAILED       = "FAILED"
 
 
 @dataclass

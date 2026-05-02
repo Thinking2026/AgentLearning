@@ -36,7 +36,8 @@ from agent.models.evaluate.quality_evaluator import QualityEvaluator
 from agent.models.executor.stage_executor import StageExecutor
 from agent.models.knowledge.knowledge_loader import KnowledgeLoader
 from agent.models.knowledge.knowledge_manager import KnowledgeManager
-from agent.models.model_routing.provider_router import ModelSelector, ProviderCapabilities
+from agent.models.model_routing.provider_router import ModelSelector
+from schemas.task import ProviderCapabilities
 from agent.models.plan.planner import Planner
 from agent.models.reasoning.impl.react.react_strategy import ReActStrategy
 from agent.models.reasoning.reasoning_manager import ReasoningManager
@@ -132,10 +133,12 @@ class AgentFactory:
     # LLM gateway
     # ------------------------------------------------------------------
 
-    def build_llm_gateway(self, provider_name: str) -> LLMGateway:
-        provider = self._build_provider(provider_name)
+    def build_llm_gateway(self, provider_name: str, registry: LLMProviderRegistry | None = None) -> LLMGateway:
+        if registry is None:
+            registry = LLMProviderRegistry([self._build_provider(provider_name)])
         return LLMGateway(
-            provider=provider,
+            registry=registry,
+            provider_name=provider_name,
             max_retries=int(self._config.get("llm.retry.max_attempts", 3)),
             retry_delays=self._reader.retry_delays("llm.retry.backoff_seconds") or (1.0, 2.0, 4.0),
             timeout=float(self._config.get(f"llm.provider_settings.{provider_name}.timeout", 60.0)),
@@ -252,6 +255,7 @@ class AgentFactory:
         """Build a fully-wired Pipeline for a single task."""
         primary = self._primary_provider_name()
         llm_registry = self.build_llm_provider_registry()
+        llm_gateway = self.build_llm_gateway(primary, registry=llm_registry)
         model_selector = self.build_model_selector()
         quality_evaluator = self.build_quality_evaluator(task_id, task_description)
         knowledge_manager = self.build_knowledge_manager(task_id)
@@ -267,7 +271,7 @@ class AgentFactory:
             knowledge_manager=knowledge_manager,
             quality_evaluator=quality_evaluator,
             model_selector=model_selector,
-            llm_provider_registry=llm_registry,
+            llm_gateway=llm_gateway,
             max_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
             max_stage_retries=int(self._config.get("agent.max_stage_retries", 2)),
             max_quality_retries=int(self._config.get("agent.max_quality_retries", 2)),

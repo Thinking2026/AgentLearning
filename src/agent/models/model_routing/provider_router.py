@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from agent.models.plan.planner import TaskAnalysis
+from schemas.task import ProviderCapabilities, RoutingDecision, TaskFeature
 from schemas import LLM_CONFIG_ERROR, build_error
 
 # Maps LLM-output complexity labels to TD cognitive-complexity tiers.
@@ -16,32 +15,6 @@ _COMPLEXITY_TO_TIERS: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
-# Provider capability descriptor — loaded from config
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class ProviderCapabilities:
-    name: str
-    cognitive_complexity: list[str]   # e.g. ["L2", "L3"] or ["simple", "medium", "complex"]
-    best_scenarios: list[str]         # e.g. ["code_generation", "reasoning"]
-    top_strengths: list[str]          # e.g. ["code", "long_context"]
-    cost_tier: str                    # "low" | "medium" | "high"
-    latency_tier: str                 # "fast" | "medium" | "slow"
-    context_size: int                 # max context window in tokens
-
-
-# ---------------------------------------------------------------------------
-# RoutingDecision
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class RoutingDecision:
-    """Provider names only; Pipeline resolves to LLMGateway instances via registry."""
-    primary: str
-    fallbacks: list[str] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
 # RoutingStrategy protocol — swap at any time
 # ---------------------------------------------------------------------------
 
@@ -51,7 +24,7 @@ class RoutingStrategy(Protocol):
 
     def select(
         self,
-        analysis: TaskAnalysis | None,
+        task_feat: TaskFeature | None,
         candidates: list[ProviderCapabilities],
     ) -> list[str]:
         """Return provider names in priority order (best first). Must be non-empty."""
@@ -76,53 +49,37 @@ class CapabilityMatchStrategy:
 
     def select(
         self,
-        analysis: TaskAnalysis | None,
+        task_feat: TaskFeature | None,
         candidates: list[ProviderCapabilities],
     ) -> list[str]:
         if not candidates:
             raise build_error(LLM_CONFIG_ERROR, "no provider candidates available")
-        if analysis is None:
+        if task_feat is None:
             return [c.name for c in candidates]
 
-        accepted_tiers = _COMPLEXITY_TO_TIERS.get(analysis.complexity, [analysis.complexity])
+        accepted_tiers = _COMPLEXITY_TO_TIERS.get(task_feat.complexity, [task_feat.complexity])
 
         scored: list[tuple[int, str]] = []
         for cap in candidates:
             score = 0
-            for scenario in analysis.preferred_scenarios:
+            for scenario in task_feat.preferred_scenarios:
                 if scenario in cap.best_scenarios:
                     score += 3
-            for strength in analysis.required_strengths:
+            for strength in task_feat.required_strengths:
                 if strength in cap.top_strengths:
                     score += 2
             if any(t in cap.cognitive_complexity for t in accepted_tiers):
                 score += 2
-            if analysis.min_context_size > 0 and cap.context_size < analysis.min_context_size:
+            if task_feat.min_context_size > 0 and cap.context_size < task_feat.min_context_size:
                 score -= 2
-            if analysis.prefer_low_cost and cap.cost_tier == "high":
+            if task_feat.prefer_low_cost and cap.cost_tier == "high":
                 score -= 1
-            if analysis.prefer_low_latency and cap.latency_tier != "fast":
+            if task_feat.prefer_low_latency and cap.latency_tier != "fast":
                 score -= 1
             scored.append((score, cap.name))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [name for _, name in scored]
-
-
-# ---------------------------------------------------------------------------
-# Built-in strategy 2: static priority chain (original behaviour)
-# ---------------------------------------------------------------------------
-
-class PriorityChainStrategy:
-    """Always return providers in the fixed priority order from config."""
-
-    def select(
-        self,
-        _analysis: TaskAnalysis | None,
-        candidates: list[ProviderCapabilities],
-    ) -> list[str]:
-        return [c.name for c in candidates]
-
 
 # ---------------------------------------------------------------------------
 # Built-in strategy 3: cost/latency first (TD §按延迟与成本映射)
@@ -147,7 +104,7 @@ class CostLatencyStrategy:
 
     def select(
         self,
-        _analysis: TaskAnalysis | None,
+        _analysis: TaskFeature | None,
         candidates: list[ProviderCapabilities],
     ) -> list[str]:
         def _rank(cap: ProviderCapabilities) -> float:
@@ -187,7 +144,7 @@ class ModelSelector:
 
     def route(
         self,
-        task_hint: TaskAnalysis | None = None,
+        task_feat: TaskFeature | None = None,
         enable_fallback: bool | None = None,
         excluded_providers: set[str] | None = None,
     ) -> RoutingDecision:
@@ -198,7 +155,7 @@ class ModelSelector:
         if not candidates:
             raise build_error(LLM_CONFIG_ERROR, "no available providers after applying exclusions")
 
-        ordered = self._strategy.select(task_hint, candidates)
+        ordered = self._strategy.select(task_feat, candidates)
         if not ordered:
             raise build_error(LLM_CONFIG_ERROR, "routing strategy returned an empty provider list")
 

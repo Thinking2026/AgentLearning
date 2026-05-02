@@ -1,28 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from schemas.domain import AggregateRoot
 from schemas.ids import CheckpointId, PlanId, TaskId
+from schemas.task import CheckpointEntry
 from schemas.types import LLMMessage
 
 from agent.events import CheckpointRestored, CheckpointSaved
-
-
-# ---------------------------------------------------------------------------
-# Value object
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class CheckpointEntry:
-    id: CheckpointId
-    task_id: TaskId
-    plan_id: PlanId
-    stage_order: int
-    conversation_checkpoint: list[LLMMessage]
-    created_at: datetime
 
 
 # ---------------------------------------------------------------------------
