@@ -80,257 +80,48 @@ class Pipeline:
             description=task_description,
             created_at=datetime.now(timezone.utc),
         )
+        self._queue = []
+        try:
+            while quality_retries <= self._max_quality_retries:
+                # Build plan
+                plan = self._planner.build_plan(task_description, self._queue)
+                self._task.task_feat = self._planner.task_feat.task_feat
 
-        # Build plan
-        plan_retries = 0
-        while plan_retries <= self._max_plan_retries:
-            if self._cancelled.is_set():
-                return self._cancelled_result(task_id)
+                #model routing
+                model_routing = self._model_selector.route(self._task.task_feat)
 
-            try:
-                self._planner.analyze()
-                self._planner.build_plan()
-            except Exception as exc:
-                return self._failed_result(task_id, f"Plan build failed: {exc}")
-
-            # Review plan
-            review = self._quality_evaluator.review_plan(self._planner)
-            if not review.passed:
-                plan_retries += 1
-                if plan_retries > self._max_plan_retries:
-                    return self._failed_result(task_id, "Max plan retries exceeded")
-                if review.need_user_clarification:
-                    self._stage_executor.pause(review.clarification_question)
-                    self._resume_event.wait()
-                    self._resume_event.clear()
-                    clarification = self._clarification or ""
-                    self._clarification = None
-                    self._planner.renew(
-                        PlanUpdateTrigger.PLAN_REVIEW_FAILED,
-                        feedback=review.feedback,
-                        clarification=clarification,
-                    )
-                else:
-                    self._planner.renew(
-                        PlanUpdateTrigger.PLAN_REVIEW_FAILED,
-                        feedback=review.feedback,
-                    )
-                continue
-            break
-        self._task.task_feat = self._planner.task_feat.task_feat
-        #model routing
-        routing = self._model_selector.route(self._task.task_feat)
-        provider_chain = [routing.primary, *routing.fallbacks]
-        provider_index = 0
-        self._update_reasoning_gateway(provider_chain[provider_index])
-
-        # Execute stages
-        quality_retries = 0
-        while quality_retries <= self._max_quality_retries:
-            if self._cancelled.is_set():
-                return self._cancelled_result(task_id)
-
-            final_result = self._execute_all_stages(
-                task_id,
-                provider_chain,
-                provider_index,
-            )
-            if final_result is None:
-                # Cancelled or terminated during stage execution
-                return self._cancelled_result(task_id) if self._cancelled.is_set() \
-                    else self._failed_result(task_id, "Stage execution failed")
-
-            # Quality check
-            qc = self._quality_evaluator.evaluate_task_result(final_result)
-            if qc.passed:
-                break
-            quality_retries += 1
-            if quality_retries > self._max_quality_retries:
-                return self._failed_result(task_id, "Max quality retries exceeded")
-            # Renew plan and retry
-            self._planner.renew(
-                PlanUpdateTrigger.QUALITY_CHECK_FAILED,
-                feedback=qc.feedback,
-            )
-            self._stage_executor.reset_for_next_stage()
-
-        # Async knowledge extraction (best-effort, non-blocking)
-        self._extract_knowledge_async(task_id, task_description, final_result)
-
-        return TaskResult(
-            task_id=task_id,
-            succeeded=True,
-            result=final_result,
-            error_reason="",
-            delivered_at=datetime.now(timezone.utc),
-        )
-
-    # ------------------------------------------------------------------
-    # User interaction entry points
-    # ------------------------------------------------------------------
-
-    def cancel(self, task_id: TaskId) -> None:
-        """UC-2: User cancels the running task."""
-        self._cancelled.set()
-        self._stage_executor.interrupt("cancelled")
-
-    def submit_guidance(self, task_id: TaskId, guidance: str) -> None:
-        """UC-3: User submits guidance to redirect the current step."""
-        self._guidance = guidance
-        self._stage_executor.interrupt(guidance)
-
-    def submit_clarification(self, task_id: TaskId, clarification: str) -> None:
-        """UC-4: User provides clarification; resumes paused stage."""
-        self._clarification = clarification
-        self._resume_event.set()
-
-    def resume(self, task_id: TaskId) -> None:
-        """UC-5: User resumes after a B-class pause."""
-        self._stage_executor.resume()
-        self._resume_event.set()
-
-    def restore_from_checkpoint(self, task_id: TaskId) -> None:
-        """UC-6: Restore from the latest checkpoint."""
-        entry = self._checkpoint_processor.restore_latest()
-        if entry is not None:
-            self._stage_executor.replace_conversation_history(entry.conversation_checkpoint)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _execute_all_stages(
-        self,
-        task_id: TaskId,
-        provider_chain: list[str],
-        provider_index: int,
-    ) -> str | None:
-        """Execute all plan steps in order. Returns the last step result or None on failure."""
-        last_result = ""
-        step_index = 0
-
-        while step_index < self._planner.total_steps():
-            if self._cancelled.is_set():
-                return None
-
-            step = self._planner.get_step_by_order(step_index)
-            if step is None:
-                break
-
-            stage_retries = 0
-            resume_existing_context = False
-            while stage_retries <= self._max_stage_retries:
-                if not resume_existing_context:
-                    self._stage_executor.reset_for_next_stage()
-
-                # Handle user guidance interrupt from previous iteration
-                if self._guidance:
-                    self._planner.revise(
-                        step.id,
-                        PlanUpdateTrigger.USER_GUIDANCE,
-                        feedback=self._guidance,
-                    )
-                    self._guidance = None
-                    step = self._planner.get_step_by_order(step_index)
-                    if step is None:
-                        break
-                    resume_existing_context = False
-
-                try:
-                    stage = self._stage_executor.execute_stage(
-                        task_id=task_id,
-                        plan_step_id=step.id,
-                        plan_step_goal=step.goal,
-                        plan_step_description=step.description,
-                        resume_existing_context=resume_existing_context,
-                        provider_name=provider_chain[provider_index],
-                    )
-                    resume_existing_context = False
-                except LLMError as exc:
-                    if exc.category in (
-                        ErrorCategory.AUTH,
-                        ErrorCategory.CONFIG,
-                        ErrorCategory.RESPONSE,
-                    ):
-                        next_index = self._next_provider_index(provider_chain, provider_index)
-                        if next_index is not None:
-                            provider_index = next_index
-                            self._update_reasoning_gateway(provider_chain[provider_index])
-                            resume_existing_context = True
-                            continue
-                        return None
-                    # B-class: pause and wait, then continue the same step context.
-                    self._stage_executor.pause(exc.message)
-                    self._resume_event.wait()
-                    self._resume_event.clear()
-                    resume_existing_context = True
-                    continue
-                except AgentError as exc:
-                    return None
-
-                if stage.status == StageStatus.INTERRUPTED:
-                    # User guidance: revise step and retry
-                    self._planner.revise(
-                        step.id,
-                        PlanUpdateTrigger.USER_GUIDANCE,
-                        feedback=stage.interrupt_guidance,
-                    )
-                    self._guidance = None
-                    step = self._planner.get_step_by_order(step_index)
-                    resume_existing_context = False
-                    stage_retries += 1
-                    continue
-
-                if stage.status == StageStatus.PAUSED:
-                    # Wait for user clarification or resume, then continue this step.
-                    self._resume_event.wait()
-                    self._resume_event.clear()
-                    if self._clarification:
-                        self._stage_executor.append_user_clarification(self._clarification)
-                        self._clarification = None
-                    resume_existing_context = True
-                    continue
-
-                if stage.status == StageStatus.FAILED:
-                    resume_existing_context = False
-                    stage_retries += 1
-                    if stage_retries > self._max_stage_retries:
-                        # Revise plan step and retry from this step
-                        self._planner.revise(
-                            step.id,
-                            PlanUpdateTrigger.STAGE_INFEASIBLE,
+                # Execute stages
+                result = self._stage_executor.execute(
+                    task,
+                    model_routing,
+                )
+                if result.succeeded:
+                    # Quality check
+                    qc = self._quality_evaluator.evaluate_task_result(final_result, self._queue)
+                    if qc.passed:
+                        result = final_result
+                        self._extract_knowledge_async(task_id, task_description, final_result)
+                        return TaskResult(
+                            task_id=task_id,
+                            succeeded=True,
+                            result=final_result,
+                            error_reason="",
+                            delivered_at=datetime.now(timezone.utc),
                         )
-                        step = self._planner.get_step_by_order(step_index)
-                        stage_retries = 0
-                    continue
+                    else:
+                        # Renew plan and retry
+                        feedback=qc.feedback,
+                        quality_retries += 1 
+                else:
+                    #用户取消，返回结果
+        except AgentError as exc:
+            return self._failed_result(task_id, f"Agent error: {exc.message}")
+        finally:
+            return self._failed_result(task_id, f"Agent error: {exc.message}")
 
-                # Stage completed successfully
-                last_result = stage.result
-
-                # Evaluate step result
-                eval_record = self._quality_evaluator.evaluate_step_result(step, stage.result)
-                if not eval_record.passed:
-                    self._planner.revise(
-                        step.id,
-                        PlanUpdateTrigger.STAGE_EVAL_FAILED,
-                        feedback=eval_record.feedback,
-                    )
-                    resume_existing_context = False
-                    stage_retries += 1
-                    if stage_retries > self._max_stage_retries:
-                        # Move on despite failure
-                        break
-                    continue
-
-                # Save checkpoint asynchronously
-                self._stage_executor.archive_current_stage_context()
-                self._save_checkpoint_async(task_id, step_index)
-                break
-
-            step_index += 1
-
-        return last_result
-
+    def run_from_checkpoint():
+        return None
+    
     def _update_reasoning_gateway(self, provider_name: str) -> None:
         """Build a new LLMGateway for the given provider and inject into ReasoningManager."""
         gateway = self._llm_gateway.for_provider(provider_name)

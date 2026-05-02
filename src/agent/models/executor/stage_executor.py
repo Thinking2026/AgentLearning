@@ -94,6 +94,53 @@ class StageExecutor:
     # ------------------------------------------------------------------
     # Main execution entry point
     # ------------------------------------------------------------------
+    def execute(
+        self,
+        task: Task,
+        plan: Plan,
+        provider_routing: list[str],
+        async_queue: queue
+    ) -> str | None:
+        current_stage = construct_stage() 
+        while current_stage is not None:
+            loop_user_cancel_information
+            try:
+                #尝试切回最好的模型
+                stage = self._stage_executor.execute_stage(
+                    task_id=task_id,
+                    plan_step_id=step.id,
+                    plan_step_goal=step.goal,
+                    plan_step_description=step.description,
+                    resume_existing_context=resume_existing_context,
+                    provider_name=provider_chain[provider_index],
+                )
+                current_stage = next_stage
+                # if need save checkpoint
+                self._stage_executor.archive_current_stage_context()
+                self._save_checkpoint_async(task_id, step_index)
+
+            except LLMError as exc:
+                if exc.category in (
+                    ErrorCategory.AUTH,
+                    ErrorCategory.CONFIG,
+                    ErrorCategory.RESPONSE,
+                ):
+                    #切模型
+                    next_index = self._next_provider_index(provider_chain, provider_index)
+                    provider_index = next_index
+                    #需要知道stage涉及的context上下文，reset重新retry当前stage
+                    continue
+                else:
+                    #TODO
+            except AgentError as exc:
+                #if 需要revise stage plan:
+                #    revise_stage_plan()
+                    #reset stage context
+                    #current_stage = construct_stage() 
+                    continue
+                #else
+                return None
+        return last_result
 
     def execute_stage(
         self,
@@ -103,56 +150,30 @@ class StageExecutor:
         plan_step_description: str,
         resume_existing_context: bool = False,
         provider_name: str | None = None,
+        stage
     ) -> Stage:
-        """Execute one Stage end-to-end.
-
-        1. Create Stage instance, load reusable knowledge into context.
-        2. Loop: reason_once → handle decision → inject result.
-        3. Update Stage status and result.
-        """
-        self._interrupted.clear()
-        self._paused.clear()
-
-        stage = Stage(
-            id=StageId(f"stage_{uuid4().hex}"),
-            task_id=task_id,
-            plan_step_id=plan_step_id,
-            plan_step_goal=plan_step_goal,
-            plan_step_description=plan_step_description,
-        )
-        self._current_stage = stage
-        last_answer = ""
-        selected_tool_names: list[str] | None = None
         while stage.iteration_count < self._max_iterations:
-            # Check for interrupt / pause
-            if self._interrupted.is_set():
-                stage.interrupt(self._interrupt_guidance)
-                break
-
-            if self._paused.is_set():
-                stage.pause()
-                break
-
+            #loop_user_guidance指引,也许拿的到
+            #context manager + user guide
+            # return need revise plan
             try:
-                decision = self._reasoning_manager.reason_once(
-                    self._context_manager,
-                    self._tool_registry,
-                    selected_tool_names,
-                    provider_name,
+                context_window = (context_manager.prepare_context(provider_name)
+                    if provider_name
+                    else context_manager.get_context_window()
                 )
-            except LLMError:
-                # Let Pipeline classify provider fallback vs pause/resume.
-                raise
-            except AgentError as exc:
+                decision = self._reasoning_manager.reason_once(
+                    context_window,
+                    self._tool_registry.get_tool_schemas,
+                )
+            except AgentError as exc:#hard error
                 stage.fail(f"Agent error: {exc.message}")
                 break
 
-            stage.increment_iteration()
-
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
                 last_answer = decision.answer
-                stage.complete(last_answer)
-                break
+                #评估这个stage
+                #if passed -> 用上下文联通？
+                #else return revise plan, 只有评估不过可以revise
 
             if decision.decision_type == NextDecisionType.CONTINUE:
                 # Truncated or plain reasoning — inject and continue
@@ -162,9 +183,7 @@ class StageExecutor:
                     else ""
                 )
                 self._context_manager.add_message("assistant", content)
-                selected_tool_names = None
-                continue
-
+                stage.iteration_count += 1 
             if decision.decision_type == NextDecisionType.TOOL_CALL:
                 if decision.assistant_message:
                     self._context_manager.add_message(
@@ -174,20 +193,16 @@ class StageExecutor:
                     )
                 self._dispatch_tool_calls(decision.tool_calls)
                 # Next iteration: only expose the tools the LLM just selected
-                selected_tool_names = [tc.name for tc in decision.tool_calls]
-                continue
-
+                stage.iteration_count += 1 
             if decision.decision_type == NextDecisionType.CLARIFICATION_NEEDED:
-                stage.pause(decision.message)
+                #阻塞等待澄清
                 if decision.message:
                     self._context_manager.add_message("assistant", decision.message)
-                break
 
-        else:
-            # Max iterations reached
-            stage.fail(last_answer)
+            if decision.decision_type == NextDecisionType.PAUSE:
+                #阻塞等待继续
 
-        return stage
+        #尽最大努力挂了，然后？
 
     # ------------------------------------------------------------------
     # Interrupt / pause / resume
@@ -264,6 +279,8 @@ class StageExecutor:
                 continue
 
             result: ToolResult = self._tool_registry.execute(tool_call)
+            #如果结果失败并且是搜索，考虑本地内容
+            
             observation = self._reasoning_manager.format_tool_observation(
                 tool_call=tool_call,
                 result=self._tool_result_for_observation(result),

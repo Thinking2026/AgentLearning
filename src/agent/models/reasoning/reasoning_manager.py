@@ -44,11 +44,7 @@ class ReasoningManager:
 
         Any LLMError raised by the gateway propagates to the caller (StageExecutor).
         """
-        context_window = (
-            context_manager.prepare_context(provider_name)
-            if provider_name
-            else context_manager.get_context_window()
-        )
+        
         request = self._strategy.build_llm_request(context_window, tool_registry, selected_tool_names)
         response = self._llm_gateway.generate(request)
         decision = self._strategy.parse_llm_response(response)

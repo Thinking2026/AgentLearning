@@ -114,6 +114,7 @@ class ToolRegistry:
                 "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
             },
         ) as span:
+            #重试放在这里
             result = self._router.route(tool_call)
             span.add_attributes(
                 {

@@ -67,6 +67,35 @@ class Planner(AggregateRoot):
     # Public methods
     # ------------------------------------------------------------------
 
+    def build_plan(self, task_description: str) -> DTO:
+        try:
+            self.analyze()
+            plan_retries = 0
+            feedback = ""
+            clarification = ""
+            while plan_retries <= self._max_plan_retries:
+                self.build_plan(feedback, clarification)
+                review = self._quality_evaluator.review_plan()
+                if not review.passed:
+                    plan_retries += 1
+                    if review.need_user_clarification:
+                        self._stage_executor.pause(review.clarification_question)
+                        self._resume_event.wait()
+                        self._resume_event.clear()
+                        clarification = self._clarification or ""
+                        self._clarification = None
+                        feedback=review.feedback,
+                        clarification=clarification,
+                    else:
+                        feedback=review.feedback,
+                else:
+                    #success
+                    return     
+        except Exception as exc:
+            return self._failed_result(task_id, f"Plan build failed: {exc}")    
+        finally:
+            return self._failed_result(task_id, f"Plan build failed: {exc}")    
+
     def analyze(self) -> Planner:
         """Call LLM to analyze the task and fill self.analysis."""
         prompt = (
@@ -94,7 +123,7 @@ class Planner(AggregateRoot):
         self.task_feat = self._parse_analysis(response.assistant_message.content)
         return self
 
-    def build_plan(self, knowledge_hint: str = "") -> None:
+    def _build_plan_impl(self, knowledge_hint: str = "") -> None:
         """Call LLM to create execution steps, fill self.steps, version=1."""
         knowledge_context = ""
         if self._knowledge_loader is not None:
