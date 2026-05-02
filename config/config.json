@@ -32,37 +32,85 @@
         "timeout": 120.0,
         "max_tokens": 1024,
         "anthropic_version": "2023-06-01",
-        "context_window": 200000
+        "context_window": 200000,
+        "capabilities": {
+          "cognitive_complexity": ["L2", "L3", "L4"],
+          "best_scenarios": ["code_generation", "reasoning", "analysis", "research", "writing"],
+          "top_strengths": ["instruction_following", "code", "long_context", "tool_use"],
+          "cost_tier": "high",
+          "latency_tier": "medium",
+          "context_size": 200000
+        }
       },
       "deepseek": {
         "model": "deepseek-chat",
         "base_url": "https://api.deepseek.com/v1",
         "timeout": 120.0,
-        "context_window": 64000
+        "context_window": 64000,
+        "capabilities": {
+          "cognitive_complexity": ["L2", "L3", "L4"],
+          "best_scenarios": ["code_generation", "math", "reasoning", "data_analysis"],
+          "top_strengths": ["code", "math", "cost_efficiency"],
+          "cost_tier": "low",
+          "latency_tier": "fast",
+          "context_size": 64000
+        }
       },
       "openai": {
         "model": "gpt-4o",
         "base_url": "https://api.openai.com/v1",
         "timeout": 120.0,
-        "context_window": 128000
+        "context_window": 128000,
+        "capabilities": {
+          "cognitive_complexity": ["L2", "L3"],
+          "best_scenarios": ["general", "code_generation", "analysis", "multimodal", "tool_use"],
+          "top_strengths": ["general_purpose", "tool_use", "instruction_following"],
+          "cost_tier": "high",
+          "latency_tier": "medium",
+          "context_size": 128000
+        }
       },
       "minmax": {
         "model": "MiniMax-Text-01",
         "base_url": "https://api.minimax.chat/v1",
         "timeout": 120.0,
-        "context_window": 1000000
+        "context_window": 1000000,
+        "capabilities": {
+          "cognitive_complexity": ["L1", "L2"],
+          "best_scenarios": ["long_document", "summarization", "general"],
+          "top_strengths": ["ultra_long_context", "cost_efficiency"],
+          "cost_tier": "low",
+          "latency_tier": "medium",
+          "context_size": 1000000
+        }
       },
       "glm": {
         "model": "glm-4",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "timeout": 120.0,
-        "context_window": 128000
+        "context_window": 128000,
+        "capabilities": {
+          "cognitive_complexity": ["L1", "L2"],
+          "best_scenarios": ["general", "chinese_language", "writing"],
+          "top_strengths": ["chinese_language", "cost_efficiency"],
+          "cost_tier": "low",
+          "latency_tier": "fast",
+          "context_size": 128000
+        }
       },
       "kimi": {
         "model": "moonshot-v1-8k",
         "base_url": "https://api.moonshot.cn/v1",
         "timeout": 120.0,
-        "context_window": 128000
+        "context_window": 128000,
+        "capabilities": {
+          "cognitive_complexity": ["L1", "L2"],
+          "best_scenarios": ["general", "chinese_language", "document_qa"],
+          "top_strengths": ["chinese_language", "document_understanding"],
+          "cost_tier": "medium",
+          "latency_tier": "fast",
+          "context_size": 128000
+        }
       }
     }
   },

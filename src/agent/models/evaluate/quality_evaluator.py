@@ -34,6 +34,8 @@ class EvaluationRecord:
     passed: bool
     feedback: str
     evaluated_at: datetime
+    need_user_clarification: bool = field(default=False)
+    clarification_question: str = field(default="")
 
 
 # ---------------------------------------------------------------------------
@@ -186,19 +188,23 @@ class QualityEvaluator(AggregateRoot):
             f"Plan (version {planner.version}):\n{steps_text}\n\n"
             f"Return a JSON object with:\n"
             f"- passed: boolean (true if the plan is feasible and likely to achieve the task)\n"
-            f"- feedback: string (issues and suggestions if not passed, empty string if passed)\n\n"
+            f"- feedback: string (issues and suggestions if not passed, empty string if passed)\n"
+            f"- need_user_clarification: boolean (true if the plan cannot proceed without additional information from the user)\n"
+            f"- clarification_question: string (the specific question to ask the user; empty string if need_user_clarification is false)\n\n"
             f"Respond with only valid JSON."
         )
         response = self._llm_gateway.generate(
             LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
         )
-        passed, feedback = _parse_evaluation(response.assistant_message.content)
+        passed, feedback, need_clarification, clarification_question = _parse_plan_review(response.assistant_message.content)
         record = EvaluationRecord(
             target_type="plan",
             target_id=str(planner.id),
             passed=passed,
             feedback=feedback,
             evaluated_at=datetime.now(timezone.utc),
+            need_user_clarification=need_clarification,
+            clarification_question=clarification_question,
         )
         self.evaluation_history.append(record)
 
@@ -239,6 +245,24 @@ class QualityEvaluator(AggregateRoot):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _parse_plan_review(content: str) -> tuple[bool, str, bool, str]:
+    """Parse plan review response. Returns (passed, feedback, need_user_clarification, clarification_question)."""
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
+        inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
+        content = "\n".join(inner)
+    try:
+        data = json.loads(content)
+        passed = bool(data.get("passed", False))
+        feedback = str(data.get("feedback", ""))
+        need_clarification = bool(data.get("need_user_clarification", False))
+        clarification_question = str(data.get("clarification_question", ""))
+        return passed, feedback, need_clarification, clarification_question
+    except Exception:
+        return True, "", False, ""
+
 
 def _parse_evaluation(content: str) -> tuple[bool, str]:
     """Parse LLM evaluation response. Returns (passed, feedback)."""

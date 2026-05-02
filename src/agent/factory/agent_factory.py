@@ -36,7 +36,7 @@ from agent.models.evaluate.quality_evaluator import QualityEvaluator
 from agent.models.executor.stage_executor import StageExecutor
 from agent.models.knowledge.knowledge_loader import KnowledgeLoader
 from agent.models.knowledge.knowledge_manager import KnowledgeManager
-from agent.models.model_routing.provider_router import ModelSelector
+from agent.models.model_routing.provider_router import ModelSelector, ProviderCapabilities
 from agent.models.plan.planner import Planner
 from agent.models.reasoning.impl.react.react_strategy import ReActStrategy
 from agent.models.reasoning.reasoning_manager import ReasoningManager
@@ -149,8 +149,25 @@ class AgentFactory:
         priority_chain = self._config.get("llm.priority_chain", ["deepseek"])
         if not isinstance(priority_chain, list) or not priority_chain:
             priority_chain = ["deepseek"]
+
+        capabilities: list[ProviderCapabilities] = []
+        for name in priority_chain:
+            cap_cfg = self._config.get(f"llm.provider_settings.{name}.capabilities", {})
+            if not isinstance(cap_cfg, dict):
+                cap_cfg = {}
+            capabilities.append(ProviderCapabilities(
+                name=name,
+                cognitive_complexity=list(cap_cfg.get("cognitive_complexity", ["simple", "medium", "complex"])),
+                best_scenarios=list(cap_cfg.get("best_scenarios", [])),
+                top_strengths=list(cap_cfg.get("top_strengths", [])),
+                cost_tier=str(cap_cfg.get("cost_tier", "medium")),
+                latency_tier=str(cap_cfg.get("latency_tier", "medium")),
+                context_size=int(cap_cfg.get("context_size",
+                    self._config.get(f"llm.provider_settings.{name}.context_window", 32000))),
+            ))
+
         return ModelSelector(
-            priority_chain=priority_chain,
+            provider_capabilities=capabilities,
             enable_fallback=bool(self._config.get("llm.enable_provider_fallback", False)),
         )
 

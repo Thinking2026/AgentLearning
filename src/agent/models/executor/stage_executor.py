@@ -107,6 +107,7 @@ class StageExecutor:
         plan_step_goal: str,
         plan_step_description: str,
         resume_existing_context: bool = False,
+        provider_name: str | None = None,
     ) -> Stage:
         """Execute one Stage end-to-end.
 
@@ -135,6 +136,9 @@ class StageExecutor:
             if self._paused.is_set():
                 stage.pause()
                 break
+
+            #context裁剪
+            self._context_manager.prune_context(provider_name)
 
             try:
                 decision = self._reasoning_manager.reason_once(
@@ -248,8 +252,9 @@ class StageExecutor:
         tool_calls: list[ToolCall],
     ) -> None:
         for tool_call in tool_calls:
+            #TODO: 检查工具调用是否合法（是否在工具列表中，参数是否齐全等），目前假设都是合法的
             result: ToolResult = self._tool_registry.execute(tool_call)
-
+            #TODO 工具结果失败先尝试本地修复，比如JSON配对问题
             # Format and inject tool result into context
             observation = self._reasoning_manager.format_tool_observation(
                 tool_call=tool_call,

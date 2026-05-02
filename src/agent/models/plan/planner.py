@@ -36,6 +36,12 @@ class TaskAnalysis:
     required_tools: list[str]
     estimated_steps: int
     notes: str
+    # routing hints — populated by analyze(), consumed by ModelSelector
+    preferred_scenarios: list[str] = field(default_factory=list)
+    required_strengths: list[str] = field(default_factory=list)
+    min_context_size: int = 0
+    prefer_low_cost: bool = False
+    prefer_low_latency: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +115,16 @@ class Planner(AggregateRoot):
             f"- complexity: string ('simple', 'medium', or 'complex')\n"
             f"- required_tools: list of tool name strings\n"
             f"- estimated_steps: integer\n"
-            f"- notes: string with constraints, risks, or prerequisites\n\n"
+            f"- notes: string with constraints, risks, or prerequisites\n"
+            f"- preferred_scenarios: list of scenario strings that best match this task "
+            f"(choose from: code_generation, math, reasoning, analysis, research, writing, "
+            f"general, long_document, summarization, document_qa, chinese_language, multimodal, tool_use, data_analysis)\n"
+            f"- required_strengths: list of capability strings this task demands "
+            f"(choose from: code, math, long_context, tool_use, instruction_following, "
+            f"general_purpose, cost_efficiency, chinese_language, document_understanding, ultra_long_context)\n"
+            f"- min_context_size: integer — minimum context window (tokens) needed; 0 if unknown\n"
+            f"- prefer_low_cost: boolean — true if cost matters more than quality\n"
+            f"- prefer_low_latency: boolean — true if response speed is critical\n\n"
             f"Task: {self.task_description}\n\n"
             f"Respond with only valid JSON."
         )
@@ -163,14 +178,16 @@ class Planner(AggregateRoot):
             )
         )
 
-    def renew(self, trigger: PlanUpdateTrigger, feedback: str = "") -> None:
+    def renew(self, trigger: PlanUpdateTrigger, feedback: str = "", clarification: str = "") -> None:
         """Rebuild all steps from scratch; version+1."""
         feedback_context = f"\nFeedback: {feedback}\n" if feedback else ""
+        clarification_context = f"\nUser clarification: {clarification}\n" if clarification else ""
         prompt = (
             f"The current execution plan needs to be completely rebuilt.\n"
             f"Task: {self.task_description}\n"
             f"Trigger: {trigger.value}\n"
-            f"{feedback_context}\n"
+            f"{feedback_context}"
+            f"{clarification_context}\n"
             f"Return a JSON array of steps. Each step must have:\n"
             f"- goal: string\n"
             f"- description: string\n\n"
@@ -264,6 +281,11 @@ class Planner(AggregateRoot):
                 required_tools=list(data.get("required_tools", [])),
                 estimated_steps=int(data.get("estimated_steps", 1)),
                 notes=str(data.get("notes", "")),
+                preferred_scenarios=list(data.get("preferred_scenarios", [])),
+                required_strengths=list(data.get("required_strengths", [])),
+                min_context_size=int(data.get("min_context_size", 0)),
+                prefer_low_cost=bool(data.get("prefer_low_cost", False)),
+                prefer_low_latency=bool(data.get("prefer_low_latency", False)),
             )
         except Exception:
             return TaskAnalysis(

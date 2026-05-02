@@ -83,12 +83,6 @@ class Pipeline:
         self._resume_event.clear()
         self._current_task_id = task_id
 
-        # Select model and build gateway
-        routing = self._model_selector.route()
-        provider_chain = [routing.primary, *routing.fallbacks]
-        provider_index = 0
-        self._update_reasoning_gateway(provider_chain[provider_index])
-
         # Build plan
         plan_retries = 0
         while plan_retries <= self._max_plan_retries:
@@ -107,12 +101,31 @@ class Pipeline:
                 plan_retries += 1
                 if plan_retries > self._max_plan_retries:
                     return self._failed_result(task_id, "Max plan retries exceeded")
-                self._planner.renew(
-                    PlanUpdateTrigger.PLAN_REVIEW_FAILED,
-                    feedback=review.feedback,
-                )
+                if review.need_user_clarification:
+                    self._stage_executor.pause(review.clarification_question)
+                    self._resume_event.wait()
+                    self._resume_event.clear()
+                    clarification = self._clarification or ""
+                    self._clarification = None
+                    self._planner.renew(
+                        PlanUpdateTrigger.PLAN_REVIEW_FAILED,
+                        feedback=review.feedback,
+                        clarification=clarification,
+                    )
+                else:
+                    self._planner.renew(
+                        PlanUpdateTrigger.PLAN_REVIEW_FAILED,
+                        feedback=review.feedback,
+                    )
                 continue
             break
+
+        #model routing
+        analysis = self._planner.analysis
+        routing = self._model_selector.route(analysis)
+        provider_chain = [routing.primary, *routing.fallbacks]
+        provider_index = 0
+        self._update_reasoning_gateway(provider_chain[provider_index])
 
         # Execute stages
         quality_retries = 0
@@ -233,6 +246,7 @@ class Pipeline:
                         plan_step_goal=step.goal,
                         plan_step_description=step.description,
                         resume_existing_context=resume_existing_context,
+                        provider_name=provider_chain[provider_index],
                     )
                     resume_existing_context = False
                 except LLMError as exc:
