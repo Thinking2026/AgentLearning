@@ -55,6 +55,9 @@ class AgentThread(threading.Thread):
             raise
 
     def run(self) -> None:
+        #AgentThread套一个壳子，真正处理服务端线程的是pipeline
+        #AgentThread提供一些事件方法，比如记录tracing
+        #userthread负责UI消息组装
         try:
             while self._is_running():
                 user_message = self._user_to_agent_queue.get_user_message(timeout=None)
