@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import json
 import pkgutil
 import time
 from abc import ABC, abstractmethod
 from types import ModuleType
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from schemas import (
     TOOL_EXECUTION_ERROR,
@@ -21,6 +22,11 @@ from infra.observability.tracing import Span, Tracer
 from tools.models import BaseTool
 from utils.log.log import Logger, zap
 
+if TYPE_CHECKING:
+    from agent.models.knowledge.knowledge_loader import KnowledgeLoader
+
+_SEARCH_TOOL_NAME = "search"
+
 
 class ToolRegistry:
     def __init__(
@@ -30,6 +36,7 @@ class ToolRegistry:
         timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         tracer: Tracer | None = None,
         logger: Logger | None = None,
+        knowledge_loader: KnowledgeLoader | None = None,
     ) -> None:
         self._tools = {tool.name: tool for tool in (tools or [])}
         self._timeout_retry_max_attempts = timeout_retry_max_attempts
@@ -39,19 +46,12 @@ class ToolRegistry:
         )
         self._tracer = tracer
         self._logger = logger or Logger.get_instance()
-        self._router = ToolChainRouter(
-            self._tools.values(),
-            timeout_retry_max_attempts=self._timeout_retry_max_attempts,
-            timeout_retry_delays=self._timeout_retry_delays,
-        )
+        self._knowledge_loader = knowledge_loader
+        self._router = ToolChainRouter(self._tools.values())
 
     def register(self, tool: BaseTool) -> None:
         self._tools[tool.name] = tool
-        self._router = ToolChainRouter(
-            self._tools.values(),
-            timeout_retry_max_attempts=self._timeout_retry_max_attempts,
-            timeout_retry_delays=self._timeout_retry_delays,
-        )
+        self._router = ToolChainRouter(self._tools.values())
 
     def auto_register(
         self,
@@ -114,8 +114,7 @@ class ToolRegistry:
                 "llm_raw_tool_call_id": tool_call.llm_raw_tool_call_id,
             },
         ) as span:
-            #重试放在这里
-            result = self._router.route(tool_call)
+            result = self._execute_with_retry(tool_call)
             span.add_attributes(
                 {
                     "success": result.success,
@@ -132,6 +131,49 @@ class ToolRegistry:
                     zap.any("arguments", tool_call.arguments),
                 )
             return result
+
+    def _execute_with_retry(self, tool_call: ToolCall) -> ToolResult:
+        total_attempts = self._timeout_retry_max_attempts
+        result: ToolResult | None = None
+        for attempt_idx in range(total_attempts):
+            result = self._router.route(tool_call)
+            if result.success:
+                return result
+            if result.error is not None and "TIMEOUT" in result.error.code:
+                if attempt_idx < total_attempts - 1:
+                    time.sleep(self._timeout_retry_delays[attempt_idx])
+                    continue
+            else:
+                # Non-timeout failure: no point retrying
+                break
+
+        # All attempts exhausted (or non-timeout failure). Try knowledge fallback for search.
+        if tool_call.name == _SEARCH_TOOL_NAME and self._knowledge_loader is not None:
+            fallback = self._knowledge_loader_fallback(tool_call)
+            if fallback is not None:
+                return fallback
+
+        return result  # type: ignore[return-value]
+
+    def _knowledge_loader_fallback(self, tool_call: ToolCall) -> ToolResult | None:
+        query = str(tool_call.arguments.get("query", "")).strip()
+        if not query:
+            return None
+        try:
+            entries = self._knowledge_loader.load(query)  # type: ignore[union-attr]
+        except Exception:
+            return None
+        if not entries:
+            return None
+        results = [{"rank": i + 1, "content": e.content, "tags": list(e.tags)} for i, e in enumerate(entries)]
+        return ToolResult(
+            output=json.dumps(
+                {"source": "knowledge_base", "query": query, "result_count": len(results), "results": results},
+                ensure_ascii=False,
+            ),
+            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+            success=True,
+        )
 
     def _start_span(
         self,
@@ -188,68 +230,42 @@ class BaseToolHandler(ABC):
 
 
 class ToolHandlerNode(BaseToolHandler):
-    def __init__(
-        self,
-        tool: BaseTool,
-        timeout_retry_max_attempts: int,
-        timeout_retry_delays: tuple[float, ...],
-    ) -> None:
+    def __init__(self, tool: BaseTool) -> None:
         super().__init__()
         self._tool = tool
-        self._timeout_retry_max_attempts = timeout_retry_max_attempts
-        self._timeout_retry_delays = timeout_retry_delays
 
     def can_handle(self, tool_call: ToolCall) -> bool:
         return self._tool.can_handle(tool_call.name)
 
     def process(self, tool_call: ToolCall) -> ToolResult:
-        total_attempts = self._timeout_retry_max_attempts
-        for attempt_idx in range(total_attempts):
-            try:
-                result = self._tool.run(tool_call.arguments)
-                result.llm_raw_tool_call_id = tool_call.llm_raw_tool_call_id
-                return result
-            except TimeoutError as exc:
-                if attempt_idx < total_attempts - 1:
-                    time.sleep(self._timeout_retry_delays[attempt_idx])
-                    continue
-                return ToolResult(
-                    output="",
-                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
-                    success=False,
-                    error=build_error(
-                        TOOL_TIMEOUT,
-                        (
-                            f"Tool `{tool_call.name}` timed out after {total_attempts} attempts: {exc}"
-                        ),
-                    ),
-                )
-            except AgentError as exc:
-                if "TIMEOUT" in exc.code and attempt_idx < total_attempts - 1:
-                    time.sleep(self._timeout_retry_delays[attempt_idx])
-                    continue
-                return ToolResult(
-                    output="",
-                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
-                    success=False,
-                    error=exc,
-                )
-            except Exception as exc:
-                return ToolResult(
-                    output="",
-                    llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
-                    success=False,
-                    error=build_error(
-                        TOOL_EXECUTION_ERROR,
-                        f"Tool `{tool_call.name}` failed unexpectedly: {exc}",
-                    ),
-                )
-        return ToolResult(
-            output="",
-            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
-            success=False,
-            error=build_error(TOOL_TIMEOUT, f"Tool `{tool_call.name}` timed out."),
-        )
+        try:
+            result = self._tool.run(tool_call.arguments)
+            result.llm_raw_tool_call_id = tool_call.llm_raw_tool_call_id
+            return result
+        except TimeoutError as exc:
+            return ToolResult(
+                output="",
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                success=False,
+                error=build_error(TOOL_TIMEOUT, f"Tool `{tool_call.name}` timed out: {exc}"),
+            )
+        except AgentError as exc:
+            return ToolResult(
+                output="",
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                success=False,
+                error=exc,
+            )
+        except Exception as exc:
+            return ToolResult(
+                output="",
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                success=False,
+                error=build_error(
+                    TOOL_EXECUTION_ERROR,
+                    f"Tool `{tool_call.name}` failed unexpectedly: {exc}",
+                ),
+            )
 
 
 class FallbackToolHandler(BaseToolHandler):
@@ -266,39 +282,19 @@ class FallbackToolHandler(BaseToolHandler):
 
 
 class ToolChainRouter:
-    def __init__(
-        self,
-        tools: list[BaseTool] | Any,
-        timeout_retry_max_attempts: int,
-        timeout_retry_delays: tuple[float, ...],
-    ) -> None:
-        self._root_handler = self._build_chain(
-            list(tools),
-            timeout_retry_max_attempts=timeout_retry_max_attempts,
-            timeout_retry_delays=timeout_retry_delays,
-        )
+    def __init__(self, tools: list[BaseTool] | Any) -> None:
+        self._root_handler = self._build_chain(list(tools))
 
     def route(self, tool_call: ToolCall) -> ToolResult:
         return self._root_handler.handle(tool_call)
 
     @staticmethod
-    def _build_chain(
-        tools: list[BaseTool],
-        timeout_retry_max_attempts: int,
-        timeout_retry_delays: tuple[float, ...],
-    ) -> BaseToolHandler:
+    def _build_chain(tools: list[BaseTool]) -> BaseToolHandler:
         fallback = FallbackToolHandler()
         if not tools:
             return fallback
 
-        handlers = [
-            ToolHandlerNode(
-                tool,
-                timeout_retry_max_attempts=timeout_retry_max_attempts,
-                timeout_retry_delays=timeout_retry_delays,
-            )
-            for tool in tools
-        ]
+        handlers = [ToolHandlerNode(tool) for tool in tools]
         current = handlers[0]
         root = current
         for handler in handlers[1:]:
@@ -345,12 +341,14 @@ def create_default_tool_registry(
     timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
     tracer: Tracer | None = None,
     logger: Logger | None = None,
+    knowledge_loader: KnowledgeLoader | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(
         timeout_retry_max_attempts=timeout_retry_max_attempts,
         timeout_retry_delays=timeout_retry_delays,
         tracer=tracer,
         logger=logger,
+        knowledge_loader=knowledge_loader,
     )
     registry.auto_register(module_names=module_names, package_name=package_name)
     return registry
