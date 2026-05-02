@@ -32,16 +32,24 @@ class ReasoningManager:
         self,
         context_manager: ContextManager,
         tool_registry: ToolRegistry,
+        selected_tool_names: list[str] | None = None,
+        provider_name: str | None = None,
     ) -> NextDecision:
         """Execute one reasoning step.
 
-        1. Build LLMRequest from current context via strategy.
-        2. Call LLMGateway.generate().
-        3. Parse LLMResponse into a NextDecision via strategy.
+        1. Prepare context window via context_manager (trims if needed).
+        2. Build LLMRequest from context window via strategy.
+        3. Call LLMGateway.generate().
+        4. Parse LLMResponse into a NextDecision via strategy.
 
         Any LLMError raised by the gateway propagates to the caller (StageExecutor).
         """
-        request = self._strategy.build_llm_request(context_manager, tool_registry)
+        context_window = (
+            context_manager.prepare_context(provider_name)
+            if provider_name
+            else context_manager.get_context_window()
+        )
+        request = self._strategy.build_llm_request(context_window, tool_registry, selected_tool_names)
         response = self._llm_gateway.generate(request)
         decision = self._strategy.parse_llm_response(response)
         return decision

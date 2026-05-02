@@ -14,7 +14,7 @@ from schemas import (
 )
 
 if TYPE_CHECKING:
-    from agent.models.context.manager import ContextManager
+    from agent.models.context.manager import ContextWindow
     from tools import ToolRegistry
 
 
@@ -75,14 +75,18 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
 
     def build_llm_request(
         self,
-        agent_context: ContextManager,
+        context_window: ContextWindow,
         tool_registry: ToolRegistry,
+        selected_tool_names: list[str] | None = None,
     ) -> LLMRequest:
-        context_window = agent_context.get_context_window()
+        if selected_tool_names:
+            tools = tool_registry.get_tool_schemas_for(selected_tool_names)
+        else:
+            tools = tool_registry.get_tool_schemas()
         return self._formatter.build_request(
             system_prompt=self._merge_system_prompt(context_window.system_prompt),
             conversation=context_window.messages,
-            tools=tool_registry.get_tool_schemas(),
+            tools=tools,
         )
 
     def parse_llm_response(self, response: LLMResponse) -> NextDecision:

@@ -3,11 +3,18 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from schemas import LLMMessage, LLMRequest
 from schemas.types import LLMRole
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from agent.models.context.estimator.token_estimator import BaseTokenEstimator
+    from agent.models.context.truncation.token_truncation import ContextTruncator as _ContextTruncator
+    from config.config import JsonConfig
+    from llm.llm_gateway import BaseLLMClient
 
 
 @dataclass(frozen=True)
@@ -45,15 +52,30 @@ class ContextManager:
     The raw ContextMessage history is kept for debug/checkpoint use. The
     ContextWindow view is the only LLM-facing view and repairs incomplete tool
     call/tool result pairs before a request is built.
+
+    Pass a JsonConfig to enable automatic token estimation and truncation via
+    prepare_context(). Without a config the manager still works but
+    prepare_context() falls back to get_context_window() with no trimming.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        config: JsonConfig | None = None,
+        strategy_name: str = "react",
+        llm_client_factory: Callable[[str], BaseLLMClient] | None = None,
+    ) -> None:
         self._system_prompt = ""
         self._messages: list[ContextMessage] = []
         self._history: list[ContextMessage] = []
         self._archived_tasks: list[list[ContextMessage]] = []
         self._variables: dict[str, Any] = {}
         self._lock = threading.RLock()
+        self._config = config
+        self._strategy_name = strategy_name
+        self._llm_client_factory = llm_client_factory
+        # Lazily-created caches: estimator per provider, truncator per strategy
+        self._estimators: dict[str, BaseTokenEstimator] = {}
+        self._truncator: _ContextTruncator | None = None
 
     # ------------------------------------------------------------------
     # System prompt
@@ -159,21 +181,10 @@ class ContextManager:
 
     def get_token_count(self) -> int:
         with self._lock:
-            return self._estimate_tokens(self._system_prompt, self._messages, self._variables)
-
-    def trim_to_max_tokens(self, max_tokens: int, truncator: ContextTruncator, estimator: Any = None) -> None:
-        with self._lock:
-            request = LLMRequest(
-                system_prompt=self._system_prompt,
-                messages=self._to_llm_messages(self._messages),
-            )
-            result = truncator.truncate(request, max_tokens, estimator)
-            trimmed_request = getattr(result, "request", result)
-            self._messages = [
-                self._from_llm_message(message)
-                for message in getattr(trimmed_request, "messages", [])
-            ]
-            self._history = list(self._messages)
+            total_chars = len(self._system_prompt)
+            for msg in self._messages:
+                total_chars += len(msg.content)
+            return total_chars // 4  # rough 4-chars-per-token fallback
 
     def summarize(self, strategy: Any) -> None:
         with self._lock:
@@ -190,11 +201,58 @@ class ContextManager:
         with self._lock:
             messages = self._repair_tool_pairs(self._messages)
             llm_messages = self._to_llm_messages(messages)
+            system_prompt = self._system_prompt_with_variables()
+            rough_tokens = (len(system_prompt) + sum(len(m.content) for m in messages)) // 4
             return ContextWindow(
-                system_prompt=self._system_prompt_with_variables(),
+                system_prompt=system_prompt,
                 messages=llm_messages,
-                token_count=self._estimate_tokens(self._system_prompt, messages, self._variables),
+                token_count=rough_tokens,
             )
+
+    def prepare_context(self, provider_name: str) -> ContextWindow:
+        """Return a context window ready for LLM consumption.
+
+        Reads context_window size from config for the given provider, estimates
+        current token usage, and truncates if usage exceeds the trim threshold.
+        Falls back to get_context_window() when config is absent or the provider
+        has no context_window entry.
+        """
+        window = self.get_context_window()
+        if self._config is None:
+            return window
+
+        context_window_size: int = self._config.get(
+            f"llm.provider_settings.{provider_name}.context_window", 0
+        )
+        if context_window_size <= 0:
+            return window
+
+        estimator = self._get_estimator(provider_name)
+        request = LLMRequest(
+            system_prompt=window.system_prompt,
+            messages=window.messages,
+        )
+        estimation = estimator.estimate(request)
+        if estimation["total"] <= context_window_size * 0.85:
+            return window
+
+        truncator = self._get_truncator()
+        if truncator is None:
+            return window
+
+        result = truncator.truncate(request, context_window_size, estimator)
+        if result.compacted_messages is None:
+            return window
+
+        compacted = result.compacted_messages
+        est_after = estimator.estimate(
+            LLMRequest(system_prompt=window.system_prompt, messages=compacted)
+        )
+        return ContextWindow(
+            system_prompt=window.system_prompt,
+            messages=compacted,
+            token_count=est_after["total"],
+        )
 
     def get_context(self) -> FullContext:
         with self._lock:
@@ -263,6 +321,26 @@ class ContextManager:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _get_estimator(self, provider_name: str) -> BaseTokenEstimator:
+        if provider_name not in self._estimators:
+            from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
+            self._estimators[provider_name] = TokenEstimatorFactory.get_estimator(provider_name)
+        return self._estimators[provider_name]
+
+    def _get_truncator(self) -> _ContextTruncator | None:
+        if self._config is None or self._llm_client_factory is None:
+            return None
+        if self._truncator is None:
+            from agent.models.context.truncation.token_truncation import TruncatorFactory
+            from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
+            from utils.log.log import get_logger
+            budget_manager = TokenBudgetManagerFactory.create(self._strategy_name, self._config)
+            logger = get_logger(__name__)
+            self._truncator = TruncatorFactory.create(
+                self._strategy_name, budget_manager, self._llm_client_factory, logger, self._config
+            )
+        return self._truncator
+
     def _system_prompt_with_variables(self) -> str:
         if not self._variables:
             return self._system_prompt
@@ -292,17 +370,6 @@ class ContextManager:
                 continue
             break
         return repaired
-
-    @staticmethod
-    def _estimate_tokens(
-        system_prompt: str,
-        messages: list[ContextMessage],
-        variables: dict[str, Any],
-    ) -> int:
-        chars = len(system_prompt)
-        chars += sum(len(message.content) for message in messages)
-        chars += sum(len(str(key)) + len(str(value)) for key, value in variables.items())
-        return max(1, chars // 4) if chars else 0
 
     @classmethod
     def _to_llm_messages(cls, messages: list[ContextMessage]) -> list[LLMMessage]:

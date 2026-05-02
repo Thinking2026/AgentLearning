@@ -151,6 +151,7 @@
   "tools": {
     "package": null,
     "modules": [],
+    "forbidden_tools": [],
     "retry": {
       "max_attempts": 4,
       "backoff_seconds": [1.0, 2.0, 4.0]

@@ -70,6 +70,21 @@ class ToolRegistry:
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
+    def get_tool_schemas_for(self, names: list[str]) -> list[dict[str, Any]]:
+        name_set = set(names)
+        return [tool.schema() for name, tool in self._tools.items() if name in name_set]
+
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
+    def validate_arguments(self, tool_call: ToolCall) -> list[str]:
+        """Return a list of missing required argument names, or [] if valid."""
+        tool = self._tools.get(tool_call.name)
+        if tool is None:
+            return []
+        required: list[str] = tool.parameters.get("required", [])
+        return [key for key in required if key not in tool_call.arguments]
+
     def reset_all(self) -> None:
         for tool in self._tools.values():
             tool.reset()

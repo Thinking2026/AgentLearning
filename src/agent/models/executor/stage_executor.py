@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from schemas.ids import PlanStepId, StageId, TaskId
 from schemas.types import LLMMessage, ToolCall, ToolResult
-from schemas.errors import AgentError, LLMError
+from schemas.errors import AgentError, LLMError, TOOL_NOT_FOUND, TOOL_ARGUMENT_ERROR, build_error
 
 from agent.models.reasoning.decision import NextDecisionType
 
@@ -72,7 +72,7 @@ class StageExecutor:
 
     Drives the ReAct reasoning loop: reason → tool call → inject result → repeat.
     Delegates single-step LLM inference to ReasoningManager and tool dispatch to
-    ToolRegistry. Context management is handled by ContextManager.
+    ToolRegistry. Context management (including trimming) is handled by ContextManager.
     """
 
     def __init__(
@@ -83,6 +83,7 @@ class StageExecutor:
         quality_evaluator: QualityEvaluator,
         knowledge_loader: KnowledgeLoader,
         max_iterations: int = 60,
+        forbidden_tools: list[str] | None = None,
     ) -> None:
         self._reasoning_manager = reasoning_manager
         self._context_manager = context_manager
@@ -90,6 +91,9 @@ class StageExecutor:
         self._quality_evaluator = quality_evaluator
         self._knowledge_loader = knowledge_loader
         self._max_iterations = max_iterations
+        self._forbidden_tools: frozenset[str] = (
+            frozenset(forbidden_tools) if forbidden_tools else frozenset()
+        )
         self._current_stage: Stage | None = None
         self._interrupted = threading.Event()
         self._paused = threading.Event()
@@ -127,6 +131,7 @@ class StageExecutor:
         )
         self._current_stage = stage
         last_answer = ""
+        selected_tool_names: list[str] | None = None
         while stage.iteration_count < self._max_iterations:
             # Check for interrupt / pause
             if self._interrupted.is_set():
@@ -137,13 +142,12 @@ class StageExecutor:
                 stage.pause()
                 break
 
-            #context裁剪
-            self._context_manager.prune_context(provider_name)
-
             try:
                 decision = self._reasoning_manager.reason_once(
                     self._context_manager,
                     self._tool_registry,
+                    selected_tool_names,
+                    provider_name,
                 )
             except LLMError:
                 # Let Pipeline classify provider fallback vs pause/resume.
@@ -167,6 +171,7 @@ class StageExecutor:
                     else ""
                 )
                 self._context_manager.add_message("assistant", content)
+                selected_tool_names = None
                 continue
 
             if decision.decision_type == NextDecisionType.TOOL_CALL:
@@ -177,6 +182,8 @@ class StageExecutor:
                         decision.assistant_message.metadata,
                     )
                 self._dispatch_tool_calls(decision.tool_calls)
+                # Next iteration: only expose the tools the LLM just selected
+                selected_tool_names = [tc.name for tc in decision.tool_calls]
                 continue
 
             if decision.decision_type == NextDecisionType.CLARIFICATION_NEEDED:
@@ -252,10 +259,20 @@ class StageExecutor:
         tool_calls: list[ToolCall],
     ) -> None:
         for tool_call in tool_calls:
-            #TODO: 检查工具调用是否合法（是否在工具列表中，参数是否齐全等），目前假设都是合法的
+            rejection = self._check_tool_call(tool_call)
+            if rejection is not None:
+                observation = self._reasoning_manager.format_tool_observation(
+                    tool_call=tool_call,
+                    result=rejection,
+                )
+                self._context_manager.add_message(
+                    observation.role,
+                    observation.content,
+                    observation.metadata,
+                )
+                continue
+
             result: ToolResult = self._tool_registry.execute(tool_call)
-            #TODO 工具结果失败先尝试本地修复，比如JSON配对问题
-            # Format and inject tool result into context
             observation = self._reasoning_manager.format_tool_observation(
                 tool_call=tool_call,
                 result=self._tool_result_for_observation(result),
@@ -265,6 +282,45 @@ class StageExecutor:
                 observation.content,
                 observation.metadata,
             )
+
+    def _check_tool_call(self, tool_call: ToolCall) -> ToolResult | None:
+        """Return a failed ToolResult if the call is not permitted or malformed, else None."""
+        if not self._tool_registry.has_tool(tool_call.name):
+            available = ", ".join(s["name"] for s in self._tool_registry.get_tool_schemas())
+            return ToolResult(
+                output="",
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                success=False,
+                error=build_error(
+                    TOOL_NOT_FOUND,
+                    f"Tool '{tool_call.name}' does not exist. Available tools: {available}.",
+                ),
+            )
+
+        if self._forbidden_tools and tool_call.name in self._forbidden_tools:
+            return ToolResult(
+                output="",
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                success=False,
+                error=build_error(
+                    TOOL_NOT_FOUND,
+                    f"Tool '{tool_call.name}' is forbidden and cannot be called.",
+                ),
+            )
+
+        missing = self._tool_registry.validate_arguments(tool_call)
+        if missing:
+            return ToolResult(
+                output="",
+                llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+                success=False,
+                error=build_error(
+                    TOOL_ARGUMENT_ERROR,
+                    f"Tool '{tool_call.name}' is missing required arguments: {', '.join(missing)}.",
+                ),
+            )
+
+        return None
 
     @staticmethod
     def _tool_result_for_observation(result: ToolResult) -> ToolResult:
