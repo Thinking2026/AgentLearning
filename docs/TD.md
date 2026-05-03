@@ -29,194 +29,158 @@
 8. Agent接收到用户的建议后，会立即中断当前步骤处理，结合用户建议只重新规划本步骤计划，再从当前步骤开始执行。前面已经完成的步骤不受影响
 9. Agent执行任务期间，发现需要用户澄清的事实时，可以暂停步骤执行，向用户询问，等待用户澄清后再继续本步骤的处理
 
-## Agent业务时间与时间顺序
-
-### 业务事件
-
-业务事件只是用来梳理流程，实际实现的时候不需要一定是事件驱动模式
-
-| E#   | 事件                          | 说明                                                         |
-| ---- | ----------------------------- | ------------------------------------------------------------ |
-| E1   | TaskReceived                  | 用户任务已接收                                               |
-| E2   | UserGuidanceSubmitted         | 当用户觉得Agent执行Track与预期不符时可以随时向Agent提交建议，事件发生后Agent需要暂停当前步骤处理并审视自己的执行计划，更新计划后继续执行 |
-| E3   | UserClarificationProvided     | 用户主动澄清已提交                                           |
-| E4   | TaskResumed                   | 任务步骤继续处理                                             |
-| E5   | UserResumeRequestProvided     | 用户已发出继续执行任务的指示                                 |
-| E6   | TaskPlanFinalized             | 执行计划已确定                                               |
-| E7   | TaskPlanRenewal               | 计划全部更新，更新原因：A.Task整体结果质检不通过 B.计划评测不通过 |
-| E8   | TaskExecutionStarted          | 任务执行已开始                                               |
-| E9   | TaskSucceeded                 | 任务执行已成功完成                                           |
-| E10  | TaskPaused                    | 因为"需要时间恢复的异常"，系统已自发的让任务暂停             |
-| E11  | TaskResumeRequested           | "需要时间恢复的异常"恢复，用户要求任务继续执行，执行从checkpoint恢复 |
-| E12  | TaskCancelled                 | 任务已被用户主动取消                                         |
-| E13  | TaskTerminated                | 任务已被系统终止（因为无法恢复的问题）                       |
-| E14  | TaskPlanReviewPassed          | 执行计划已评估通过，可以开始执行。不通过结合评估意见重新制定计划 |
-| E15  | ToolCallFailed                | 工具调用失败                                                 |
-| E16  | TaskStepInterrupted           | 步骤被用户主动提出的指导意见打断                             |
-| E18  | TaskQualityCheckPassed        | 结果质检通过                                                 |
-| E19  | TaskQualityCheckFailed        | 结果质检未通过                                               |
-| E20  | TaskKnowledgeExtracted        | 任务可复用知识已提取                                         |
-| E21  | TaskKnowledgePersisted        | 任务可复用知识已持久化存储                                   |
-| E22  | CheckpointSaved               | 异步保存的当前已解决的上下文                                 |
-| E23  | PlanReviewPassed              | 执行计划评测通过，可以开始执行                               |
-| E24  | PlanReviewFailed              | 执行计划评测未通过，需要结合评测意见修订计划                 |
-| E25  | ClarificationRequested        | Agent要求用户澄清已发起                                      |
-| E26  | ReusableKnowledgeLoaded       | 可复用知识已从知识库检索并加载，结果（含空结果）已就绪，准备注入上下文。以 step goal 为查询，步骤层触发而非任务层，因为任务层启动时 step goal 尚未确定 |
-| E27  | ReasoningStarted              | 调用LLM后代笔本轮推理开始                                    |
-| E28  | ModelSelected                 | 根据推理模式、延迟、token预算选定执行模型，策略未来可扩展    |
-| E29  | ContextAssembled              | 上下文已组装完毕（历史消息 + 系统提示 + 当前输入 + 用户偏好 + 可复用知识），以选定模型的 context window 为 token 预算上限 |
-| E30  | ContextTruncated              | 上下文超出模型 token 预算，已按策略裁剪                      |
-| E31  | TaskDelivered                 | 任务结果已交付给用户                                         |
-| E32  | NextDecisionMade              | 本轮推理完成，下一步Decision已决定（可能含工具调用意图）     |
-| E33  | ToolCallRequested             | 推理结果包含工具调用意图，已解析出调用参数；消费这个事件的逻辑可能包含参数检查，权限检查 |
-| E34  | ToolCallDispatched            | 工具调用已发出                                               |
-| E35  | ToolCallSucceeded             | 工具调用成功，结果已返回                                     |
-| E36  | ToolCallFailed                | 工具调用失败（A类：有可能重试立即成功 B类：暂停一段时间可以恢复的 C类：不可能成功） |
-| E37  | ResultInjected                | 推理结果或者工具调用结果（成功或失败错误信息）已注入上下文，准备下一轮推理 |
-| E38  | TaskPlanRevised               | 计划已局部更新， A.步骤结果评测不通过触发重规划 B.用户主动希望修正 C. 步骤计划已明确无法完成 |
-|      |                               |                                                              |
-| E40  | StepResultProduced            | 步骤成功完成，最终结果已产出，准备进入步骤结果评测           |
-| E41  | StepResultEvaluationSucceeded | 步骤结果评测通过，结果符合步骤目标，可以进行下一个步骤       |
-| E42  | StepResultEvaluationFailed    | 步骤结果评测未通过，结果未达到步骤目标，需要容错机制         |
-| E43  | TaskFailed                    | 任务已执行失败                                               |
-| E44  | CheckpointRestored            | 最近的检查点已恢复                                           |
-|      |                               |                                                              |
+## Agent执行流
 
 ### Pipeline时序
 
 #### 主干流程
 
-```
-1.TaskReceived
-2.TaskPlanFinalized[**循环点,可选，第一个计划是否要ReusableKnowledgeLoaded]
-	2.1 TaskPlanReviewPassed（计划评测通过）
-		2.1.0 ModelSelected[循环点——模型可能降级]
-		2.1.1 TaskExecutionStarted（**循环点）
-			2.1.1.3 ContextAssembled[循环点，2.1.1.1和2.1.1.2被删除了]
-				2.1.1.3.1 ContextTruncated(如果超限)
-			2.1.1.4 ReasoningStarted[循环点——单步调用LLM]
-				2.1.1.4.1 NextDecisionMade
-						2.1.1.4.1.1 [需要调用工具]ToolCallRequested
-							2.1.1.4.1.1.1 ToolCallDispatched
-								2.1.1.4.1.1.1.1 ToolCallSucceeded
-									2.1.1.4.1.1.1.1.1 ResultInjected [go back to 2.1.1.3]
-								2.1.1.4.1.1.1.2 [A类失败]ToolCallFailed
-									2.1.1.4.1.1.1.2.1 先尝试本地修复，再决定是否ResultInjected [go back to 2.1.1.3]
-									2.1.1.4.1.1.1.2.2 [针对Search类可以降级使用本地knowledege] ReusableKnowledgeLoaded [go back to 2.1.1.3]
-								2.1.1.4.1.1.1.3 [C类失败]ToolCallFailed
-									2.1.1.4.1.1.1.3.1 TaskPlanRevised [go back to 2.1.1]
-							2.1.1.4.1.1.2 工具调用被禁止（权限或者参数检查有问题等）
-								2.1.1.4.1.1.2.1 ResultInjected [go back to 2.1.1.3]
-						2.1.1.4.1.2 [B类失败]TaskPaused 等待用户处理后继续
-							2.1.1.4.1.2.1 UserResumeRequestProvided go back to 2.1.1.4
-						2.1.1.4.1.3 [A类失败] 不需要模型降级go back to 2.1.1.4，否则go back to 2.1.0
-						2.1.1.4.1.4 [C类失败] TaskTerminated
-						2.1.1.4.1.5 [Final Answer]
-							2.1.1.4.1.5.1 StepResultProduced
-								2.1.1.4.1.5.1.1 StepResultEvaluationSucceeded [go back to 2.1.1进行下一步]
-									2.1.1.4.1.5.1.1.1 CheckpointSaved（异步，不是每个Stage都需要，依靠策略）
-								2.1.1.4.1.5.1.2 StepResultEvaluationFailed
-									2.1.1.4.1.5.1.2.1 TaskPlanRevised(只更新本步骤)[go back to 2.1.1从更新后的步骤执行]
-						2.1.1.4.1.6 [普通推理]
-							2.1.1.4.1.6.1 ResultInjected [go back to 2.1.1.3]		
-						2.1.1.4.1.7 [需要用户澄清] TaskPaused
-							2.1.1.4.1.7.1 ClarificationRequested
-								2.1.1.4.1.7.1.1 用户提交澄清 UserClarificationProvided [go back to 2.1.1.3]
-			2.1.1.6 TaskSucceeded
-				2.1.1.6.1 TaskQualityCheckPassed
-					2.1.1.6.1.1 TaskKnowledgeExtracted（异步，允许失败）
-						2.1.1.6.1.1.1 TaskKnowledgePersisted（异步，允许失败）
-					2.1.1.6.1.3 TaskDelivered
-				2.1.1.6.2 TaskQualityCheckFailed 
-					2.1.1.6.2.1 TaskPlanRenewal[go back to 2]	
-			2.1.1.7 TaskFailed
-				2.1.1.7.1 TaskDelivered
-		2.2 TaskPlan评估未通过，[go back to 2 重新制定计划]
-			2.2.1 TaskPlanFinalized
-		2.3 [Plan需要征求用户意见]UserClarificationProvided
-			2.3.1 TaskPlanFinalized
-		2.4 计划无法敲定
-			2.4.1 [C类失败] TaskTerminated
-```
+##### 三层循环架构
+
+- Task Level
+
+  ```
+  1.开始处理Task
+  	1.1 分析Task特征
+  		1.1.1 调用LLM分析任务特征
+  		1.1.2 根据任务特征可以引入用户偏好，注入用户偏好
+  		1.1.3 根据任务特征搜索知识库，查找类似任务的执行知识或者经验
+  		1.1.4 发布“任务分析结果”事件（目的是给用户展示执行过程）
+  		1.1.5 输出任务分析报告
+  	1.2 根据Task特征匹配处理模型
+  	1.3 开始制定Task执行计划
+  		1.3.1 制定计划
+  		1.3.2 评审计划
+  			1.3.2.1 [评审成功] 
+  				1.3.2.1.1 发布“公示执行计划”事件（目的是给用户展示执行过程）
+  				1.3.2.1.2	交付计划
+  			1.3.2.2 [评审不成功] 
+  				1.3.2.2.1 [需要用户提供建议] 发布事件，阻塞等待
+  					1.3.2.2.1.1 收到用户建议，注入用户建议，go back to 1.3
+  				1.3.2.2.2 [不需要用户提供建议] 结合评审意见 go back to 1.3
+  	1.4 发布“Task开始执行”事件（目的是给用户展示执行过程）
+  	1.5 按照Task计划步骤执行计划(进入“Stage Leve“处理，获得处理结果)
+  		1.5.1 [执行成功] 对任务结果进行评审
+  			1.5.1.1 [评审通过] 
+  				1.5.1.1.1 发布“Task执行结果信息”事件（目的是给用户展示执行过程）
+  				1.5.1.1.2 异步提取任务经验和知识+知识落地
+  				1.5.1.1.3 从用户建议里总结用户偏好并落地
+  				1.5.1.1.4 任务结果交付，执行完毕
+  			1.5.1.2 [评审不通过] 结合评审意见重新制定计划，上下文全部清空，go back to 1.3
+  		1.5.2 [执行失败] 任务失败，组装失败信息，执行完毕
+  ```
+
+  
+
+- Stage Level
+
+  ```
+  1.从当前Stage开始处理(第一次从第一个Stage)
+  	1.0 发布“Stage执行开始”事件，标准是[A.新Stage执行 B.评审不通过，更新计划后重新执行 C.切换模型后重新执行 D.执行失败，更新计划后重新执行]（目的是给用户展示执行过程）
+  	1.1 根据条件考虑是否切回高优先级模型
+  	1.2 执行当前Stage的推理循环(进入“Stage内部推理循环”，获得处理结果)
+  	1.2.1 [Stage执行成功] 对Stage执行结果进行评审
+  		1.2.1.1 [评审成功] 对这一步执行情况进行总结（Stage描述，目标和结果完整，过程摘要），更新上下文
+  			1.2.1.1.1 发布“Stage执行结果”事件（目的是给用户展示执行过程）
+  			1.2.1.1.2 根据条件决定是否要落checkpoint（异步进行）
+  			1.2.1.1.3 [还有Stage没处理完] go back to 1处理下一个Stage
+  			1.2.1.1.4 [Stage都处理完] 交付最终结果
+  		1.2.1.1 [评审不成功] reset掉本Stage上下文，结合评审信息重新规划本步骤，go back to 1 从更新后的本Stage开始处理
+  	1.2.2 [执行失败，需要切模型] 清理掉本Stage涉及上下文
+  		1.2.2.1切换模型 go back to 1 重新处理本Stage
+  	1.2.3 [执行失败，需要重新规划本步骤] 同步骤 1.2.1.1
+  	1.2.4 [执行失败，切模型无法解决] 抛异常，代表无法解决
+  ```
+
+  
+
+- Stage内部推理循环
+
+  ```
+  1.获取执行上下文
+  	1.1 不满足context window要求，执行压缩或者摘要
+  2.调用LLM进行推理，获取下一步Decision
+  	2.0 发布"展示LLM回复事件"（目的是给用户展示执行过程）
+  	2.1 [是最终结果] 交付结果
+  	2.2 [需要继续推理] 更新上下文 go back to 1
+  	2.3 [是工具调用] 开始调用工具
+  		2.3.0 发布"工具调用开始"事件（目的是给用户展示执行过程）
+  		2.3.1 检查工具权限和入参是否符合要求
+  			2.3.1.1 [允许执行] 调用工具
+  				2.3.1.1.1 [调用成功] 将成功结果注入上下文，go back to 1
+  				2.3.1.1.2 [调用不成功] 
+  					2.3.1.1.2.1 [是搜索工具] 尝试用本地知识库 
+  						2.3.1.1.2.1.1 [成功] go back to 2.3.1.1.1
+  					2.3.1.1.2.2 将失败信息注入上下文，go back to 1
+  		  2.3.1.2 [工具前置检查不通过] 注入系统信息，让LLM切换工具，go back to 1
+  		 2.3.2 发布"工具调用结果"事件（目的是给用户展示执行过程）
+  	2.4 [需要用户澄清信息] 更新必要状态，发布事件信息，阻塞等待继续处理
+  		2.4.1 收到用户澄清信息
+  			2.4.1.1 更新上下文，go back to 1
+  	2.5 [发现任务需要暂停]，更新必要状态，发布事件信息，阻塞等待继续处理
+  		2.5.1 收到继续任务的指令
+  			2.5.1.1 go back to 1
+  3.Loop用户异步提交的信息
+  	3.1 用户要求取消任务
+  		3.1.1 更新任务状态，发布事件信息
+  	3.2 收到用户主动纠偏建议
+  		3.2.1 返回“重新规划本步骤”信息
+  ```
 
 #### 分支流程
-
-**UC-2 用户主动取消（任意阶段）**
-
-```
-[任务执行期间，任意时刻]
-  E12  TaskCancelled（终态，不可恢复，不可 resume）
-```
-
-**UC-3 用户提交建议主动纠偏（步骤执行中）**
-
-```
-[步骤层执行中]
-  UserGuidanceSubmitted
-    └─► TaskStepInterrupted
-          └─► TaskPlanRevised
-                └─► TaskExecutionStarted（从问题步骤重新执行）
-                      └─► [步骤循环，步骤层重新展开]
-```
-
-**UC-4 A用户主动澄清（步骤执行中）**
-
-```
-[步骤层执行中]
-	ClarificationRequested
-  		└─► TaskPaused
-  					└─► UserClarificationProvided
-    							└─► TaskResumed
-```
-
-**UC-4 B制定计划需要用户主动澄清（步骤未开始执行）**
-
-```
-[计划制定中]
-  UserClarificationProvided
-    └─► TaskPlanRenewal
-```
-
-**UC-5 B类异常暂停与恢复**
-
-```
-[步骤层推理循环中]
-          └─► TaskPaused（任务层暂停）
-                └─► [等待异常恢复]
-                     UserResumeRequestProvided
-                        └─► TaskResumed
-                              └─► [继续处理当前步骤]
-```
 
 **UC-6 用户要求从Checkpoint处执行**
 
 ```
-UserResumeRequestProvided(任务处于TaskTerminated)
-└─► CheckpointRestored
-			└─► TaskExecutionStarted
+1. 获取Task执行计划和执行进度
+2. 重构Context
+3. 从“Task Leve”中的1.5步开始执行
 ```
 
 ### 重要实体
 
 | #    | 实体                | 功能语义                                                     |
 | ---- | ------------------- | ------------------------------------------------------------ |
-| 1    | Planner             | 聚合根，分析用户提交的任务/制定任务执行计划/重构任务计划/更新计划某个步骤 |
-| 2    | CheckpointProcessor | 聚合根，负责处理checkpoint的save/restore/list/get/delete     |
-| 3    | KnowledgeManager    | 聚合根，负责1.总结任务处理经验和知识 2.存储经验和知识 3.删除无用的经验和知识 |
-| 4    | QualityEvaluator    | 聚合根，负责 1.评估整体执行结果是否满足任务目标 2.评估某个Stage执行是否符合预期目标 3.评审执行计划是否符合满足任务目标和要求 |
-| 5    | StageExecutor       | 聚合根，负责执行任务的其中一个Stage                          |
-| 6    | KnowledgeLoader     | StageExecutor的一个实体，负责query与任务相关的，可能用上的知识 |
-| 7    | ModelSelector       | StageExecutor的一个实体，负责根据任务特征，选择适合的模型和备选模型 |
-| 8    | ContextManager      | StageExecutor的一个实体，负责管理Task执行上下文              |
-| 9    | ReasoningManager    | StageExecutor的一个实体，负责与LLM打交道，执行单步推理，并执行nextdecision |
-| 10   | LLMGateway          | 实体对象，封装LLM不同provider的API, 处理标准请求/回复协议与各个Provider请求/回复协议的互转，受Planner/KnowledgeManager/QualityEvaluator/ReasoningManager/KnowledgeLoader/ContextManager调用。处理一些LLM Provider调用的基础容错，比如调用API超时的自动backoff jitter重试 |
-| 11   | ToolRegistry        | 封装不同工具的调用和返回，处理标准参数/回复协议与各个Tool参数/回复协议的互转，由StageExecutor调用。处理一些Tool调用的基础容错，比如调用工具超时的自动backoff jitter重试 |
+| 1    | Analyzer            | 提取任务特征信息，输出任务分析结果（包含可以利用的用户偏好和相关知识片段）。1. 根据特征信息选择是否应用用户偏好 2.根据特征信息加载知识库相关知识片段。相关用户偏好信息和知识片段都可以注入上下文，以及提供给Planner制定计划时使用。有专门的analyise LLM Provider |
+| 2    | Planner             | 制定计划，更新整个计划或者更新计划的某个Stage。制定计划时Planner还要负责调用QualityEvaluator评审整个计划。最终输出一个“执行计划”聚合。有专门的planner LLM Provider |
+| 3    | CheckpointProcessor | 基于上下文，负责checkpoint的save/restore/list/get/delete     |
+| 4    | KnowledgeManager    | 负责1.总结任务处理经验和知识 2.存储经验和知识 3.删除无用的经验和知识 |
+| 5    | QualityEvaluator    | 负责 1.评估整体执行结果是否满足任务目标 2.评估某个Stage执行是否符合预期目标 3.评审执行计划是否符合满足任务目标和要求 |
+| 6    | StageExecutor       | 驱动和执行任务的所有Stage                                    |
+| 7    | KnowledgeLoader     | 负责query与任务相关的，可能用上的知识                        |
+| 8    | ModelSelector       | 负责根据任务特征，模型特点，选择本任务适合的模型和备选模型   |
+| 9    | ContextManager      | 负责管理Task执行上下文，包含常规的增删改查，以及为了适应LLM Provider的context_window要求进行压缩，摘要。有专门的Context压缩摘要的LLM Provider |
+| 10   | ReasoningManager    | 负责与LLM打交道，执行单步推理，并输出Next Decision           |
+| 11   | LLMGateway          | 1. 封装LLM不同provider的API 2.处理标准请求/回复协议与各个Provider请求/回复协议的互转处理 3. 一些LLM Provider调用的基础容错，比如调用API超时的自动backoff jitter重试 |
+| 12   | ToolRegistry        | 1. 封装不同工具的调用和返回 2. 处理标准参数/回复协议与各个Tool参数/回复协议的互转 3. 处理一些Tool调用的基础容错，比如调用工具超时的自动backoff jitter重试 |
+| 13   | PersonalityManager  | 1. 索引用户偏好信息 2. 提炼用户偏好 3. 存储用户偏好          |
 
 ### 应用层
 
-| #    | 应用层编排实体 | 语义                              |
-| ---- | -------------- | --------------------------------- |
-| 1    | Pipeline       | 负责调度各个聚合根，完成user case |
+| #    | 应用层实体     | 语义                                                         |
+| ---- | -------------- | ------------------------------------------------------------ |
+| 1    | Pipeline       | 1. Agent执行流入口 2. 触发构建Agent执行时需要的所有实体      |
+| 2    | PipelineThread | Pipeline执行的容器 1. 负责管理执行线程的生命周期 2. 维护消息队列与通信 |
+| 3    | PipelineDriver | 1. 负责将用户请求/回复与Pipeline Command互转 2. 提供pipeline标准事件handler 3. Pipeline的应用入口 |
+| 4    | client_app     | 代表用户端的执行线程，通过调用PipelineDriver与pipeline交互   |
+
+#### 应用层实体交互关系
+
+- 用户提交任务
+
+​	client_app -> PipelineThread(接收信息) -> PipelineDriver(协议转换) -> Pipeline
+
+- 用户要求从checkpoint恢复执行
+
+  client_app -> PipelineThread(接收信息) -> PipelineDriver(协议转换) -> Pipeline
+
+- Pipeline需要用户提供信息
+
+  Pipeline -> PipelineDriver(通过事件handler处理事件，转换协议) -> PipelineThread -> client_app
+
+- Pipeline向用户提供执行流程信息
+
+  Pipeline -> PipelineDriver(通过事件handler处理事件，转换协议) -> PipelineThread -> client_app
 
 ### 代码目录结构
 
@@ -237,9 +201,12 @@ NanoAgent/
 │   ├── agent/                    # 核心 Agent 领域
 │   │   ├── application/
 │   │   │   └── pipeline.py       # 应用层编排（Pipeline）
+│   │   │   └── driver.py         # pipeline driver
+│   │   │   └── thread.py         # pipeline thread
 │   │   ├── events/               # 领域事件定义（E1-E44）
 │   │   ├── factory/
 │   │   └── models/               # 领域模型
+│   │   		├── analysis/         # Analyzer聚合
 │   │       ├── checkpoint/       # CheckpointProcessor 聚合
 │   │       ├── context/          # ContextManager 实体
 │   │       │   ├── budget/       # Token 预算管理
@@ -248,11 +215,8 @@ NanoAgent/
 │   │       ├── evaluate/         # QualityEvaluator 聚合
 │   │       ├── executor/         # StageExecutor 聚合
 │   │       ├── knowledge/        # KnowledgeManager 聚合 + KnowledgeLoader聚合
-│   │       ├── model_routing/    # ModelSelector
-│   │       │   ├── capability/
-│   │       │   ├── cost_model/
-│   │       │   └── policy/
-│   │       ├── personality/      # Agent 人格/风格配置
+│   │       ├── model_routing/    # ModelSelector聚合
+│   │       ├── personality/      # PersonalityManager聚合
 │   │       ├── plan/             # Planner 聚合（ExecutionPlan/PlanStep）
 │   │       └── reasoning/        # ReasoningManager（Strategy 抽象 + ReAct 实现）
 │   │           └── impl/react/
@@ -260,8 +224,7 @@ NanoAgent/
 │   │   ├── config.py
 │   │   └── reader.py
 │   ├── driver/                   # 应用驱动层（线程模型）
-│   │   ├── application.py
-│   │   ├── agent_thread.py
+│   │   ├── demo.py
 │   │   └── user_thread.py
 │   ├── infra/                    # 基础设施
 │   │   ├── cache/
@@ -273,7 +236,7 @@ NanoAgent/
 │   │   │   └── event_bus.py
 │   │   └── observability/        # 可观测性（Metrics/Tracing）
 │   ├── llm/                      # LLM 网关层
-│   │   ├── llm_api.py            # 要改成LLMGateway聚合
+│   │   ├── llm_gateway.py            # 要改成LLMGateway聚合
 │   │   ├── registry.py           # LLMProviderRegistry
 │   │   ├── providers/            # 各 Provider 实现
 │   │   │   ├── claude_api.py
@@ -325,97 +288,105 @@ NanoAgent/
 
 ### 值对象与 ID 类型
 
-ID 类型均为强类型字符串包装（`NewType`），在运行时等价于 `str`，在静态检查时互不兼容，防止 ID 混用。生成策略统一使用 UUID v4。
-
-```python
-# src/schemas/ids.py
-TaskId           = NewType("TaskId", str)           # 用户提交的任务唯一标识
-PlanId           = NewType("PlanId", str)            # 执行计划唯一标识
-PlanStepId       = NewType("PlanStepId", str)        # 计划中某个步骤的唯一标识
-StageId          = NewType("StageId", str)           # 运行时某次 Stage 执行的唯一标识
-CheckpointId     = NewType("CheckpointId", str)      # Checkpoint 唯一标识
-KnowledgeEntryId = NewType("KnowledgeEntryId", str)  # 知识条目唯一标识
-```
-
-**命名约定**：
-- `PlanStep`：计划层概念，描述"要做什么、目标是什么"，属于 Planner 聚合
-- `Stage`：执行层概念，描述"正在执行哪个步骤、执行状态和结果"，属于 StageExecutor 聚合
-- 两者通过 `PlanStepId` 关联，一个 PlanStep 在一次执行中对应一个 Stage
+依据需要定义
 
 ---
 
-### Planner（聚合根）
+### Analyzer
 
-**文件**：`src/agent/models/plan/planner.py`
+#### 文件位置
 
-**职责**：分析用户任务、制定/更新执行计划。Planner 是计划域的聚合根，持有 `ExecutionPlan` 和 `PlanStep` 列表。计划评审由 QualityEvaluator 负责，Planner 只负责制定和修改计划
+`src/agent/models/plan/.py`
+
+#### 职责
+
+1. 调用LLM提取任务特征信息
+2. 根据特征信息获取相关用户偏好信息
+3. 根据特征信息获取可复用knowledge信息
+4. 输出任务分析结果
+
+#### 接口
+
+**接口名**
+
+analyze(函数签名你来定义)
+
+注意：遇到错误需要抛出对应异常
+
+**输入**
+
+用户提交的任务信息
+
+**输出**
+
+AnalysisReport
+
+```python
+@dataclass(frozen=True)
+class AnalysisReport:
+    task_type: str            # 任务类型标签，如 "data_analysis", "code_generation"
+    complexity: str           # "L1简单" | "L2标准" | "L3负责" | "L4专家"
+    required_tools: list[str] # 预估需要的工具名称列表
+    estimated_steps: int      # 预估步骤数
+    user_preference_can_apply # 这个任务需要考虑的用户偏好，类型需要定义
+    related_knowledge         # 这个任务可以参考的相关知识，类型需要定义
+    notes: str                # LLM 分析备注（约束、风险、前提条件等）
+```
+
+
+
+### CheckpointProcessor（聚合根）
+
+#### 文件位置
+
+`src/agent/models/checkpoint/checkpoint_processor.py`
+
+#### 职责
+
+1. 为了未来能恢复执行，要把所有关键信息：agent context，当前计划，当前执行进度等等整理成一份checkpoint
+2. 存储checkpoint
+3. 能索引指定任务的checkpoint
+4. list某个任务各个版本的checkpoint
+5. 删除某个任务某个版本的checkpoint
+6. 选择任务的某个版本checkpoint恢复agent context，当前执行计划，运行时信息比如当前执行进度等
 
 #### 成员变量
 
-```python
-id: PlanId
-task_id: TaskId
-task_description: str
-analysis: TaskAnalysis | None       # 任务分析结果，build_plan 前填充
-steps: list[PlanStep]               # 有序步骤列表
-version: int                        # 从 1 开始，每次 renew/revise 递增
-_llm_gateway: LLMGateway            # 注入依赖，用于任务分析和计划制定
-_knowledge_loader: KnowledgeLoader  # 注入依赖，制定计划时检索已有知识
-```
+需要定义
 
-#### 值对象：PlanStep
+#### 方法
 
-```python
-@dataclass(frozen=True)
-class PlanStep:
-    id: PlanStepId     # 纯实体ID
-    goal: str          # 步骤目标（评估基准，StageExecutor 执行完后对照此目标评估）
-    description: str   # 执行描述（指导 StageExecutor 如何完成这个步骤）
-    order: int         # 从 0 开始的执行顺序
-```
+需要定义
+
+#### 关键输出
+
+checkpoint聚合实体，需要定义
+
+### Planner
+
+#### 文件位置
+
+`src/agent/models/plan/planner.py`
+
+#### 职责
+
+- 制定计划 
+- Plan评审不通过或者Task执行结果不符合预期时，更新整个计划
+- 更新计划的某个Stage 
+- 调用QualityEvaluator评审整个计划
+- 计划制定或者更新过程中，需要用户澄清时，可以发布“需要用户澄清事件”，然后阻塞在消息队列等待消息
+
+#### 成员变量
+
+需要定义
 
 #### 方法签名
 
-```python
-@classmethod
-def create(cls, task_id: TaskId, task_description: str,
-           llm_gateway: LLMGateway,
-           knowledge_loader: KnowledgeLoader) -> "Planner":
-    """创建空 Planner，注入 LLMGateway 和 KnowledgeLoader，尚未制定计划"""
+需要定义
 
-def analyze(self) -> "Planner":
-    """调用 LLM 分析任务特征，填充 self.analysis，返回 self 支持链式调用"""
+#### 最终输出
 
-def build_plan(self, knowledge_hint: str = "") -> None:
-    """检索已有知识（KnowledgeLoader）后调用 LLM 制定整个计划，
-    填充 self.steps，version=1，发布 TaskPlanFinalized(E6)"""
-
-def renew(self, trigger: PlanUpdateTrigger, feedback: str = "") -> None:
-    """全量重新制定计划（质检不通过/计划评测不通过），
-    version+1，发布 TaskPlanRenewal(E7)"""
-
-def revise(self, step_id: PlanStepId,
-           trigger: PlanUpdateTrigger,
-           feedback: str = "") -> None:
-    """局部更新某步骤的 goal/description（步骤评测不通过/用户建议/步骤无法完成），
-    version+1，发布 TaskPlanRevised(E38)"""
-
-def get_step(self, step_id: PlanStepId) -> PlanStep | None
-def get_step_by_order(self, order: int) -> PlanStep | None
-def total_steps(self) -> int
-```
-
-#### 值对象：TaskAnalysis
-
-```python
-@dataclass(frozen=True)
-class TaskAnalysis:
-    task_type: str            # 任务类型标签，如 "data_analysis", "code_generation"
-    complexity: str           # "simple" | "medium" | "complex"
-    required_tools: list[str] # 预估需要的工具名称列表
-    estimated_steps: int      # 预估步骤数
-    notes: str                # LLM 分析备注（约束、风险、前提条件等）
-```
+计划报告，至少包含 1.完成需要哪些执行步骤 2.每个执行步骤要做什么 3.每个执行步骤的目标是什么 4. 每个步骤应该产出哪些Key Results。计划报告的数据结构需要定义
 
 #### 枚举：PlanUpdateTrigger
 
@@ -428,282 +399,83 @@ class PlanUpdateTrigger(str, Enum):
     STAGE_INFEASIBLE      = "STAGE_INFEASIBLE"       # 步骤执行中发现无法完成
 ```
 
-#### 发布事件
+### ContextManager
 
-`TaskPlanFinalized(E6)`, `TaskPlanRenewal(E7)`, `TaskPlanRevised(E38)`
+#### 文件位置
 
----
+`src/agent/models/context/manager.py`
 
-### Pipeline（应用层编排）
+#### 职责
 
-**文件**：`src/agent/application/pipeline.py`
-
-**职责**：所有 User Case 的入口，协调各聚合根完成完整的任务生命周期。Pipeline 不是聚合根，是应用层服务，持有对各聚合根的引用完成Agent pipiline的
-
-Pipeline 负责编排Agent解决问题的执行流：
-- 接收用户任务，驱动 Planner 制定计划，驱动 QualityEvaluator 评审计划
-- 按计划顺序驱动 StageExecutor 执行每个 Stage
-- 驱动ModelSelector选择适合本任务的模型
-- 驱动QualityEvaluator对Task Result的Quality进行检查
-- 异步提取可复用知识并存储
-- 处理用户取消、用户建议、用户澄清、B类暂停/恢复、Checkpoint 恢复等分支流程
+1. 管理Agent执行上下文的增删改查
+2. 调用LLM API时能获取当前的上下文
+3. 发现当前上下文超出token限制，需要执行裁剪，压缩，摘要等操作
+4. 按照不同的Stage管理上下文，可以清除掉某个Stage涉及的上下文
 
 #### 成员变量
 
-```python
-_planner: Planner                           # 计划制定与更新
-_stage_executor: StageExecutor              # Stage 执行引擎
-_checkpoint_processor: CheckpointProcessor
-_knowledge_manager: KnowledgeManager
-_quality_evaluator: QualityEvaluator
-_model_selector: ModelSelector              # 选择主 Provider 及备选链
-_llm_provider_registry: LLMProviderRegistry # 按需构建 LLMGateway 实例
-_event_bus: EventBus
-_max_plan_retries: int                      # 计划重试上限，防止无限循环，默认 3
-_max_stage_retries: int                     # 单步骤重试上限，默认 2
-```
+需要定义，至少包含的语义信息：(1) system prompt (2) tool schema描述 （3）动态注入的用户偏好 （4）和Stage相关的用户主动发送的纠偏建议，纠偏建议可以未来用来提取用户偏好，要能单独识别出来（5）注入的相关knowledge （6）和LLM API交互过程中产生的带role的message信息 (7) 需要知道每个stage涉及哪些带role的message (8) 当前已成功完成的最大stage编号 (9) 关联的原始用户任务描述 （10）关联的任务分析报告 （11）关联的任务执行计划信息 （12）必要的元信息
+
+#### 特殊要求
+
+ContextManager的管理的上下文信息，先要转换成标准协议里的LLMMessage，再由各个LLM Provider转成自己的LLMRequest
 
 #### 方法签名
 
-```python
-def run(self, task_id: TaskId, task_description: str) -> TaskResult:
-    """主入口：完整执行一个任务，返回最终结果"""
-
-def cancel(self, task_id: TaskId) -> None:
-    """UC-2：用户主动取消，发布 TaskCancelled(E12)"""
-
-def submit_guidance(self, task_id: TaskId, guidance: str) -> None:
-    """UC-3：用户提交建议，中断当前 Stage，触发 Planner.revise()"""
-
-def submit_clarification(self, task_id: TaskId, clarification: str) -> None:
-    """UC-4：用户提交澄清，恢复当前 Stage 或计划制定"""
-
-def resume(self, task_id: TaskId) -> None:
-    """UC-5：用户要求继续（B类异常已恢复）"""
-
-def restore_from_checkpoint(self, task_id: TaskId) -> None:
-    """UC-6：从最近 Checkpoint 恢复执行"""
-```
-
-#### 值对象：TaskResult
-
-```python
-@dataclass(frozen=True)
-class TaskResult:
-    task_id: TaskId
-    succeeded: bool
-    result: str          # 成功时的最终答案
-    error_reason: str    # 失败/终止时的原因
-    delivered_at: datetime
-```
+需要定义
 
 
----
 
-### CheckpointProcessor（聚合根）
+#### 设计说明
 
-**文件**：`src/agent/models/checkpoint/checkpoint_processor.py`
+- tool call 配对修复：如果消息列表末尾存在 `tool_use` 但没有对应的 `tool_result`，`get_context_window()` 会移除该孤立的 `tool_use`，防止 LLM API 报错
+- `summarize()` 的 `SummarizationStrategy` 是抽象接口，当前实现为 LLM 摘要（调用 LLMGateway），未来可替换为规则摘要
+- context manager需要与其他聚合配合，调用TokenEstimator估算上下文消耗的token数，调用TokenBudgetManager获取预算分配，调用ContextTruncator进行上下文裁剪，压缩，抽摘要
 
-**职责**：管理任务执行快照的保存、恢复、列举和删除。
+### QualityEvaluator
+
+#### 文件
+
+`src/agent/models/evaluate/quality_evaluator.py`
+
+#### 职责
+
+1. 评估整体任务结果是否符合预期
+2. 评估单个Stage执行结果是否符合预期
+3. 评估执行计划是否符合预期
 
 #### 成员变量
 
-```python
-id: str                        # 聚合 ID，通常等于 task_id
-task_id: TaskId
-snapshots: list[SnapshotEntry] # 按 created_at 升序排列
-```
+需要定义
 
-#### 值对象：SnapshotEntry
+先做简单一点，不需要存很多状态，类似一个方法对象。
 
-```python
-@dataclass(frozen=True)
-class CheckpointEntry:
-    id: CheckpointId
-    task_id: TaskId
-    plan_id: PlanId
-    stage_order: int                   # 快照时已完成的 Stage 序号
-    conversation_checkpoint: list[LLMMessage]
-    created_at: datetime               # UTC
-```
+先实现调用LLM进行评估，未来可以增加基于规则的评估。即一次评估可以组合不同的规则评估或者LLM评估
+
+#### 重要输出
+
+评估报告，需要定义，至少包含：1.当前被评估的实体（哪个Task结果，哪个Task的哪个Stage结果，哪个Plan的结果） 2.是否通过 3.不通过的理由
 
 #### 方法签名
 
-```python
-@classmethod
-def create_for_task(cls, task_id: TaskId) -> "CheckpointProcessor"
+需要定义
 
-def save(self, plan_id: PlanId,
-         stage_order: int,
-         conversation: list[LLMMessage]) -> CheckpointEntry:
-    """异步调用，不阻塞主流程；发布 CheckpointSaved(E22)"""
+### StageExecutor
 
-def restore_latest(self) -> CheckpointEntry | None:
-    """恢复最新 Checkpoint；发布 CheckpointRestored(E44)"""
+#### 文件
 
-def list_checkpoints(self) -> list[CheckpointEntry]
-def get(self, checkpoint_id: CheckpointId) -> CheckpointEntry | None
-def delete(self, checkpoint_id: CheckpointId) -> None
-def clear_all(self) -> None
-```
+`src/agent/models/executor/stage_executor.py`
 
-#### 发布事件
+#### 职责
 
-`CheckpointSaved(E22)`, `CheckpointRestored(E44)`
+1. 负责“Agent执行流”中Stage Level的流程框架
+2. 负责“Agent执行流”中Stage内部推理循环的流程框架
 
----
 
-### KnowledgeManager（聚合根）
 
-**文件**：`src/agent/models/knowledge/knowledge_manager.py`
+#### 实体
 
-**职责**：提炼任务经验、持久化到向量存储、检索可复用知识。
-
-#### 成员变量
-
-```python
-task_id: TaskId
-entries: list[KnowledgeEntry]
-_vector_storage: VectorStorage  # 注入依赖
-_llm_gateway: LLMGateway        # 注入依赖
-```
-
-#### 实体：KnowledgeEntry
-
-```python
-# src/agent/models/knowledge/knowledge_entry.py
-class KnowledgeEntryStatus(str, Enum):
-    EXTRACTED = "EXTRACTED"
-    INDEXED   = "INDEXED"
-
-@dataclass
-class KnowledgeEntry(AggregateRoot):
-    id: KnowledgeEntryId
-    task_id: TaskId
-    content: str           # 提炼的知识摘要
-    tags: list[str]
-    status: KnowledgeEntryStatus
-    created_at: datetime
-
-    @classmethod
-    def extract(cls, task_id: TaskId, content: str,
-                tags: list[str] = []) -> "KnowledgeEntry":
-        """发布 KnowledgeExtracted"""
-
-    def mark_indexed(self) -> None:
-        """发布 KnowledgeIndexed"""
-```
-
-#### 方法签名
-
-```python
-@classmethod
-def for_task(cls, task_id: TaskId,
-             llm_gateway: LLMGateway,
-             vector_storage: VectorStorage) -> "KnowledgeManager"
-
-def extract_and_persist(self, task_summary: str) -> KnowledgeEntry | None:
-    """调用 LLM 提炼知识 → 写入向量存储；
-    允许失败（返回 None），异步执行；
-    成功发布 TaskKnowledgeExtracted(E20) + TaskKnowledgePersisted(E21)"""
-
-def query(self, query_text: str, top_k: int = 3) -> list[KnowledgeEntry]:
-    """从向量存储检索；发布 ReusableKnowledgeLoaded(E26)"""
-
-def delete(self, entry_id: KnowledgeEntryId) -> None
-```
-
-#### 发布事件
-
-`TaskKnowledgeExtracted(E20)`, `TaskKnowledgePersisted(E21)`, `ReusableKnowledgeLoaded(E26)`
-
----
-
-### QualityEvaluator（聚合根）
-
-**文件**：`src/agent/models/evaluate/quality_evaluator.py`
-
-**职责**：评估整体任务结果、单步骤结果、执行计划是否符合目标。
-
-#### 成员变量
-
-```python
-task_id: TaskId
-task_description: str
-evaluation_history: list[EvaluationRecord]
-_llm_gateway: LLMGateway  # 注入依赖
-```
-
-#### 值对象：EvaluationRecord
-
-```python
-@dataclass(frozen=True)
-class EvaluationRecord:
-    target_type: str    # "task" | "step" | "plan"
-    target_id: str
-    passed: bool
-    feedback: str       # 未通过时的改进建议
-    evaluated_at: datetime
-```
-
-#### 方法签名
-
-```python
-@classmethod
-def for_task(cls, task_id: TaskId, task_description: str,
-             llm_gateway: LLMGateway) -> "QualityEvaluator"
-
-def evaluate_task_result(self, result: str) -> EvaluationRecord:
-    """调用 LLM 评估整体结果；
-    通过 → 发布 TaskQualityCheckPassed(E18)；
-    未通过 → 发布 TaskQualityCheckFailed(E19)"""
-
-def evaluate_step_result(self, step: PlanStep,
-                          result: str) -> EvaluationRecord:
-    """调用 LLM 评估步骤结果；
-    通过 → 发布 StepResultEvaluationSucceeded(E41)；
-    未通过 → 发布 StepResultEvaluationFailed(E42)"""
-
-def review_plan(self, planner: Planner) -> EvaluationRecord:
-    """调用 LLM 评审计划；
-    通过 → 发布 PlanReviewPassed(E23)；
-    未通过 → 发布 PlanReviewFailed(E24)"""
-
-def get_latest_task_evaluation(self) -> EvaluationRecord | None
-def get_latest_step_evaluation(self, step_id: PlanStepId) -> EvaluationRecord | None
-```
-
-#### 发布事件
-
-`TaskQualityCheckPassed(E18)`, `TaskQualityCheckFailed(E19)`, `StepResultEvaluationSucceeded(E41)`, `StepResultEvaluationFailed(E42)`, `PlanReviewPassed(E23)`, `PlanReviewFailed(E24)`
-
----
-
-### StageExecutor（聚合根）
-
-**文件**：`src/agent/models/executor/stage_executor.py`
-
-**职责**：执行任务计划中的单个 Stage（对应一个 PlanStep）。StageExecutor 是执行域的聚合根，持有 `Stage` 实体，协调 `ReasoningManager`、`ContextManager`、`KnowledgeLoader`、`ModelSelector`等等 完成 Stage 的完整生命周期。
-
-**与 AgentExecutor 的关系**：现有代码中 `AgentExecutor` 将推理循环、LLM 调用容错、工具分发、上下文管理、基础设施构建全部混在一起。目标设计是将这些逻辑拆分归属到各自的聚合根，`StageExecutor` 只负责 Stage 生命周期驱动，不直接持有 LLM 客户端或工具注册表。
-
-**Stage 与 PlanStep 的关系**：PlanStep 是计划层的静态描述（做什么、目标是什么），Stage 是执行层的动态实例（正在执行、执行状态、执行结果）。每次执行一个 PlanStep 时，StageExecutor 创建一个对应的 Stage 实例。
-
-#### 实体：Stage
-
-```python
-@dataclass
-class Stage:
-    id: StageId
-    task_id: TaskId
-    plan_step: PlanStep          # 对应的计划步骤（只读引用）
-    status: StageStatus
-    result: str                  # 执行成功后的最终答案
-    interrupt_guidance: str      # 被用户建议打断时记录的建议内容
-    iteration_count: int         # 已执行的推理轮次
-    started_at: datetime
-    completed_at: datetime | None
-```
+需要定义，注意Plan里的Step和这里的Stage是两个对象。Step偏静态，而Stage偏动态，Stage可能挂在动态执行时候的一些信息
 
 #### 枚举：StageStatus
 
@@ -711,562 +483,22 @@ class Stage:
 class StageStatus(str, Enum):
     RUNNING     = "RUNNING"      # 推理循环进行中
     COMPLETED   = "COMPLETED"    # 产出最终答案
-    INTERRUPTED = "INTERRUPTED"  # 被用户建议打断
     PAUSED      = "PAUSED"       # B类异常暂停或等待用户澄清
     FAILED      = "FAILED"       # C类错误或超过最大迭代次数
+    等等
 ```
 
-#### 成员变量
+#### 成员变量        
 
-```python
-_reasoning_manager: ReasoningManager   # 单轮推理，持有当前 LLMGateway
-_context_manager: ContextManager       # 对话历史与上下文管理
-_tool_registry: ToolRegistry           # 工具调用分发
-_quality_evaluator: QualityEvaluator   # 步骤结果评测
-_knowledge_loader: KnowledgeLoader     # 步骤开始前加载可复用知识
-_current_stage: Stage | None
-_max_iterations: int                   # 单 Stage 最大推理轮次，默认 60
-```
+驱动两层框架循环，需要依赖谁，哪个聚合就成为它的成员
 
 #### 方法签名
 
-```python
-def execute_stage(self, task_id: TaskId,
-                  plan_step: PlanStep) -> Stage:
-    """执行一个 Stage：
-    1. 创建 Stage 实例，加载可复用知识注入上下文
-    2. 循环调用 ReasoningManager.reason_once() 直到 FinalAnswer 或中断条件
-    3. 更新 Stage 状态和结果
-    发布 TaskExecutionStarted(E8)；完成后发布 StepResultProduced(E40)"""
+至少要两个方法：（1）execute负责Stage level循环 （2）execute_one_stage负责Stage内部推理循环
 
-def interrupt(self, guidance: str) -> None:
-    """Pipeline 调用，中断当前 Stage 推理循环；
-    发布 TaskStepInterrupted(E16)"""
 
-def pause(self, reason: str) -> None:
-    """Pipeline 调用，暂停当前 Stage；
-    发布 TaskPaused(E10)"""
 
-def resume(self) -> None:
-    """Pipeline 调用，恢复被暂停的 Stage，继续推理循环"""
 
-def get_current_stage(self) -> Stage | None
-def reset_for_next_stage(self) -> None:
-    """清理当前 Stage 上下文（调用 ContextManager.reset()），准备执行下一个 Stage"""
-```
-
----
-
-### ReasoningManager（实体，属于 StageExecutor 聚合）
-
-**文件**：`src/agent/models/reasoning/reasoning_manager.py`
-
-**职责**：执行单轮 LLM 推理。调用 Strategy 将当前上下文组装为 LLMRequest，调用 LLMGateway 执行一次 API 调用，再由 Strategy 将 LLMResponse 解析为标准 NextDecision。ReasoningManager 不处理工具执行、上下文写入、Provider 切换等逻辑，这些由 StageExecutor 负责。
-
-#### 成员变量
-
-```python
-_llm_gateway: LLMGateway   # 当前使用的 Provider 网关，由 StageExecutor 注入
-_strategy: Strategy        # 推理策略（ReAct 等），决定如何组装请求和解析响应
-```
-
-#### 值对象：NextDecision
-
-```python
-# src/agent/models/reasoning/decision.py
-class NextDecisionType(str, Enum):
-    TOOL_CALL            = "TOOL_CALL"            # 需要调用工具
-    FINAL_ANSWER         = "FINAL_ANSWER"         # 产出最终答案，Stage 结束
-    CONTINUE             = "CONTINUE"             # 普通推理，继续下一轮
-    CLARIFICATION_NEEDED = "CLARIFICATION_NEEDED" # 需要用户澄清，暂停 Stage
-
-@dataclass(frozen=True)
-class NextDecision:
-    decision_type: NextDecisionType
-    tool_calls: list[ToolCall] = field(default_factory=list)  # TOOL_CALL 时有值
-    answer: str = ""                                           # FINAL_ANSWER 时有值
-    message: str = ""                                          # CONTINUE/CLARIFICATION_NEEDED 时有值
-    raw_response: LLMResponse | None = None                    # 原始 LLM 响应，供调试用
-```
-
-#### 方法签名
-
-```python
-def reason_once(self, context_manager: ContextManager,
-                tool_registry: ToolRegistry) -> NextDecision:
-    """执行单轮推理：
-    1. strategy.build_llm_request(context_manager, tool_registry) → LLMRequest
-    2. llm_gateway.call(request) → LLMResponse
-    3. strategy.parse_llm_response(response) → NextDecision
-    发布 ReasoningStarted(E27)、NextDecisionMade(E32)
-    LLMGateway 抛出的 AgentError 直接向上传播，由 StageExecutor 处理"""
-
-def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:
-    """Provider 降级时由 StageExecutor 调用，替换当前网关"""
-```
-
-#### 发布事件
-
-`ReasoningStarted(E27)`, `NextDecisionMade(E32)`
-
----
-
-### LLMGateway（实体）
-
-**文件**：`src/llm/llm_gateway.py`
-
-**职责**：封装对单个 LLM Provider 的一次 API 调用。负责将标准 LLMRequest 转换为该 Provider 的具体协议格式，调用 Provider API，将响应转换回标准 LLMResponse。同时处理围绕这一次调用的基本容错：超时控制、对 A 类可重试错误（TRANSIENT、RATE_LIMITED）的退避抖动重试。
-
-LLMGateway **不负责** Provider 选择、跨 Provider 降级、上下文裁剪等逻辑，这些由 StageExecutor / Pipeline 负责。
-
-#### 成员变量
-
-```python
-_provider: SingleProviderClient     # 具体 Provider 实现（Claude/OpenAI/Qwen 等）
-_max_retries: int                   # A 类错误最大重试次数，默认 3
-_retry_delays: tuple[float, ...]    # 退避延迟序列（秒），如 (1.0, 2.0, 4.0)
-_timeout: float                     # 单次调用超时（秒），默认 60.0
-```
-
-#### 方法签名
-
-```python
-def call(self, provider_name: str, request: LLMRequest) -> LLMResponse:
-    """执行一次 LLM API 调用：
-    1. 调用provider_name对应的provider （含超时控制）
-    2. 对 LLM.A.TRANSIENT / LLM.A.RATE_LIMITED 按 _retry_delays 退避重试（加 jitter）
-    3. 超出重试次数后抛出原始 AgentError，由调用方决定是否切换 Provider
-    所有 Provider 原始异常均在 _provider 内部转换为 AgentError（见错误码映射表）"""
-```
-
-#### 已实现 Provider
-
-| Provider | 文件 | 协议 |
-|---|---|---|
-| claude | providers/claude_api.py | Anthropic Messages API |
-| openai | providers/openai_api.py | OpenAI Chat Completions API |
-| qwen | providers/qwen_api.py | OpenAI-compatible |
-| kimi | providers/kimi_api.py | OpenAI-compatible |
-| minmax | providers/minmax_api.py | OpenAI-compatible |
-| glm | providers/glm_api.py | OpenAI-compatible |
-| deepseek | providers/deepseek_api.py | OpenAI-compatible |
-
----
-
-### Infra基础设施对象构建
-
-**文件**：`src/agent/factory/agent_factory.py`
-
-**职责**：从配置文件读取参数，构建所有基础设施对象和领域对象，完成依赖注入，返回可直接使用的 Pipeline 实例。是系统的唯一组装入口，领域对象本身不感知配置格式。
-
-#### LLMProviderRegistry
-
-```python
-# src/llm/registry.py
-class LLMProviderRegistry:
-    """持有所有已注册的 SingleProviderClient，按名称索引。"""
-
-    def register(self, client: SingleProviderClient) -> None
-    def get(self, provider_name: str) -> SingleProviderClient
-    def list_providers(self) -> list[str]
-
-    def build_gateway(self, provider_name: str,
-                      max_retries: int = 3,
-                      retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
-                      timeout: float = 60.0) -> LLMGateway:
-        """从已注册的 Provider 构建 LLMGateway 实例"""
-```
-
-#### AgentFactory
-
-```python
-# src/agent/factory/agent_factory.py
-class AgentFactory:
-    """从 AgentConfig 构建完整的 Pipeline 及其所有依赖。"""
-
-    @classmethod
-    def from_config(cls, config: AgentConfig) -> "AgentFactory":
-        """读取 config/config.json，初始化 AgentFactory"""
-
-    # ── 基础设施层 ────────────────────────────────────────────────
-    def build_event_bus(self) -> EventBus
-    def build_storage_registry(self) -> StorageRegistry
-    def build_llm_provider_registry(self) -> LLMProviderRegistry
-    def build_tool_registry(self) -> ToolRegistry
-
-    # ── LLM 网关 ──────────────────────────────────────────────────
-    def build_llm_gateway(self, provider_name: str) -> LLMGateway:
-        """委托给 LLMProviderRegistry.build_gateway()"""
-
-    # ── 领域对象 ──────────────────────────────────────────────────
-    def build_model_selector(self) -> ModelSelector
-    def build_reasoning_manager(self, provider_name: str) -> ReasoningManager
-    def build_context_manager(self) -> ContextManager
-    def build_knowledge_loader(self) -> KnowledgeLoader
-    def build_stage_executor(self, provider_name: str) -> StageExecutor
-    def build_planner(self, task_id: TaskId, task_description: str) -> Planner
-    def build_quality_evaluator(self, task_id: TaskId,
-                                task_description: str) -> QualityEvaluator
-    def build_knowledge_manager(self, task_id: TaskId) -> KnowledgeManager
-    def build_checkpoint_processor(self, task_id: TaskId) -> CheckpointProcessor
-
-    # ── 顶层入口 ──────────────────────────────────────────────────
-    def build_pipeline(self) -> Pipeline:
-        """构建完整 Pipeline，注入所有依赖，返回可直接调用 run() 的实例"""
-```
-
-#### 构建顺序与依赖关系
-
-```
-AgentConfig
-  ├─► EventBus
-  ├─► StorageRegistry
-  │     └─► [sqlite / mysql / chromadb 后端按配置注册]
-  ├─► LLMProviderRegistry
-  │     └─► [claude / openai / qwen 等 Provider 按配置注册]
-  ├─► ToolRegistry
-  │     └─► [工具按配置自动注册]
-  ├─► ModelSelector ◄── LLMProviderRegistry
-  ├─► KnowledgeLoader ◄── StorageRegistry(chromadb)
-  ├─► ContextManager
-  ├─► ReasoningManager ◄── LLMGateway(primary_provider), Strategy
-  ├─► StageExecutor ◄── ReasoningManager, ContextManager, ToolRegistry,
-  │                      QualityEvaluator, KnowledgeLoader
-  ├─► Planner ◄── LLMGateway(default_provider), KnowledgeLoader
-  ├─► QualityEvaluator ◄── LLMGateway(default_provider)
-  ├─► KnowledgeManager ◄── LLMGateway(default_provider), StorageRegistry(chromadb)
-  ├─► CheckpointProcessor ◄── StorageRegistry(sqlite)
-  └─► Pipeline ◄── Planner, StageExecutor, CheckpointProcessor,
-                    KnowledgeManager, QualityEvaluator,
-                    ModelSelector, LLMProviderRegistry, EventBus
-```
-
----
-
-### ModelSelector（实体，由 Pipeline 持有）
-
-**文件**：`src/agent/models/model_routing/provider_router.py`
-
-**职责**：根据推理策略、延迟偏好、token 预算选定主 Provider 及备选链。由 Pipeline 在任务开始时调用，返回 RoutingDecision；Pipeline 据此从 LLMProviderRegistry 构建对应的 LLMGateway 并注入 StageExecutor。
-
-#### 成员变量
-
-```python
-_priority_chain: list[str]   # Provider 名称列表，按优先级排列
-_enable_fallback: bool
-```
-
-#### 值对象：RoutingDecision
-
-```python
-@dataclass(frozen=True)
-class RoutingDecision:
-    primary: str            # 主 provider 名称
-    fallbacks: list[str]    # 备选 provider 名称列表（按优先级）
-```
-
-#### 方法签名
-
-```python
-def route(self, model_hint: str | None = None,
-          enable_fallback: bool = True) -> RoutingDecision:
-    """返回主 Provider 及备选链；发布 ModelSelected(E28)"""
-```
-
-#### 认知复杂度
-
-| 复杂度      | 特征                     | 推荐模型                                                     | 适用场景                         |
-| ----------- | ------------------------ | ------------------------------------------------------------ | -------------------------------- |
-| **L1 简单** | 单步、模板化、低幻觉要求 | GPT-4o-mini, Claude Haiku, **Phi-4**, **Llama 3.1 8B**       | 寒暄、格式化、标签分类、简单提取 |
-| **L2 标准** | 单步推理、常识、短上下文 | GPT-4o, **DeepSeek-V3**, **Qwen2.5 32B**                     | 客服问答、邮件起草、基础翻译     |
-| **L3 复杂** | 多步推理、代码、分析     | Claude 3.5 Sonnet, o3-mini, **Qwen2.5 72B**, **DeepSeek-Coder-V2** | 代码审查、数据分析、报告生成     |
-| **L4 专家** | 深度推理、创意、长链思维 | o3, **DeepSeek-R1**, Claude 3.5 Sonnet, **Kimi k1.5**        | 架构设计、数学证明、策略规划     |
-
-#### 按延迟与成本映射
-
-| 优先级       | 延迟要求 | 成本敏感 | 推荐策略              | 具体模型                                      |
-| ------------ | -------- | -------- | --------------------- | --------------------------------------------- |
-| **速度优先** | < 500ms  | 是       | 小模型 + 缓存         | GPT-4o-mini, **Llama 3.1 8B**, **Qwen2.5 7B** |
-| **速度优先** | < 500ms  | 否       | 推理加速 + 大模型蒸馏 | **Speculative Decoding** + Claude Haiku       |
-| **质量优先** | < 5s     | 是       | 中等模型              | GPT-4o, **DeepSeek-V3**, **Qwen2.5 32B**      |
-| **质量优先** | < 5s     | 否       | 顶级模型              | o3, Claude 3.5 Sonnet, **DeepSeek-R1**        |
-| **成本优先** | 异步     | 极度敏感 | 批量 + 小模型         | **Qwen2.5 7B**, **Phi-4**, GPT-4o-mini        |
-
-#### 模型路由策略
-
-| 模型                  | 最强能力             | 上下文 | 模态       | 适合场景         |
-| --------------------- | -------------------- | ------ | ---------- | ---------------- |
-| **o3 / o3-mini**      | 深度推理、数学、代码 | 200K   | 文本       | L4 复杂推理      |
-| **Claude 3.5 Sonnet** | 代码、Agent、长文本  | 200K   | 文本       | L3-L4 通用+代码  |
-| **GPT-4o**            | 多模态、JSON 一致性  | 128K   | 图文音     | L2-L3 通用       |
-| **GPT-4o-mini**       | 速度、成本、基础任务 | 128K   | 图文       | L1-L2 高频       |
-| **DeepSeek-R1**       | 推理、数学、开源     | 64K    | 文本       | L4 推理（私有）  |
-| **DeepSeek-V3**       | 通用能力、性价比     | 64K    | 文本       | L2-L3 通用       |
-| **Qwen2.5 72B**       | 中文、工具调用、开源 | 128K   | 文本       | L3 通用+Agent    |
-| **Qwen2.5-VL 72B**    | 中文多模态           | 128K   | 图文       | 中文视觉任务     |
-| **Gemini 1.5 Pro**    | 超长上下文（1M）     | 1M     | 图文音视频 | 长文档、视频     |
-| **Llama 3.3 70B**     | 英文、可私有化、生态 | 128K   | 文本       | 企业私有部署     |
-| **Phi-4**             | 小模型强推理         | 16K    | 文本       | 边缘设备、L2任务 |
-
-### ContextManager（实体，属于 StageExecutor 聚合）
-
-**文件**：`src/agent/models/context/manager.py`
-
-**职责**：管理单次 Stage 执行的完整上下文，包括对话历史、系统提示、任务变量。提供两类视图：原始历史（用于调试/checkpoint）和上下文窗口（裁剪后交给 LLM 的最终输入）。
-
-#### 成员变量
-
-```python
-_system_prompt: str
-_messages: list[ContextMessage]    # 当前准备给LLM用的消息
-_history: list[ContextMessage]     # 历史消息
-_variables: dict[str, Any]         # 任务变量（用户偏好、任务参数等）
-_lock: threading.RLock
-```
-
-#### 值对象：ContextMessage
-
-```python
-@dataclass
-class ContextMessage:
-    id: str                        # 消息唯一 ID（UUID），用于 update/delete
-    role: LLMRole                  # "user" | "assistant" | "tool"
-    content: str
-    metadata: dict[str, Any]       # 扩展字段（如 tool_call_id、tool_name、timestamp）
-    created_at: datetime
-```
-
-#### 方法签名
-
-```python
-# ── 系统提示 ──────────────────────────────────────────────────
-def get_system_prompt(self) -> str
-def set_system_prompt(self, prompt: str) -> None
-
-# ── 消息管理 ──────────────────────────────────────────────────
-def add_message(self, role: LLMRole, content: str,
-                metadata: dict[str, Any] = {}) -> str:
-    """追加消息，返回 message_id；
-    发布 ResultInjected(E37)"""
-
-def update_message(self, message_id: str, content: str) -> None:
-    """更新指定消息内容（self-repair 场景修改最后一条 assistant 消息）"""
-
-def delete_message(self, message_id: str) -> None:
-    """删除指定消息（精细裁剪时使用）"""
-
-def get_message_by_id(self, message_id: str) -> ContextMessage | None
-
-def get_history(self, limit: int | None = None,
-                offset: int = 0) -> list[ContextMessage]:
-    """返回原始消息历史，支持分页（调试/checkpoint 恢复用）"""
-
-def filter_by_role(self, role: LLMRole) -> list[ContextMessage]:
-    """按角色过滤消息（裁剪策略分析用）"""
-
-def reset(self) -> None:
-    """清空消息历史和变量，保留 system_prompt（Stage 切换时调用）"""
-
-# ── 任务变量 ──────────────────────────────────────────────────
-def set_variables(self, variables: dict[str, Any]) -> None:
-    """设置任务变量（用户偏好、任务参数等），会注入 system_prompt 尾部"""
-
-def get_variables(self) -> dict[str, Any]
-
-# ── Token 管理 ────────────────────────────────────────────────
-def get_token_count(self) -> int:
-    """估算当前消息历史的 token 数（委托给 TokenEstimator）"""
-
-def trim_to_max_tokens(self, max_tokens: int,
-                        truncator: ContextTruncator) -> None:
-    """超限时委托 ContextTruncator 裁剪，裁剪后替换内部消息列表；
-    发布 ContextTruncated(E30)"""
-
-def summarize(self, strategy: SummarizationStrategy) -> None:
-    """用摘要替换旧消息（对应 ReAct 裁剪 Strategy F），
-    strategy 可替换以支持不同摘要方式（LLM 摘要/规则摘要）"""
-
-# ── LLM 输入 ──────────────────────────────────────────────────
-def get_context_window(self) -> ContextWindow:
-    """裁剪和修复后，返回可直接传给 LLM 的最终上下文；
-    保证 tool_use/tool_result 消息配对完整（孤立的 tool_use 会被移除）；
-    发布 ContextAssembled(E29)"""
-
-def get_context(self) -> FullContext:
-    """返回完整上下文信息（system_prompt + messages + variables + token_count），
-    用于调试和 checkpoint 序列化"""
-```
-
-#### 值对象：ContextWindow
-
-```python
-@dataclass(frozen=True)
-class ContextWindow:
-    system_prompt: str
-    messages: list[LLMMessage]     # 已裁剪、已修复配对的消息列表
-    token_count: int               # 估算 token 数
-```
-
-#### 值对象：FullContext
-
-```python
-@dataclass(frozen=True)
-class FullContext:
-    system_prompt: str
-    messages: list[ContextMessage]
-    variables: dict[str, Any]
-    token_count: int
-```
-
-#### 设计说明
-
-- `get_context_window()` 是给 LLM 的最终入口，`get_history()` 是给调试/checkpoint 的原始入口，两者分离
-- tool call 配对修复：如果消息列表末尾存在 `tool_use` 但没有对应的 `tool_result`，`get_context_window()` 会移除该孤立的 `tool_use`，防止 LLM API 报错
-- `summarize()` 的 `SummarizationStrategy` 是抽象接口，当前实现为 LLM 摘要（调用 LLMGateway），未来可替换为规则摘要
-- `trim_to_max_tokens()` 不直接裁剪，而是委托给 `ContextTruncator`，保持裁剪策略可替换
-
----
-
-### Strategy（值对象接口，属于 ReasoningManager）
-
-**文件**：`src/agent/models/reasoning/strategy.py`（抽象）+ `src/agent/models/reasoning/impl/react/react_strategy.py`（实现）
-
-**职责**：定义推理策略的三个核心操作，由 `ReasoningManager` 持有并调用。策略本身无状态，可替换。没有所谓的StrategyDecision, 系统只有一个标准协议里的NextDecision
-
-#### Strategy ABC
-
-```python
-class Strategy(ABC):
-    def build_llm_request(self,
-                           context_manager: ContextManager,
-                           tool_registry: ToolRegistry) -> LLMRequest:
-        """调用 context_manager.get_context_window() 获取裁剪后的上下文，
-        组装 LLMRequest（system_prompt + messages + 工具 schema）"""
-
-    def parse_llm_response(self, response: LLMResponse) -> NextDecision:
-        """解析 LLMResponse，返回标准 NextDecision"""
-
-    def format_tool_observation(self, tool_call: ToolCall,
-                                 result: ToolResult) -> LLMMessage:
-        """将工具调用结果格式化为 LLMMessage(role='tool')，注入上下文"""
-```
-
----
-
-### ToolRegistry（实体）
-
-**文件**：`src/tools/tool_registry.py`
-
-**职责**：管理工具注册、自动发现、schema 导出、调用分发和超时重试。
-
-#### 成员变量
-
-```python
-_tools: dict[str, BaseTool]
-_timeout_retry_max_attempts: int
-_timeout_retry_delays: tuple[float, ...]
-_tracer: Tracer | None
-_logger: Logger
-_router: ToolChainRouter
-```
-
-#### 方法签名
-
-```python
-def register(self, tool: BaseTool) -> None
-def auto_register(self, module_names: list[str] | None = None,
-                   package_name: str | None = None) -> None
-
-def get_tool_schemas(self) -> list[dict[str, Any]]:
-    """返回所有工具的 JSON Schema 列表，供 LLM 使用"""
-
-def execute(self, tool_call: ToolCall) -> ToolResult:
-    """分发工具调用；
-    发布 ToolCallDispatched(E34)；
-    成功 → 发布 ToolCallSucceeded(E35)；
-    失败 → 发布 ToolCallFailed(E36)"""
-
-def reset_all(self) -> None:
-    """重置所有工具的任务级状态"""
-```
-
-#### BaseTool ABC
-
-```python
-class BaseTool(ABC):
-    name: str
-    description: str
-    parameters: dict[str, Any]   # JSON Schema
-
-    def can_handle(self, tool_name: str) -> bool
-    @abstractmethod
-    def run(self, arguments: dict[str, Any]) -> ToolResult
-    def reset(self) -> None
-    def schema(self) -> dict[str, Any]
-```
-
-#### 已实现工具
-
-| 工具名 | 文件 | 功能 |
-|---|---|---|
-| search | impl/search_tool.py | 网络搜索 |
-| sql_query | impl/sql_query_tool.py | SQL 查询执行 |
-| sql_schema | impl/sql_schema_tool.py | 数据库 Schema 查询 |
-| vector_search | impl/vector_search_tool.py | 向量相似度检索 |
-| vector_schema | impl/vector_schema_tool.py | 向量集合 Schema 查询 |
-| shell | impl/shell_tool.py | Shell 命令执行 |
-| file | impl/file_tool.py | 文件读写操作 |
-| excel | impl/excel_tool.py | Excel 文件操作 |
-| calculator | impl/calculator_tool.py | 数学表达式计算 |
-| current_time | impl/current_time_tool.py | 获取当前时间 |
-| run_python | impl/run_python_tool.py | Python 代码执行（沙箱） |
-
-
----
-
-## 聚合协调关系
-
-### 直接调用协调矩阵
-
-| 调用方 | 被调用方 | 协作方式 | 触发场景 |
-|--------|----------|----------|----------|
-| Planner          | KnowledgeLoader     | 直接调用         | 制定计划时检索已有知识                         |
-| Pipeline         | Planner             | 直接调用         | 制定计划、renew/revise 计划                    |
-| Pipeline         | QualityEvaluator    | 直接调用         | 评审计划、评估整体结果                         |
-| Pipeline         | StageExecutor       | 直接调用         | 执行每个 Stage                                 |
-| Pipeline         | CheckpointProcessor | 直接调用（异步） | Stage 完成后保存快照；从终止态恢复时 restore   |
-| Pipeline         | KnowledgeManager    | 直接调用（异步） | 任务成功后提炼并持久化知识                     |
-| Pipeline         | ModelSelector       | 直接调用         | 任务开始时选择主 Provider 及备选链             |
-| StageExecutor    | ReasoningManager    | 直接调用         | 每轮推理循环调用 reason_once()                 |
-| StageExecutor    | ToolRegistry        | 直接调用         | 执行工具调用                                   |
-| StageExecutor    | ContextManager      | 直接调用         | 读写对话历史（add_message/get_context_window） |
-| StageExecutor    | QualityEvaluator    | 直接调用         | 步骤完成后评测结果是否满足步骤目标             |
-| StageExecutor    | KnowledgeLoader     | 直接调用         | Stage 开始前加载可复用知识注入上下文           |
-| ReasoningManager | LLMGateway          | 直接调用         | 执行单轮 LLM 推理                              |
-| Planner          | LLMGateway          | 直接调用         | 任务分析、计划制定、步骤更新                   |
-| QualityEvaluator | LLMGateway          | 直接调用         | 评估结果/计划                                  |
-| KnowledgeManager | LLMGateway          | 直接调用         | 提炼知识摘要                                   |
-
-### Pipeline驱动方式
-
-可以直接编排聚合根，也是订阅事件，需要找到合适的方式。Agent本身是一个pipeline编排问题，不要死用DDD的方法。如果需要异步或者明确解耦，可以考虑基于事件驱动
-
-### AggregateRoot 事件收集模式
-
-所有聚合根继承 `AggregateRoot`，内部通过 `_record()` 收集事件，Pipeline/应用层在操作完成后统一拉取并发布：
-
-```python
-# 聚合根内部
-self._record(TaskPlanFinalized(aggregate_id=self.id, ...))
-
-# Pipeline 应用层
-events = planner.pull_events()
-for event in events:
-    event_bus.publish(event)
-```
-
-
----
 
 ## 标准协议
 

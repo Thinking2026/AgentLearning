@@ -6,33 +6,43 @@ from uuid import uuid4
 
 from config import ConfigValueReader, JsonConfig
 from agent.factory.agent_factory import AgentFactory
-from agent.application.pipeline import Pipeline
+from agent.application.driver import PipelineDriver
 from schemas.ids import TaskId
-from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
-from schemas import (
-    AGENT_THREAD_ERROR,
-    AgentError,
-    UIMessage,
-    LLM_ALL_PROVIDERS_FAILED,
-    build_error,
-)
+from schemas.errors import AgentError, build_error, AGENT_THREAD_ERROR, LLM_ALL_PROVIDERS_FAILED
+from schemas.types import UIMessage
 from infra.observability.tracing import Span, Tracer
 from utils.log.log import Logger, zap
+from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from utils.concurrency.thread_event import ThreadEvent
 
 
-class AgentThread(threading.Thread):
+class PipelineThread(threading.Thread):
+    """Container for Pipeline execution (TD §应用层 — PipelineThread).
+
+    Responsibilities:
+    1. Manage the execution thread lifecycle.
+    2. Own the inbound task queue; expose submit() so UserThread can post tasks
+       without holding a direct queue reference.
+    3. For each incoming task: build a Pipeline, run it in a sub-thread, and
+       forward subsequent user messages (cancel / guidance / clarification /
+       resume) to PipelineDriver while the pipeline is running.
+
+    Interaction flow:
+      UserThread.submit(msg) → _task_queue → PipelineThread → PipelineDriver → Pipeline
+      Pipeline → send_to_user callback → AgentToUserQueue → UserThread
+    """
+
     def __init__(
         self,
-        user_to_agent_queue: UserToAgentQueue,
         agent_to_user_queue: AgentToUserQueue,
         config: JsonConfig,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
         logger: Logger,
     ) -> None:
-        super().__init__(name="AgentThread", daemon=False)
-        self._user_to_agent_queue = user_to_agent_queue
+        super().__init__(name="PipelineThread", daemon=False)
+        # PipelineThread owns its inbound queue
+        self._task_queue = UserToAgentQueue()
         self._agent_to_user_queue = agent_to_user_queue
         self._config = config
         self._config_value_reader = ConfigValueReader(config)
@@ -42,25 +52,32 @@ class AgentThread(threading.Thread):
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
         self._factory: AgentFactory | None = None
-        self._pipeline: Pipeline | None = None
+        self._active_driver: PipelineDriver | None = None
         self._load_tracing_config()
         try:
             self._tracer = self._build_tracer()
             self._factory = AgentFactory.from_config(config, self._tracer)
         except Exception as exc:
-            self._logger.error(
-                "AgentThread init failed",
-                zap.any("error", str(exc)),
-            )
+            self._logger.error("PipelineThread init failed", zap.any("error", str(exc)))
             raise
 
+    # ------------------------------------------------------------------
+    # Public API for UserThread
+    # ------------------------------------------------------------------
+
+    def submit(self, message: UIMessage) -> None:
+        """Post a message (new task or in-flight signal) to the pipeline queue."""
+        self._task_queue.send_user_message(message)
+
+    # ------------------------------------------------------------------
+    # Thread entry point
+    # ------------------------------------------------------------------
+
     def run(self) -> None:
-        #AgentThread套一个壳子，真正处理服务端线程的是pipeline
-        #AgentThread提供一些事件方法，比如记录tracing
-        #userthread负责UI消息组装
         try:
             while self._is_running():
-                user_message = self._user_to_agent_queue.get_user_message(timeout=None)
+                # Wait for the next task from the user
+                user_message = self._task_queue.get_user_message(timeout=None)
                 if not self._is_running():
                     break
                 if user_message is None:
@@ -72,7 +89,7 @@ class AgentThread(threading.Thread):
                 task_id = TaskId(f"task_{uuid4().hex}")
                 task_description = user_message.content.strip()
 
-                # Build a fresh Pipeline for each task
+                # Build a fresh Pipeline + Driver for each task
                 try:
                     pipeline = self._factory.build_pipeline(task_id, task_description)
                 except Exception as exc:
@@ -81,35 +98,66 @@ class AgentThread(threading.Thread):
                     self._send_task_completed()
                     continue
 
-                try:
-                    result = pipeline.run(
-                        task_id=task_id,
-                        task_description=task_description,
-                    )
-                    if result.succeeded and result.result:
-                        self._agent_to_user_queue.send_agent_message(UIMessage(
-                            role="assistant",
-                            content=result.result,
-                            metadata={"source": "task_result"},
-                        ))
-                    elif result.error_reason:
-                        self._agent_to_user_queue.send_agent_message(UIMessage(
-                            role="assistant",
-                            content=result.error_reason,
-                            metadata={"source": "error"},
-                        ))
-                    self._finish_session_trace(error=None)
-                except Exception as exc:
-                    normalized = self._normalize_error(exc)
+                driver = PipelineDriver(
+                    pipeline=pipeline,
+                    send_to_user=self._agent_to_user_queue.send_agent_message,
+                    logger=self._logger,
+                )
+                self._active_driver = driver
+
+                # Run the pipeline in a sub-thread so this thread can keep
+                # forwarding user messages (cancel / guidance / clarification).
+                result_holder: list = [None]
+                error_holder: list = [None]
+
+                def _run_pipeline() -> None:
+                    try:
+                        result_holder[0] = driver.submit_task(task_id, task_description)
+                    except Exception as exc:
+                        error_holder[0] = exc
+
+                pipeline_thread = threading.Thread(
+                    target=_run_pipeline, name="PipelineWorker", daemon=True
+                )
+                pipeline_thread.start()
+
+                # Forward user messages while the pipeline is running
+                while pipeline_thread.is_alive():
+                    msg = self._task_queue.get_user_message(timeout=0.5)
+                    if msg is not None:
+                        driver.route_user_message(msg)
+
+                pipeline_thread.join()
+                self._active_driver = None
+
+                # Handle result
+                if error_holder[0] is not None:
+                    normalized = self._normalize_error(error_holder[0])
                     self._logger.error("Task execution failed", zap.any("error", normalized))
                     self._finish_session_trace(error=normalized)
                     if self._is_hard_error(normalized):
                         break
-                finally:
-                    self._send_task_completed()
+                else:
+                    result = result_holder[0]
+                    if result is not None:
+                        if result.succeeded and result.result:
+                            self._agent_to_user_queue.send_agent_message(UIMessage(
+                                role="assistant",
+                                content=result.result,
+                                metadata={"source": "task_result"},
+                            ))
+                        elif result.error_reason:
+                            self._agent_to_user_queue.send_agent_message(UIMessage(
+                                role="assistant",
+                                content=result.error_reason,
+                                metadata={"source": "error"},
+                            ))
+                    self._finish_session_trace(error=None)
+
+                self._send_task_completed()
 
         except Exception as exc:
-            self._logger.error("Agent thread crashed", zap.any("error", exc))
+            self._logger.error("PipelineThread crashed", zap.any("error", exc))
         finally:
             self._stop()
 
@@ -119,7 +167,9 @@ class AgentThread(threading.Thread):
 
     def _load_tracing_config(self) -> None:
         self._tracing_enabled = bool(self._config.get("tracing.enabled", True))
-        self._tracing_output_path = self._config.get("tracing.output_path", "var/tracing/traces.jsonl")
+        self._tracing_output_path = self._config.get(
+            "tracing.output_path", "var/tracing/traces.jsonl"
+        )
         self._tracing_payload_redaction_enabled = bool(
             self._config.get(
                 "tracing.payload_redaction_enabled",
@@ -127,8 +177,7 @@ class AgentThread(threading.Thread):
             )
         )
         self._tracing_max_content_length = self._config_value_reader.positive_int(
-            "tracing.max_content_length",
-            default=1000,
+            "tracing.max_content_length", default=1000
         )
 
     def _build_tracer(self) -> Tracer:
@@ -192,4 +241,7 @@ class AgentThread(threading.Thread):
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
 
     def _is_any_queue_closed(self) -> bool:
-        return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
+        return (
+            self._task_queue.is_closed()
+            or self._agent_to_user_queue.is_closed()
+        )

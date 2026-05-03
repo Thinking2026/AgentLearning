@@ -30,15 +30,15 @@ class ContextMessage:
 class ContextWindow:
     system_prompt: str
     messages: list[LLMMessage]
-    token_count: int
-
+    token_count: int = 0
 
 @dataclass(frozen=True)
-class FullContext:
+class AgentContext:
     system_prompt: str
+    tool_schemas: str
     messages: list[ContextMessage]
+    stage_index: list[int]
     variables: dict[str, Any]
-    token_count: int
 
 
 class ContextTruncator(Protocol):
@@ -62,17 +62,14 @@ class ContextManager:
         self,
         config: JsonConfig | None = None,
         strategy_name: str = "react",
-        llm_client_factory: Callable[[str], BaseLLMClient] | None = None,
     ) -> None:
         self._system_prompt = ""
+        self._tool_schemas = ""
         self._messages: list[ContextMessage] = []
-        self._history: list[ContextMessage] = []
-        self._archived_tasks: list[list[ContextMessage]] = []
         self._variables: dict[str, Any] = {}
         self._lock = threading.RLock()
         self._config = config
         self._strategy_name = strategy_name
-        self._llm_client_factory = llm_client_factory
         # Lazily-created caches: estimator per provider, truncator per strategy
         self._estimators: dict[str, BaseTokenEstimator] = {}
         self._truncator: _ContextTruncator | None = None
@@ -115,7 +112,6 @@ class ContextManager:
                 metadata=dict(metadata or {}),
             )
             self._messages.append(message)
-            self._history.append(message)
             return message.id
 
     def update_message(self, message_id: str, content: str) -> None:
@@ -124,15 +120,10 @@ class ContextManager:
                 self._replace_content(message, content) if message.id == message_id else message
                 for message in self._messages
             ]
-            self._history = [
-                self._replace_content(message, content) if message.id == message_id else message
-                for message in self._history
-            ]
 
     def delete_message(self, message_id: str) -> None:
         with self._lock:
             self._messages = [message for message in self._messages if message.id != message_id]
-            self._history = [message for message in self._history if message.id != message_id]
 
     def get_message_by_id(self, message_id: str) -> ContextMessage | None:
         with self._lock:
@@ -143,7 +134,7 @@ class ContextManager:
 
     def get_history(self, limit: int | None = None, offset: int = 0) -> list[ContextMessage]:
         with self._lock:
-            messages = self._history[offset:]
+            messages = self._messages[offset:]
             if limit is not None:
                 messages = messages[:limit]
             return [self._clone_context_message(message) for message in messages]
@@ -152,15 +143,13 @@ class ContextManager:
         with self._lock:
             return [
                 self._clone_context_message(message)
-                for message in self._history
+                for message in self._messages
                 if message.role == role
             ]
 
     def reset(self) -> None:
         with self._lock:
             self._messages.clear()
-            self._history.clear()
-            self._archived_tasks.clear()
             self._variables.clear()
 
     # ------------------------------------------------------------------
@@ -196,6 +185,14 @@ class ContextManager:
             elif isinstance(replacement, list):
                 self._messages = [self._from_llm_message(message) for message in replacement]
             self._history = list(self._messages)
+
+    def get_conversation_history(self) -> list[LLMMessage]:
+        with self._lock:
+            return self._to_llm_messages(self._messages)
+
+    def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
+        with self._lock:
+            self._messages = [self._from_llm_message(m) for m in messages]
 
     def get_context_window(self) -> ContextWindow:
         with self._lock:
@@ -254,60 +251,14 @@ class ContextManager:
             token_count=est_after["total"],
         )
 
-    def get_context(self) -> FullContext:
+    def get_context(self) -> AgentContext:
         with self._lock:
-            return FullContext(
+            return AgentContext(
                 system_prompt=self._system_prompt_with_variables(),
                 messages=[self._clone_context_message(message) for message in self._history],
                 variables=dict(self._variables),
                 token_count=self.get_token_count(),
             )
-
-    # ------------------------------------------------------------------
-    # Compatibility adapters for existing callers/tests
-    # ------------------------------------------------------------------
-
-    def append_conversation_message(self, message: LLMMessage) -> None:
-        self.add_message(message.role, message.content, message.metadata)
-
-    def get_conversation_history(self) -> list[LLMMessage]:
-        with self._lock:
-            messages: list[LLMMessage] = []
-            for task_messages in self._archived_tasks:
-                messages.extend(self._to_llm_messages(task_messages))
-            messages.extend(self.get_context_window().messages)
-            return messages
-
-    def clear_conversation_history(self) -> None:
-        self.reset()
-
-    def archive_current_task(self) -> None:
-        with self._lock:
-            if not self._messages:
-                return
-            self._archived_tasks.append([
-                self._clone_context_message(message)
-                for message in self._messages
-            ])
-            self._messages.clear()
-
-    def clear_current_task(self) -> None:
-        with self._lock:
-            self._messages.clear()
-
-    def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
-        with self._lock:
-            self._messages = [self._from_llm_message(message) for message in messages]
-            self._history = list(self._messages)
-            self._archived_tasks.clear()
-
-    def get_archived_tasks(self) -> list[list[LLMMessage]]:
-        with self._lock:
-            return [self._to_llm_messages(task_messages) for task_messages in self._archived_tasks]
-
-    def get_current_task_messages(self) -> list[LLMMessage]:
-        with self._lock:
-            return self._to_llm_messages(self._messages)
 
     def release(self) -> None:
         with self._lock:
