@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import json
 import pkgutil
 import time
 from abc import ABC, abstractmethod
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from schemas import (
     TOOL_EXECUTION_ERROR,
@@ -22,11 +21,6 @@ from infra.observability.tracing import Span, Tracer
 from tools.tool_base import BaseTool
 from utils.log.log import Logger, zap
 
-if TYPE_CHECKING:
-    from agent.models.knowledge.knowledge_loader import KnowledgeLoader
-
-_SEARCH_TOOL_NAME = "search"
-
 
 class ToolRegistry:
     def __init__(
@@ -36,7 +30,6 @@ class ToolRegistry:
         timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         tracer: Tracer | None = None,
         logger: Logger | None = None,
-        knowledge_loader: KnowledgeLoader | None = None,
     ) -> None:
         self._tools = {tool.name: tool for tool in (tools or [])}
         self._timeout_retry_max_attempts = timeout_retry_max_attempts
@@ -46,7 +39,6 @@ class ToolRegistry:
         )
         self._tracer = tracer
         self._logger = logger or Logger.get_instance()
-        self._knowledge_loader = knowledge_loader
         self._router = ToolChainRouter(self._tools.values())
 
     def register(self, tool: BaseTool) -> None:
@@ -147,33 +139,7 @@ class ToolRegistry:
                 # Non-timeout failure: no point retrying
                 break
 
-        # All attempts exhausted (or non-timeout failure). Try knowledge fallback for search.
-        if tool_call.name == _SEARCH_TOOL_NAME and self._knowledge_loader is not None:
-            fallback = self._knowledge_loader_fallback(tool_call)
-            if fallback is not None:
-                return fallback
-
         return result  # type: ignore[return-value]
-
-    def _knowledge_loader_fallback(self, tool_call: ToolCall) -> ToolResult | None:
-        query = str(tool_call.arguments.get("query", "")).strip()
-        if not query:
-            return None
-        try:
-            entries = self._knowledge_loader.load(query)  # type: ignore[union-attr]
-        except Exception:
-            return None
-        if not entries:
-            return None
-        results = [{"rank": i + 1, "content": e.content, "tags": list(e.tags)} for i, e in enumerate(entries)]
-        return ToolResult(
-            output=json.dumps(
-                {"source": "knowledge_base", "query": query, "result_count": len(results), "results": results},
-                ensure_ascii=False,
-            ),
-            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
-            success=True,
-        )
 
     def _start_span(
         self,
@@ -341,14 +307,12 @@ def create_default_tool_registry(
     timeout_retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
     tracer: Tracer | None = None,
     logger: Logger | None = None,
-    knowledge_loader: KnowledgeLoader | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(
         timeout_retry_max_attempts=timeout_retry_max_attempts,
         timeout_retry_delays=timeout_retry_delays,
         tracer=tracer,
         logger=logger,
-        knowledge_loader=knowledge_loader,
     )
     registry.auto_register(module_names=module_names, package_name=package_name)
     return registry

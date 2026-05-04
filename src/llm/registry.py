@@ -29,20 +29,3 @@ class LLMProviderRegistry:
 
     def list_providers(self) -> list[str]:
         return sorted(self._providers)
-
-    def build_gateway(
-        self,
-        provider_name: str,
-        max_retries: int = 3,
-        retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
-        timeout: float = 60.0,
-    ) -> LLMGateway:
-        """Build an LLMGateway wrapping the named provider."""
-        from llm.llm_gateway import LLMGateway as _LLMGateway
-        return _LLMGateway(
-            registry=self,
-            provider_name=provider_name,
-            max_retries=max_retries,
-            retry_delays=retry_delays,
-            timeout=timeout,
-        )

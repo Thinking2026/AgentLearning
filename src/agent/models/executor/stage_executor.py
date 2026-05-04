@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -386,6 +387,12 @@ class StageExecutor:
                 continue
 
             result: ToolResult = self._tool_registry.execute(tool_call)
+
+            if not result.success and tool_call.name == "search":
+                fallback = self._knowledge_search_fallback(tool_call)
+                if fallback is not None:
+                    result = fallback
+
             observation = self._reasoning_manager.format_tool_observation(
                 tool_call=tool_call,
                 result=self._tool_result_for_observation(result),
@@ -433,6 +440,26 @@ class StageExecutor:
             )
 
         return None
+
+    def _knowledge_search_fallback(self, tool_call: ToolCall) -> ToolResult | None:
+        query = str(tool_call.arguments.get("query", "")).strip()
+        if not query:
+            return None
+        try:
+            entries = self._knowledge_loader.load(query)
+        except Exception:
+            return None
+        if not entries:
+            return None
+        results = [{"rank": i + 1, "content": e.content, "tags": list(e.tags)} for i, e in enumerate(entries)]
+        return ToolResult(
+            output=json.dumps(
+                {"source": "knowledge_base", "query": query, "result_count": len(results), "results": results},
+                ensure_ascii=False,
+            ),
+            llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
+            success=True,
+        )
 
     @staticmethod
     def _tool_result_for_observation(result: ToolResult) -> ToolResult:
