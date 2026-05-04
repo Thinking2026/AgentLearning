@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from schemas.task import EvaluationReport, EvaluationTarget, Plan, PlanStep, Task
 from schemas.types import LLMMessage, LLMRequest
+from utils.time.timezone import now
+from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
     from llm.llm_gateway import LLMGateway
@@ -35,9 +37,14 @@ class QualityEvaluator:
             f"- clarification_question: string (the specific question to ask; empty string if not needed)\n\n"
             f"Respond with only valid JSON."
         )
-        response = llmgateway.generate(
-            LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
-        )
+        try:
+            response = llmgateway.generate(
+                LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+            )
+        except Exception as exc:
+            Logger.get_instance().error("Error occurred while evaluating plan",zap.any("error", exc))
+            raise
+
         passed, feedback, need_clarification, clarification_question = _parse_plan_review(
             response.assistant_message.content
         )
@@ -46,7 +53,7 @@ class QualityEvaluator:
             target_id=str(plan.id),
             passed=passed,
             feedback=feedback,
-            evaluated_at=datetime.now(timezone.utc),
+            evaluated_at=now(),
             need_user_clarification=need_clarification,
             clarification_question=clarification_question,
         )
@@ -66,9 +73,14 @@ class QualityEvaluator:
             f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
             f"Respond with only valid JSON."
         )
-        response = llmgateway.generate(
-            LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
-        )
+        try:
+            response = llmgateway.generate(
+                LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+            )
+        except Exception as exc:
+            Logger.get_instance().error("Error occurred while evaluating task result", zap.any("error", exc))
+            raise
+
         passed, feedback = _parse_evaluation(response.assistant_message.content)
         return EvaluationReport(
             target_type=EvaluationTarget.TASK_RESULT,
@@ -94,9 +106,14 @@ class QualityEvaluator:
             f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
             f"Respond with only valid JSON."
         )
-        response = llmgateway.generate(
-            LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
-        )
+        try:
+            response = llmgateway.generate(
+                LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+            )
+        except Exception as exc:
+            Logger.get_instance().error("Error occurred while evaluating stage result", zap.any("error", exc))
+            raise
+
         passed, feedback = _parse_evaluation(response.assistant_message.content)
         return EvaluationReport(
             target_type=EvaluationTarget.STAGE_RESULT,

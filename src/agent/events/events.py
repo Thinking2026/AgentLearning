@@ -7,15 +7,15 @@ from typing import Any
 
 @dataclass(frozen=True)
 class DomainEvent:
+    content:str = ""
     occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ── 分析 ──────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
-class AnalysisReportProduced(DomainEvent):
+class TaskAnalysisCompleted(DomainEvent):
     task_id: str = ""
-    report_summary: str = ""
 
 
 # ── 计划 ──────────────────────────────────────────────────────────────────────
@@ -24,7 +24,6 @@ class AnalysisReportProduced(DomainEvent):
 class ExecutionPlanFinalized(DomainEvent):
     task_id: str = ""
     plan_id: str = ""
-    step_count: int = 0
 
 
 # ── 用户交互 ──────────────────────────────────────────────────────────────────
@@ -32,13 +31,12 @@ class ExecutionPlanFinalized(DomainEvent):
 @dataclass(frozen=True)
 class UserSuggestionRequested(DomainEvent):
     task_id: str = ""
-    question: str = ""
 
 
 @dataclass(frozen=True)
 class UserClarificationRequested(DomainEvent):
     task_id: str = ""
-    stage_id: str = ""
+    order: str = ""
     question: str = ""
 
 
@@ -52,14 +50,10 @@ class TaskExecutionStarted(DomainEvent):
 @dataclass(frozen=True)
 class TaskResultProduced(DomainEvent):
     task_id: str = ""
-    result: str = ""
-
 
 @dataclass(frozen=True)
 class TaskExecutionFailed(DomainEvent):
     task_id: str = ""
-    reason: str = ""
-
 
 @dataclass(frozen=True)
 class TaskPaused(DomainEvent):
@@ -78,15 +72,13 @@ class TaskCancelled(DomainEvent):
 @dataclass(frozen=True)
 class StageExecutionStarted(DomainEvent):
     task_id: str = ""
-    stage_id: str = ""
-    plan_step_id: str = ""
+    order: str = ""
 
 
 @dataclass(frozen=True)
 class StageResultProduced(DomainEvent):
     task_id: str = ""
-    stage_id: str = ""
-    result: str = ""
+    order: str = ""
 
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
@@ -94,9 +86,8 @@ class StageResultProduced(DomainEvent):
 @dataclass(frozen=True)
 class LLMResponseGenerated(DomainEvent):
     task_id: str = ""
-    stage_id: str = ""
+    order: str = ""
     model: str = ""
-    content: str = ""
 
 
 # ── 工具调用 ──────────────────────────────────────────────────────────────────
@@ -104,7 +95,7 @@ class LLMResponseGenerated(DomainEvent):
 @dataclass(frozen=True)
 class ToolCallStarted(DomainEvent):
     task_id: str = ""
-    stage_id: str = ""
+    order: str = ""
     tool_name: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
 
@@ -112,22 +103,20 @@ class ToolCallStarted(DomainEvent):
 @dataclass(frozen=True)
 class ToolCallResultProduced(DomainEvent):
     task_id: str = ""
-    stage_id: str = ""
+    order: str = ""
     tool_name: str = ""
-    result: Any = None
-
 
 @dataclass(frozen=True)
 class ToolCallFailed(DomainEvent):
     task_id: str = ""
-    stage_id: str = ""
+    order: str = ""
     tool_name: str = ""
     error: str = ""
 
 
 __all__ = [
     "DomainEvent",
-    "AnalysisReportProduced",
+    "TaskAnalysisCompleted",
     "ExecutionPlanFinalized",
     "UserSuggestionRequested",
     "UserClarificationRequested",
