@@ -81,16 +81,7 @@ def _parse_task_feature(content: str) -> TaskFeature | None:
         return None
 
 
-class Planner(AggregateRoot):
-    """Aggregate root for task planning.
-
-    Responsibilities:
-    - Analyze task to extract TaskFeature
-    - Build an initial Plan via LLM
-    - Renew the whole plan (on quality-check failure or plan-review failure)
-    - Revise a single step (on stage-eval failure or user guidance)
-    """
-
+class Planner:
     def __init__(
         self,
         task_id: TaskId,
