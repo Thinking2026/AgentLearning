@@ -17,21 +17,6 @@ from utils.concurrency.thread_event import ThreadEvent
 
 
 class PipelineThread(threading.Thread):
-    """Container for Pipeline execution (TD §应用层 — PipelineThread).
-
-    Responsibilities:
-    1. Manage the execution thread lifecycle.
-    2. Own the inbound task queue; expose submit() so UserThread can post tasks
-       without holding a direct queue reference.
-    3. For each incoming task: build a Pipeline, run it in a sub-thread, and
-       forward subsequent user messages (cancel / guidance / clarification /
-       resume) to PipelineDriver while the pipeline is running.
-
-    Interaction flow:
-      UserThread.submit(msg) → _task_queue → PipelineThread → PipelineDriver → Pipeline
-      Pipeline → send_to_user callback → AgentToUserQueue → UserThread
-    """
-
     def __init__(
         self,
         agent_to_user_queue: AgentToUserQueue,
