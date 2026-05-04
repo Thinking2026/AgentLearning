@@ -5,17 +5,15 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from agent.application.driver import PipelineDriver
 from schemas.ids import PlanId, PlanStepId, TaskId
 from schemas.task import (
     Plan,
-    PlanChangeReason,
     PlanStep,
-    PlanVersion,
     Task,
 )
 from schemas.types import LLMMessage, LLMRequest
 from agent.models.evaluate.quality_evaluator import QualityEvaluator
-from agent.events import TaskPlanFinalized, TaskPlanRevised, TaskPlanRenewal
 from agent.events.events import UserClarificationRequested
 from utils.log.log import Logger, zap
 
@@ -106,6 +104,7 @@ class Planner:
         task: Task,
         llm_api: LLMGateway,
         evaluator: QualityEvaluator,
+        driver: PipelineDriver,
     ) -> Plan:
         """Generate a plan for *task*, evaluate it, and retry on failure.
 
@@ -124,7 +123,7 @@ class Planner:
 
             if report.need_user_clarification:
                 # Publish clarification event then mock the user's reply.
-                UserClarificationRequested(
+                request = UserClarificationRequested(
                     task_id=task.id,
                     order=str(attempt),
                     question=report.clarification_question,
@@ -134,11 +133,9 @@ class Planner:
                     zap.any("task_id", task.id),
                     zap.any("question", report.clarification_question),
                 )
-                # Mock: pretend the user replied with a generic clarification.
-                mock_clarification = (
-                    f"[Mock user clarification for: {report.clarification_question}]"
-                )
-                extra_context = f"\nUser clarification: {mock_clarification}"
+                driver.publish_event(request)
+                clarification = driver.loop_user_messages().content
+                extra_context = f"\nUser clarification: {clarification}"
                 continue
 
             if report.passed:

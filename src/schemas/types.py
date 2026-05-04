@@ -4,44 +4,12 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from schemas.errors import AgentError
+from schemas.ids import CheckpointId, TaskId
 
 #本文件引入的类型只能依赖内置类型或者文件中已经引入的类型，不能依赖其他文件中定义的类型，否则会导致循环依赖问题
 
-UIRole = Literal["user", "assistant"]
 LLMRole = Literal["user", "assistant", "tool"]
 ALL_ROLES = ("system", "user", "assistant", "tool")
-
-
-@dataclass(slots=True)
-class UIMessage:
-    """Message for UI/user interaction between user_thread and agent_thread."""
-    role: UIRole
-    content: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class LLMMessage:
-    """Message conforming to LLM API spec, used in conversation history and LLM calls."""
-    role: LLMRole
-    content: str
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class ToolCall:
-    name: str
-    arguments: dict[str, Any]
-    llm_raw_tool_call_id: str | None = None
-
-
-@dataclass(slots=True)
-class ToolResult:
-    output: str
-    llm_raw_tool_call_id: str | None = None
-    success: bool = True
-    error: AgentError | None = None
-
 
 @dataclass(slots=True)
 class LLMRequest:
@@ -51,13 +19,11 @@ class LLMRequest:
     max_tokens: int = 1024
     temperature: float = 0.0
 
-
 @dataclass(slots=True)
 class LLMUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-
 
 @dataclass(slots=True)
 class LLMResponse:
@@ -66,6 +32,26 @@ class LLMResponse:
     finish_reason: str = "stop"
     usage: LLMUsage | None = None
     raw_response: dict[str, Any] = field(default_factory=dict)
+
+@dataclass(slots=True)
+class LLMMessage:
+    """Message conforming to LLM API spec, used in conversation history and LLM calls."""
+    role: LLMRole
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+@dataclass(slots=True)
+class ToolCall:
+    name: str
+    arguments: dict[str, Any]
+    llm_raw_tool_call_id: str | None = None
+
+@dataclass(slots=True)
+class ToolResult:
+    output: str
+    llm_raw_tool_call_id: str | None = None
+    success: bool = True
+    error: AgentError | None = None
 
 
 @dataclass(slots=True)
@@ -98,7 +84,7 @@ class KeyValueSetRequest:
 
 @dataclass(slots=True)
 class AgentExecutionResult:
-    user_messages: list[UIMessage] = field(default_factory=list)
+    user_messages: list[ClientMessage] = field(default_factory=list)
     error: AgentError | None = None
     task_completed: bool = False
 
@@ -117,4 +103,31 @@ class BudgetResult:
     available_tokens: int       # total_budget - reserved_tokens
     role_budgets: dict[str, RoleBudget] = field(default_factory=dict)
 
+class UserMsgType(str, Enum):
+    """Canonical types for messages arriving from the user side."""
+    NEW_TASK           = "NEW_TASK"         # Submit a new task
+    CANCEL             = "CANCEL"           # Cancel the running task
+    GUIDANCE           = "GUIDANCE"         # Mid-task steering / correction
+    CLARIFICATION      = "CLARIFICATION"    # Reply to a clarification request
+    RESUME             = "RESUME"           # Resume after a B-class pause
+    CHECKPOINT_RUN     = "CHECKPOINT_RUN"   # Resume from latest checkpoint
+    PAUSE_FROM_AGENT   = "PAUSE"            # Pause the running task
+    PROGESS_FROM_AGENT = "PROGRESS"         # Progress update from agent
 
+
+@dataclass(frozen=True)
+class UserMessage:
+    """Normalised command produced by PipelineDriver from a raw UIMessage."""
+    msg_type: UserMsgType
+    task_id: TaskId | None
+    user_id: int
+    checkpoint_id: CheckpointId | None
+    content: str
+
+class UserCommandType(str, Enum):
+    NEW_TASK        = "NEW_TASK"         # Submit a new task
+    CANCEL          = "CANCEL"           # Cancel the running task
+    GUIDANCE        = "GUIDANCE"         # Mid-task steering / correction
+    CLARIFICATION   = "CLARIFICATION"    # Reply to a clarification request
+    RESUME          = "RESUME"           # Resume after a B-class pause
+    CHECKPOINT_RUN  = "CHECKPOINT_RUN"   # Resume from latest checkpoint

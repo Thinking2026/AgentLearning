@@ -5,23 +5,23 @@ from collections import deque
 from threading import Condition, RLock
 from typing import Optional
 
-from schemas import UIMessage
+from schemas.types import UserMessage
 
 class _BaseMessageQueue:
     def __init__(self) -> None:
-        self._queue: deque[UIMessage] = deque()
+        self._queue: deque[UserMessage] = deque()
         self._lock = RLock()
         self._condition = Condition(self._lock)
         self._closed = False
 
-    def send(self, message: UIMessage) -> None:
+    def send(self, message: UserMessage) -> None:
         with self._condition:
             if self._closed:
                 return
             self._queue.append(message)
             self._condition.notify_all()
 
-    def get(self, timeout: float | None = None) -> Optional[UIMessage]:
+    def get(self, timeout: float | None = None) -> Optional[UserMessage]:
         return self._safe_get(timeout=timeout)
 
     def close(self) -> None:
@@ -39,7 +39,7 @@ class _BaseMessageQueue:
         with self._lock:
             return self._closed
 
-    def _safe_get(self, timeout: float | None = None) -> Optional[UIMessage]:
+    def _safe_get(self, timeout: float | None = None) -> Optional[UserMessage]:
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be greater than 0")
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -57,17 +57,24 @@ class _BaseMessageQueue:
             return self._queue.popleft()
 
 
-class UserToAgentQueue(_BaseMessageQueue):
-    def send_user_message(self, message: UIMessage) -> None:
+class TaskQueue(_BaseMessageQueue):
+    def send_message(self, message: UserMessage) -> None:
         self.send(message)
 
-    def get_user_message(self, timeout: float | None = None) -> Optional[UIMessage]:
+    def get_message(self, timeout: float | None = None) -> Optional[UserMessage]:
+        return self.get(timeout=timeout)
+
+class AgentMessageQueue(_BaseMessageQueue):
+    def send_message(self, message: UserMessage) -> None:
+        self.send(message)
+
+    def get_message(self, timeout: float | None = None) -> Optional[UserMessage]:
         return self.get(timeout=timeout)
 
 
-class AgentToUserQueue(_BaseMessageQueue):
-    def send_agent_message(self, message: UIMessage) -> None:
+class UserMessageQueue(_BaseMessageQueue):
+    def send_message(self, message: UserMessage) -> None:
         self.send(message)
 
-    def get_agent_message(self, timeout: float | None = None) -> Optional[UIMessage]:
+    def get_message(self, timeout: float | None = None) -> Optional[UserMessage]:
         return self.get(timeout=timeout)

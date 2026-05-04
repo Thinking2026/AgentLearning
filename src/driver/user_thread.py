@@ -9,7 +9,7 @@ from typing import Callable
 
 from config import ConfigValueReader, JsonConfig
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
-from schemas import UIMessage
+from schemas import ClientMessage
 from utils.log.log import Logger, zap
 from utils.env_util.runtime_env import (
     get_project_root,
@@ -193,17 +193,17 @@ class UserThread(threading.Thread):
                 zap.any("input", stripped),
             )
             return True
-        message = UIMessage(role="user", content=stripped)
+        message = ClientMessage(role="user", content=stripped)
         self._user_to_agent_queue.send_user_message(message)
         return False
 
-    def _format_agent_message(self, message: UIMessage) -> str:
+    def _format_agent_message(self, message: ClientMessage) -> str:
         message_source = message.metadata.get("source")
         if message_source == "tool":
             return self._format_tool_message(message)
         return f"Assistant: {message.content}"
 
-    def _format_tool_message(self, message: UIMessage) -> str:
+    def _format_tool_message(self, message: ClientMessage) -> str:
         tool_name = str(message.metadata.get("tool_name", "unknown"))
         parameters = message.metadata.get("tool_arguments", {})
         result = message.metadata.get("tool_result", message.content)
@@ -223,7 +223,7 @@ class UserThread(threading.Thread):
             return content
         return " ".join(words[:word_limit]) + " ..."
 
-    def _sync_session_status_from_agent_message(self, message: UIMessage) -> None:
+    def _sync_session_status_from_agent_message(self, message: ClientMessage) -> None:
         if message.metadata.get("task_completed"):
             self._task_completed = True
 
@@ -231,7 +231,7 @@ class UserThread(threading.Thread):
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
 
     @staticmethod
-    def _is_control_message(message: UIMessage) -> bool:
+    def _is_control_message(message: ClientMessage) -> bool:
         return bool(message.metadata.get("control")) and not message.content.strip()
 
     def _is_any_queue_closed(self) -> bool:

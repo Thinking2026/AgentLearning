@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from schemas.types import UIMessage
+from schemas.types import ClientMessage
 from utils.concurrency.message_queue import (
     UserToAgentQueue,
     AgentToUserQueue,
@@ -13,8 +13,8 @@ from utils.concurrency.message_queue import (
 )
 
 
-def make_msg(content: str = "hello") -> UIMessage:
-    return UIMessage(role="user", content=content)
+def make_msg(content: str = "hello") -> ClientMessage:
+    return ClientMessage(role="user", content=content)
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ def test_fifo_order():
 
 def test_agent_to_user_queue():
     q = AgentToUserQueue()
-    msg = UIMessage(role="assistant", content="response")
+    msg = ClientMessage(role="assistant", content="response")
     q.send_agent_message(msg)
     received = q.get_agent_message()
     assert received is msg

@@ -4,10 +4,11 @@ import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
 
+from agent.application.driver import PipelineDriver
 from schemas.ids import TaskId, UserId
 from schemas.errors import AgentError
 from schemas.task import PlanUpdateTrigger, Task, TaskResult
-from schemas.types import UIMessage
+from schemas.types import ClientMessage
 
 if TYPE_CHECKING:
     from agent.models.checkpoint.checkpoint_processor import CheckpointProcessor
@@ -34,6 +35,7 @@ class Pipeline:
     def __init__(
         self,
         planner: Planner,
+        pipeline_driver: PipelineDriver,
         stage_executor: StageExecutor,
         checkpoint_processor: CheckpointProcessor,
         knowledge_manager: KnowledgeManager,
@@ -44,7 +46,9 @@ class Pipeline:
         max_stage_retries: int = 2,
         max_quality_retries: int = 2,
     ) -> None:
+
         self._planner = planner
+        self._pipeline_driver = pipeline_driver
         self._stage_executor = stage_executor
         self._checkpoint_processor = checkpoint_processor
         self._knowledge_manager = knowledge_manager
@@ -67,13 +71,13 @@ class Pipeline:
         self._clarification_text: str = ""
 
         # Optional callback to push progress messages to the user
-        self._send_to_user: Callable[[UIMessage], None] | None = None
+        self._send_to_user: Callable[[ClientMessage], None] | None = None
 
     # ------------------------------------------------------------------
     # Public control API (thread-safe, called from PipelineThread)
     # ------------------------------------------------------------------
 
-    def set_send_to_user(self, callback: Callable[[UIMessage], None]) -> None:
+    def set_send_to_user(self, callback: Callable[[ClientMessage], None]) -> None:
         self._send_to_user = callback
         self._stage_executor.set_send_to_user(callback)
 
@@ -101,7 +105,6 @@ class Pipeline:
 
     def run(
         self,
-        task_id: TaskId,
         task_description: str,
     ) -> TaskResult:
         """Execute a task end-to-end and return the final TaskResult."""
@@ -126,7 +129,7 @@ class Pipeline:
         except Exception as exc:
             return self._failed_result(task_id, f"Unexpected error: {exc}")
 
-    def run_from_checkpoint(self, task_id: TaskId, task_description: str) -> TaskResult:
+    def continue_from_checkpoint(self, task_id: TaskId, cpt_id: CheckpointId) -> TaskResult:
         """Restore from the latest checkpoint and resume execution."""
         checkpoint = self._checkpoint_processor.restore_latest()
         if checkpoint is None:
@@ -304,7 +307,7 @@ class Pipeline:
 
     def _notify_user(self, message: str) -> None:
         if self._send_to_user and message:
-            self._send_to_user(UIMessage(
+            self._send_to_user(ClientMessage(
                 role="assistant",
                 content=message,
                 metadata={"source": "progress"},

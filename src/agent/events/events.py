@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from schemas.types import UserCommandType
+
 
 @dataclass(frozen=True)
 class DomainEvent:
@@ -66,6 +68,10 @@ class TaskCancelled(DomainEvent):
     task_id: str = ""
     reason: str = ""
 
+@dataclass(frozen=True)
+class ExecutionProgressProvided(DomainEvent):
+    task_id: str = ""
+
 
 # ── Stage 生命周期 ─────────────────────────────────────────────────────────────
 
@@ -112,7 +118,12 @@ class ToolCallFailed(DomainEvent):
     order: str = ""
     tool_name: str = ""
     error: str = ""
-
+    
+@dataclass(frozen=True)
+class UserCommand(DomainEvent):
+    type: UserCommandType
+    task_id: str = ""
+    user_id: int
 
 __all__ = [
     "DomainEvent",

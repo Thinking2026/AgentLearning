@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 from schemas.ids import PlanStepId, StageId, TaskId
-from schemas.types import LLMMessage, ToolCall, ToolResult, UIMessage
+from schemas.types import LLMMessage, ToolCall, ToolResult, ClientMessage
 from schemas.errors import (
     AgentError,
     LLMError,
@@ -110,13 +110,13 @@ class StageExecutor:
         self._clarification_text: str = ""
 
         # Optional callback to push UIMessages to the user
-        self._send_to_user: Callable[[UIMessage], None] | None = None
+        self._send_to_user: Callable[[ClientMessage], None] | None = None
 
     # ------------------------------------------------------------------
     # Public control API (called by Pipeline from its thread)
     # ------------------------------------------------------------------
 
-    def set_send_to_user(self, callback: Callable[[UIMessage], None]) -> None:
+    def set_send_to_user(self, callback: Callable[[ClientMessage], None]) -> None:
         self._send_to_user = callback
 
     def interrupt(self, guidance: str) -> None:
@@ -313,7 +313,7 @@ class StageExecutor:
                     )
                 # Notify user and wait for clarification
                 if self._send_to_user:
-                    self._send_to_user(UIMessage(
+                    self._send_to_user(ClientMessage(
                         role="assistant",
                         content=question,
                         metadata={"source": "clarification_request"},

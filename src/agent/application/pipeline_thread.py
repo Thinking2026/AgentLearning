@@ -9,17 +9,19 @@ from agent.factory.agent_factory import AgentFactory
 from agent.application.driver import PipelineDriver
 from schemas.ids import TaskId
 from schemas.errors import AgentError, build_error, AGENT_THREAD_ERROR, LLM_ALL_PROVIDERS_FAILED
-from schemas.types import UIMessage
+from schemas.types import UserMessage
 from infra.observability.tracing import Span, Tracer
 from utils.log.log import Logger, zap
-from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.concurrency.message_queue import UserMessageQueue, TaskQueue, AgentMessageQueue
 from utils.concurrency.thread_event import ThreadEvent
 
 
 class PipelineThread(threading.Thread):
     def __init__(
         self,
-        agent_to_user_queue: AgentToUserQueue,
+        agent_msg_queue: AgentMessageQueue,
+        task_queue: TaskQueue,
+        user_msg_queue: UserMessageQueue,
         config: JsonConfig,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
@@ -27,8 +29,9 @@ class PipelineThread(threading.Thread):
     ) -> None:
         super().__init__(name="PipelineThread", daemon=False)
         # PipelineThread owns its inbound queue
-        self._task_queue = UserToAgentQueue()
-        self._agent_to_user_queue = agent_to_user_queue
+        self._task_queue = task_queue
+        self._agent_msg_queue = agent_msg_queue
+        self._user_msg_queue = user_msg_queue
         self._config = config
         self._config_value_reader = ConfigValueReader(config)
         self._stop_event = stop_event
@@ -46,14 +49,12 @@ class PipelineThread(threading.Thread):
             self._logger.error("PipelineThread init failed", zap.any("error", str(exc)))
             raise
 
-    # ------------------------------------------------------------------
-    # Public API for UserThread
-    # ------------------------------------------------------------------
+    def loop_user_message(self, timeout: float) -> UserMessage:
+        return self._agent_msg_queue.get(timeout=timeout)
 
-    def submit(self, message: UIMessage) -> None:
-        """Post a message (new task or in-flight signal) to the pipeline queue."""
-        self._task_queue.send_user_message(message)
-
+    def publish_event(self, msg: UserMessage) -> None:
+        self._user_msg_queue.send(msg)
+    
     # ------------------------------------------------------------------
     # Thread entry point
     # ------------------------------------------------------------------
@@ -126,13 +127,13 @@ class PipelineThread(threading.Thread):
                     result = result_holder[0]
                     if result is not None:
                         if result.succeeded and result.result:
-                            self._agent_to_user_queue.send_agent_message(UIMessage(
+                            self._agent_to_user_queue.send_agent_message(ClientMessage(
                                 role="assistant",
                                 content=result.result,
                                 metadata={"source": "task_result"},
                             ))
                         elif result.error_reason:
-                            self._agent_to_user_queue.send_agent_message(UIMessage(
+                            self._agent_to_user_queue.send_agent_message(ClientMessage(
                                 role="assistant",
                                 content=result.error_reason,
                                 metadata={"source": "error"},
@@ -173,7 +174,7 @@ class PipelineThread(threading.Thread):
             max_content_length=self._tracing_max_content_length,
         )
 
-    def _start_session_trace(self, user_message: UIMessage) -> None:
+    def _start_session_trace(self, user_message: ClientMessage) -> None:
         if self._tracer is None or self._session_span is not None:
             return
         self._session_span = self._tracer.start_trace(
@@ -188,7 +189,7 @@ class PipelineThread(threading.Thread):
         self._session_span.finish(status=status, error=error)
         self._session_span = None
 
-    def _record_user_input_trace(self, user_message: UIMessage) -> None:
+    def _record_user_input_trace(self, user_message: ClientMessage) -> None:
         if self._tracer is None:
             return
         with self._tracer.start_span(
@@ -203,7 +204,7 @@ class PipelineThread(threading.Thread):
     # ------------------------------------------------------------------
 
     def _send_task_completed(self) -> None:
-        self._agent_to_user_queue.send_agent_message(UIMessage(
+        self._agent_to_user_queue.send_agent_message(ClientMessage(
             role="assistant",
             content="",
             metadata={"control": True, "task_completed": True},

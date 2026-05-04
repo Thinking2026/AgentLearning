@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from schemas.types import (
-    UIMessage,
+    ClientMessage,
     LLMMessage,
     ToolCall,
     ToolResult,
@@ -33,14 +33,14 @@ from schemas.message_convert import ui_to_llm, llm_to_ui
 # ---------------------------------------------------------------------------
 
 def test_ui_message_defaults():
-    msg = UIMessage(role="user", content="hello")
+    msg = ClientMessage(role="user", content="hello")
     assert msg.role == "user"
     assert msg.content == "hello"
     assert msg.metadata == {}
 
 
 def test_ui_message_with_metadata():
-    msg = UIMessage(role="assistant", content="hi", metadata={"key": "val"})
+    msg = ClientMessage(role="assistant", content="hi", metadata={"key": "val"})
     assert msg.metadata["key"] == "val"
 
 
@@ -229,14 +229,14 @@ def test_provider_failure():
 # ---------------------------------------------------------------------------
 
 def test_ui_to_llm_user():
-    ui = UIMessage(role="user", content="hello")
+    ui = ClientMessage(role="user", content="hello")
     llm = ui_to_llm(ui)
     assert llm.role == "user"
     assert llm.content == "hello"
 
 
 def test_ui_to_llm_assistant():
-    ui = UIMessage(role="assistant", content="hi")
+    ui = ClientMessage(role="assistant", content="hi")
     llm = ui_to_llm(ui)
     assert llm.role == "assistant"
 

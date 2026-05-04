@@ -65,7 +65,7 @@ from .types import (
     SQLQueryRequest,
     ToolCall,
     ToolResult,
-    UIMessage,
+    ClientMessage,
     VectorSearchRequest,
     RoleBudget,
     BudgetResult,
