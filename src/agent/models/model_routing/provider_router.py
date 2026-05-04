@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from schemas.task import ProviderCapabilities, RoutingDecision, TaskFeature
+from schemas.task import ProviderCapabilities, ModelRoutingDecision, TaskFeature
 from schemas import LLM_CONFIG_ERROR, build_error
 
 # Maps LLM-output complexity labels to TD cognitive-complexity tiers.
@@ -147,7 +147,7 @@ class ModelSelector:
         task_feat: TaskFeature | None = None,
         enable_fallback: bool | None = None,
         excluded_providers: set[str] | None = None,
-    ) -> RoutingDecision:
+    ) -> ModelRoutingDecision:
         """Return primary provider name and fallback chain."""
         use_fallback = enable_fallback if enable_fallback is not None else self._enable_fallback
         excluded = excluded_providers or set()
@@ -161,5 +161,5 @@ class ModelSelector:
 
         primary = ordered[0]
         fallbacks = ordered[1:] if use_fallback else []
-        return RoutingDecision(primary=primary, fallbacks=fallbacks)
+        return ModelRoutingDecision(primary=primary, fallbacks=fallbacks)
 

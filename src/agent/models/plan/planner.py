@@ -1,46 +1,115 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from schemas.domain import AggregateRoot
 from schemas.ids import PlanId, PlanStepId, TaskId
-from schemas.task import Plan, PlanStep, PlanUpdateTrigger, PlanVersion, TaskFeature
+from schemas.task import (
+    Plan,
+    PlanChangeReason,
+    PlanStep,
+    PlanUpdateTrigger,
+    PlanVersion,
+    TaskFeature,
+)
 from schemas.types import LLMMessage, LLMRequest
 
-from agent.events import TaskPlanFinalized, TaskPlanRenewal, TaskPlanRevised
+from agent.events import TaskPlanFinalized, TaskPlanRevised, TaskPlanRenewal
 
 if TYPE_CHECKING:
-    from llm.llm_gateway import LLMGateway
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader
+    from llm.llm_gateway import LLMGateway
 
 
-# ---------------------------------------------------------------------------
-# Aggregate root
-# ---------------------------------------------------------------------------
+def _new_plan_id() -> PlanId:
+    return PlanId(f"plan_{uuid4().hex}")
+
+
+def _new_step_id() -> PlanStepId:
+    return PlanStepId(f"step_{uuid4().hex}")
+
+
+def _parse_plan_steps(content: str) -> list[PlanStep]:
+    """Parse LLM JSON response into PlanStep list."""
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
+        inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
+        content = "\n".join(inner)
+    try:
+        data = json.loads(content)
+        steps_data = data if isinstance(data, list) else data.get("steps", [])
+        steps = []
+        for i, s in enumerate(steps_data):
+            steps.append(PlanStep(
+                id=_new_step_id(),
+                order=i,
+                goal=str(s.get("goal", "")),
+                description=str(s.get("description", "")),
+                key_results=list(s.get("key_results", [])),
+            ))
+        return steps
+    except Exception:
+        return []
+
+
+def _parse_task_feature(content: str) -> TaskFeature | None:
+    """Parse LLM JSON response into TaskFeature."""
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
+        inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
+        content = "\n".join(inner)
+    try:
+        data = json.loads(content)
+        return TaskFeature(
+            task_type=str(data.get("task_type", "general")),
+            complexity=str(data.get("complexity", "medium")),
+            required_tools=list(data.get("required_tools", [])),
+            estimated_steps=int(data.get("estimated_steps", 1)),
+            notes=str(data.get("notes", "")),
+            preferred_scenarios=list(data.get("preferred_scenarios", [])),
+            required_strengths=list(data.get("required_strengths", [])),
+            min_context_size=int(data.get("min_context_size", 0)),
+            prefer_low_cost=bool(data.get("prefer_low_cost", False)),
+            prefer_low_latency=bool(data.get("prefer_low_latency", False)),
+        )
+    except Exception:
+        return None
+
 
 class Planner(AggregateRoot):
-    """Aggregate root responsible for task analysis and execution plan management."""
+    """Aggregate root for task planning.
+
+    Responsibilities:
+    - Analyze task to extract TaskFeature
+    - Build an initial Plan via LLM
+    - Renew the whole plan (on quality-check failure or plan-review failure)
+    - Revise a single step (on stage-eval failure or user guidance)
+    """
 
     def __init__(
         self,
-        id: PlanId,
         task_id: TaskId,
         task_description: str,
         llm_gateway: LLMGateway,
-        knowledge_loader: KnowledgeLoader | None,
+        knowledge_loader: KnowledgeLoader | None = None,
     ) -> None:
         super().__init__()
-        self.id = id
         self.task_id = task_id
         self.task_description = task_description
-        self.task_feat: TaskFeature | None = None
-        self.steps: list[PlanStep] = []
-        self.version: int = 0
-        self.history_plan: list[PlanVersion] = []
         self._llm_gateway = llm_gateway
         self._knowledge_loader = knowledge_loader
+
+        self.id: PlanId = _new_plan_id()
+        self.version: int = 0
+        self.task_feat: TaskFeature | None = None
+
+        self._current_plan: Plan | None = None
+        self._history: list[PlanVersion] = []
 
     # ------------------------------------------------------------------
     # Factory
@@ -54,10 +123,7 @@ class Planner(AggregateRoot):
         llm_gateway: LLMGateway,
         knowledge_loader: KnowledgeLoader | None = None,
     ) -> Planner:
-        """Create an empty Planner with injected dependencies."""
-        plan_id = PlanId(str(uuid4()))
         return cls(
-            id=plan_id,
             task_id=task_id,
             task_description=task_description,
             llm_gateway=llm_gateway,
@@ -65,273 +131,249 @@ class Planner(AggregateRoot):
         )
 
     # ------------------------------------------------------------------
-    # Public methods
+    # Properties consumed by Pipeline / QualityEvaluator
     # ------------------------------------------------------------------
 
-    def get_plan(self) -> Plan:
-        """Return the current plan as a Plan object."""
-        return Plan(id=self.id, task_id=self.task_id, step_list=list(self.steps))
+    @property
+    def steps(self) -> list[PlanStep]:
+        if self._current_plan is None:
+            return []
+        return list(self._current_plan.step_list)
 
-    def analyze(self) -> "Planner":
-        """Call LLM to analyze the task and fill self.analysis."""
+    # ------------------------------------------------------------------
+    # Analysis
+    # ------------------------------------------------------------------
+
+    def analyze(self) -> TaskFeature | None:
+        """Extract task features via LLM and cache as self.task_feat."""
+        knowledge_context = self._build_knowledge_context()
         prompt = (
-            f"Analyze the following task and return a JSON object with these fields:\n"
-            f"- task_type: string (e.g. 'data_analysis', 'code_generation', 'research')\n"
+            f"Analyze the following task and return a JSON object describing its features.\n"
+            f"Task: {self.task_description}\n"
+            f"{knowledge_context}"
+            f"\nReturn a JSON object with these fields:\n"
+            f"- task_type: string (e.g. 'data_analysis', 'code_generation', 'question_answering')\n"
             f"- complexity: string ('simple', 'medium', or 'complex')\n"
-            f"- required_tools: list of tool name strings\n"
-            f"- estimated_steps: integer\n"
-            f"- notes: string with constraints, risks, or prerequisites\n"
-            f"- preferred_scenarios: list of scenario strings that best match this task "
-            f"(choose from: code_generation, math, reasoning, analysis, research, writing, "
-            f"general, long_document, summarization, document_qa, chinese_language, multimodal, tool_use, data_analysis)\n"
-            f"- required_strengths: list of capability strings this task demands "
-            f"(choose from: code, math, long_context, tool_use, instruction_following, "
-            f"general_purpose, cost_efficiency, chinese_language, document_understanding, ultra_long_context)\n"
-            f"- min_context_size: integer — minimum context window (tokens) needed; 0 if unknown\n"
-            f"- prefer_low_cost: boolean — true if cost matters more than quality\n"
-            f"- prefer_low_latency: boolean — true if response speed is critical\n\n"
-            f"Task: {self.task_description}\n\n"
-            f"Respond with only valid JSON."
+            f"- required_tools: list of tool names likely needed\n"
+            f"- estimated_steps: integer number of steps needed\n"
+            f"- notes: string with any constraints or risks\n"
+            f"- preferred_scenarios: list of scenario keywords\n"
+            f"- required_strengths: list of capability keywords\n"
+            f"- min_context_size: integer (0 if no special requirement)\n"
+            f"- prefer_low_cost: boolean\n"
+            f"- prefer_low_latency: boolean\n"
+            f"\nRespond with only valid JSON."
         )
         response = self._llm_gateway.generate(
             LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
         )
-        self.task_feat = self._parse_analysis(response.assistant_message.content)
-        return self
+        self.task_feat = _parse_task_feature(response.assistant_message.content)
+        return self.task_feat
 
-    def _build_plan_impl(self, knowledge_hint: str = "") -> None:
-        """Call LLM to create execution steps, fill self.steps, version=1."""
-        knowledge_context = ""
-        if self._knowledge_loader is not None:
-            entries = self._knowledge_loader.load(self.task_description)
-            if entries:
-                snippets = "\n".join(f"- {e.content}" for e in entries)
-                knowledge_context = f"\nRelevant prior knowledge:\n{snippets}\n"
+    # ------------------------------------------------------------------
+    # Plan building
+    # ------------------------------------------------------------------
 
-        if knowledge_hint:
-            knowledge_context += f"\nAdditional hint: {knowledge_hint}\n"
-
-        analysis_context = ""
-        if self.task_feat is not None:
-            analysis_context = (
-                f"\nTask analysis: type={self.task_feat.task_type}, "
-                f"complexity={self.task_feat.complexity}, "
-                f"estimated_steps={self.task_feat.estimated_steps}\n"
-            )
+    def _build_plan_impl(self, feedback: str = "", clarification: str = "") -> Plan:
+        """Call LLM to generate a plan and store it as the current plan."""
+        knowledge_context = self._build_knowledge_context()
+        feedback_section = f"\nPrevious plan feedback to address:\n{feedback}\n" if feedback else ""
+        clarification_section = f"\nUser clarification:\n{clarification}\n" if clarification else ""
 
         prompt = (
-            f"Create an execution plan for the following task.\n"
+            f"Create a step-by-step execution plan for the following task.\n"
             f"Task: {self.task_description}\n"
-            f"{analysis_context}"
-            f"{knowledge_context}\n"
-            f"Return a JSON array of steps. Each step must have:\n"
-            f"- goal: string (what this step achieves, used as evaluation criterion)\n"
-            f"- description: string (how to execute this step)\n\n"
-            f"Respond with only a valid JSON array."
+            f"{knowledge_context}"
+            f"{feedback_section}"
+            f"{clarification_section}"
+            f"\nReturn a JSON array of step objects. Each step must have:\n"
+            f"- goal: string (what this step achieves)\n"
+            f"- description: string (how to accomplish it)\n"
+            f"- key_results: list of strings (concrete outputs to produce)\n"
+            f"\nRespond with only valid JSON."
         )
         response = self._llm_gateway.generate(
             LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
         )
-        self.steps = self._parse_steps(response.assistant_message.content)
-        self.version = 1
-        self._record(
-            TaskPlanFinalized(
-                event_type="",
-                aggregate_id=self.id,
-                task_id=self.task_id,
-                plan_id=self.id,
-            )
-        )
+        steps = _parse_plan_steps(response.assistant_message.content)
+        if not steps:
+            steps = [PlanStep(
+                id=_new_step_id(),
+                order=0,
+                goal="Complete the task",
+                description=self.task_description,
+                key_results=["Task completed"],
+            )]
 
-    def renew(self, trigger: PlanUpdateTrigger, feedback: str = "", clarification: str = "") -> None:
-        """Rebuild all steps from scratch; version+1."""
-        if self.steps:
-            self.history_plan.append(PlanVersion(
-                plan=self.get_plan(),
-                version=self.version,
-                change_reason=trigger.value,
-            ))
-        feedback_context = f"\nFeedback: {feedback}\n" if feedback else ""
-        clarification_context = f"\nUser clarification: {clarification}\n" if clarification else ""
-        prompt = (
-            f"The current execution plan needs to be completely rebuilt.\n"
-            f"Task: {self.task_description}\n"
-            f"Trigger: {trigger.value}\n"
-            f"{feedback_context}"
-            f"{clarification_context}\n"
-            f"Return a JSON array of steps. Each step must have:\n"
-            f"- goal: string\n"
-            f"- description: string\n\n"
-            f"Respond with only a valid JSON array."
+        plan = Plan(
+            id=self.id,
+            task_id=self.task_id,
+            step_list=steps,
+            created_at=datetime.now(timezone.utc),
         )
-        response = self._llm_gateway.generate(
-            LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
-        )
-        self.steps = self._parse_steps(response.assistant_message.content)
+        self._current_plan = plan
         self.version += 1
-        self._record(
-            TaskPlanRenewal(
-                event_type="",
-                aggregate_id=self.id,
-                task_id=self.task_id,
-                plan_id=self.id,
-                trigger=trigger.value,
-            )
-        )
+        self._record(TaskPlanFinalized(
+            event_type="",
+            aggregate_id=str(self.task_id),
+            task_id=self.task_id,
+            plan_id=self.id,
+        ))
+        return plan
+
+    # ------------------------------------------------------------------
+    # Public plan operations
+    # ------------------------------------------------------------------
+
+    def make_plan(self) -> Plan:
+        """Build the initial plan."""
+        return self._build_plan_impl()
+
+    def renew(
+        self,
+        trigger: PlanUpdateTrigger,
+        feedback: str = "",
+        clarification: str = "",
+    ) -> Plan:
+        """Rebuild the entire plan, archiving the current one as history."""
+        if self._current_plan is not None:
+            reason = _trigger_to_change_reason(trigger)
+            self._history.append(PlanVersion(
+                plan=self._current_plan,
+                version=self.version,
+                change_reason=reason,
+            ))
+        self.id = _new_plan_id()
+        self._record(TaskPlanRenewal(
+            event_type="",
+            aggregate_id=str(self.task_id),
+            task_id=self.task_id,
+            plan_id=self.id,
+            trigger=trigger.value,
+        ))
+        return self._build_plan_impl(feedback=feedback, clarification=clarification)
 
     def revise(
         self,
         step_id: PlanStepId,
         trigger: PlanUpdateTrigger,
         feedback: str = "",
-    ) -> None:
-        """Update a single step's goal/description; version+1."""
-        target = self.get_step(step_id)
-        if target is None:
-            return
+    ) -> PlanStep:
+        """Revise a single step in the current plan via LLM."""
+        step = self.get_step(step_id)
+        if step is None or self._current_plan is None:
+            raise ValueError(f"Step {step_id} not found in current plan")
 
-        self.history_plan.append(PlanVersion(
-            plan=self.get_plan(),
-            version=self.version,
-            change_reason=trigger.value,
-        ))
-        feedback_context = f"\nFeedback: {feedback}\n" if feedback else ""
         prompt = (
-            f"Revise the following execution step.\n"
+            f"Revise the following execution step based on the feedback.\n"
             f"Task: {self.task_description}\n"
-            f"Trigger: {trigger.value}\n"
-            f"Current step goal: {target.goal}\n"
-            f"Current step description: {target.description}\n"
-            f"{feedback_context}\n"
-            f"Return a JSON object with:\n"
+            f"Current step goal: {step.goal}\n"
+            f"Current step description: {step.description}\n"
+            f"Feedback: {feedback}\n"
+            f"\nReturn a JSON object with:\n"
             f"- goal: string\n"
-            f"- description: string\n\n"
-            f"Respond with only valid JSON."
+            f"- description: string\n"
+            f"- key_results: list of strings\n"
+            f"\nRespond with only valid JSON."
         )
         response = self._llm_gateway.generate(
             LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
         )
-        updated = self._parse_single_step(
-            response.assistant_message.content,
+        new_step = _parse_revised_step(response.assistant_message.content, step)
+        self._replace_step(step_id, new_step)
+        self._record(TaskPlanRevised(
+            event_type="",
+            aggregate_id=str(self.task_id),
+            task_id=self.task_id,
+            plan_id=self.id,
             step_id=step_id,
-            order=target.order,
-        )
-        self.steps = [updated if s.id == step_id else s for s in self.steps]
-        self.version += 1
-        self._record(
-            TaskPlanRevised(
-                event_type="",
-                aggregate_id=self.id,
-                task_id=self.task_id,
-                plan_id=self.id,
-                step_id=step_id,
-                trigger=trigger.value,
-            )
-        )
+            trigger=trigger.value,
+        ))
+        return new_step
+
+    # ------------------------------------------------------------------
+    # Step accessors
+    # ------------------------------------------------------------------
 
     def get_step(self, step_id: PlanStepId) -> PlanStep | None:
-        for step in self.steps:
-            if step.id == step_id:
-                return step
+        if self._current_plan is None:
+            return None
+        for s in self._current_plan.step_list:
+            if s.id == step_id:
+                return s
         return None
 
     def get_step_by_order(self, order: int) -> PlanStep | None:
-        for step in self.steps:
-            if step.order == order:
-                return step
+        if self._current_plan is None:
+            return None
+        for s in self._current_plan.step_list:
+            if s.order == order:
+                return s
         return None
 
     def total_steps(self) -> int:
-        return len(self.steps)
+        if self._current_plan is None:
+            return 0
+        return self._current_plan.step_count
+
+    def get_plan(self) -> Plan | None:
+        return self._current_plan
+
+    def get_history(self) -> list[PlanVersion]:
+        return list(self._history)
 
     # ------------------------------------------------------------------
-    # Private helpers
+    # Internal helpers
     # ------------------------------------------------------------------
 
-    def _parse_analysis(self, content: str) -> TaskFeature:
-        try:
-            data = json.loads(_extract_json(content))
-            return TaskFeature(
-                task_type=str(data.get("task_type", "general")),
-                complexity=str(data.get("complexity", "medium")),
-                required_tools=list(data.get("required_tools", [])),
-                estimated_steps=int(data.get("estimated_steps", 1)),
-                notes=str(data.get("notes", "")),
-                preferred_scenarios=list(data.get("preferred_scenarios", [])),
-                required_strengths=list(data.get("required_strengths", [])),
-                min_context_size=int(data.get("min_context_size", 0)),
-                prefer_low_cost=bool(data.get("prefer_low_cost", False)),
-                prefer_low_latency=bool(data.get("prefer_low_latency", False)),
-            )
-        except Exception:
-            return TaskFeature(
-                task_type="general",
-                complexity="medium",
-                required_tools=[],
-                estimated_steps=1,
-                notes="",
-            )
+    def _replace_step(self, step_id: PlanStepId, new_step: PlanStep) -> None:
+        assert self._current_plan is not None
+        updated = [new_step if s.id == step_id else s for s in self._current_plan.step_list]
+        self._current_plan = Plan(
+            id=self._current_plan.id,
+            task_id=self._current_plan.task_id,
+            step_list=updated,
+            created_at=self._current_plan.created_at,
+        )
 
-    def _parse_steps(self, content: str) -> list[PlanStep]:
-        try:
-            data = json.loads(_extract_json(content))
-            if not isinstance(data, list):
-                raise ValueError("expected a JSON array")
-            steps = []
-            for i, item in enumerate(data):
-                steps.append(
-                    PlanStep(
-                        id=PlanStepId(str(uuid4())),
-                        goal=str(item.get("goal", f"Step {i}")),
-                        description=str(item.get("description", "")),
-                        order=i,
-                        key_results=list(item.get("key_results", [])),
-                    )
-                )
-            return steps if steps else self._fallback_steps()
-        except Exception:
-            return self._fallback_steps()
-
-    def _parse_single_step(
-        self,
-        content: str,
-        step_id: PlanStepId,
-        order: int,
-    ) -> PlanStep:
-        try:
-            data = json.loads(_extract_json(content))
-            return PlanStep(
-                id=step_id,
-                goal=str(data.get("goal", self.task_description)),
-                description=str(data.get("description", self.task_description)),
-                order=order,
-                key_results=list(data.get("key_results", [])),
-            )
-        except Exception:
-            return PlanStep(
-                id=step_id,
-                goal=self.task_description,
-                description=self.task_description,
-                order=order,
-            )
-
-    def _fallback_steps(self) -> list[PlanStep]:
-        return [
-            PlanStep(
-                id=PlanStepId(str(uuid4())),
-                goal=self.task_description,
-                description=self.task_description,
-                order=0,
-            )
-        ]
+    def _build_knowledge_context(self) -> str:
+        if self._knowledge_loader is None:
+            return ""
+        entries = self._knowledge_loader.load(self.task_description, top_k=3)
+        if not entries:
+            return ""
+        snippets = "\n".join(f"- {e.content}" for e in entries)
+        return f"\nRelevant knowledge:\n{snippets}\n"
 
 
-def _extract_json(text: str) -> str:
-    """Strip markdown code fences if present, return raw JSON string."""
-    text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        # drop first and last fence lines
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _trigger_to_change_reason(trigger: PlanUpdateTrigger) -> PlanChangeReason:
+    mapping = {
+        PlanUpdateTrigger.PLAN_REVIEW_FAILED:   PlanChangeReason.PLAN_EVALUATE_FAILED,
+        PlanUpdateTrigger.QUALITY_CHECK_FAILED: PlanChangeReason.TASK_RESULT_EVALUATED,
+        PlanUpdateTrigger.STAGE_EVAL_FAILED:    PlanChangeReason.STAGE_RESULT_EVALUATED,
+        PlanUpdateTrigger.USER_GUIDANCE:        PlanChangeReason.STAGE_RESULT_EVALUATED,
+    }
+    return mapping.get(trigger, PlanChangeReason.PLAN_EVALUATE_FAILED)
+
+
+def _parse_revised_step(content: str, fallback: PlanStep) -> PlanStep:
+    content = content.strip()
+    if content.startswith("```"):
+        lines = content.splitlines()
         inner = lines[1:-1] if lines[-1].startswith("```") else lines[1:]
-        return "\n".join(inner)
-    return text
+        content = "\n".join(inner)
+    try:
+        data = json.loads(content)
+        return PlanStep(
+            id=fallback.id,
+            order=fallback.order,
+            goal=str(data.get("goal", fallback.goal)),
+            description=str(data.get("description", fallback.description)),
+            key_results=list(data.get("key_results", fallback.key_results)),
+        )
+    except Exception:
+        return fallback

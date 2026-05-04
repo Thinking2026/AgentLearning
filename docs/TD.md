@@ -61,10 +61,10 @@
   				1.3.2.1.1 发布“执行计划已确定”事件（目的是给用户展示执行过程）
   				1.3.2.1.2	交付计划
   			1.3.2.2 [评审不成功] 
-  				1.3.2.2.1 [需要用户提供建议] 发布"需要用户帮助制定计划"事件，阻塞等待在收件箱
+  				1.3.2.2.1 [需要用户提供建议] 发布"请求用户建议已发出"事件，阻塞等待在收件箱
   					1.3.2.2.1.1 收到用户建议，注入用户建议，go back to 1.3
   				1.3.2.2.2 [不需要用户提供建议] 结合评审意见 go back to 1.3
-  	1.4 发布“Task开始执行”事件（目的是给用户展示执行过程）
+  	1.4 发布“Task已开始执行”事件（目的是给用户展示执行过程）
   	1.5 按照计划Step执行计划(进入“Stage Leve“处理，获得处理结果)
   		1.5.1 [执行成功] 对任务结果进行评审
   			1.5.1.1 [评审通过]  
@@ -492,8 +492,6 @@ NanoAgent/
 - passed: 是否通过
 - feedback: 评测反馈
 
-
-
 ### User Preference Entry
 
 - 文件位置：`src/schemas/types.py`
@@ -689,17 +687,11 @@ class StageStatus(str, Enum):
 
 #### 方法签名
 
-make_plan(task: Task, llm_api: llmgateway) : Plan —— 根据Task里面有用的字段，调用大模型llmgateway生成一个plan
+make_plan(task: Task, llm_api: llmgateway, evaluator: QualityEvaluator) : Plan —— 根据Task里面有用的字段，调用大模型llmgateway生成一个plan
 
 renew_plan(task:Task, feedback: str,llm_api: llmgateway): Plan —— 结合feedback, 调用大模型llmgateway重新生成一个plan
 
 renew_plan_step(step:PlanStep, feedback:str, llm_api: llmgateway): PlanStep —— 结合feedback重新制定某个Step
-
-get_plan_step(plan: Plan, order_id: int): PlanStep | None —— 获取Plan里某一个Step
-
-update_plan_step(plan: Plan, order_id: int, step: PlanStep) —— 替换某一个Step
-
-get_plan(): Plan —— 返回整个计划
 
 
 

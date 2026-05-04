@@ -4,51 +4,29 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
-from schemas.domain import DomainEvent
 from schemas.ids import (
-    CheckpointId,
-    KnowledgeEntryId,
     PlanId,
     PlanStepId,
     TaskId,
     UserId,
 )
-from schemas.types import KnowledgeEntry, LLMMessage, LLMResponse, ToolCall, UserPreferenceEntry
-
-
-# ---------------------------------------------------------------------------
-# StageStatus
-# ---------------------------------------------------------------------------
+from schemas.types import LLMMessage, LLMResponse, ToolCall 
 
 class StageStatus(str, Enum):
     RUNNING      = "RUNNING"
     COMPLETED    = "COMPLETED"
-    INTERRUPTED  = "INTERRUPTED"
     PAUSED       = "PAUSED"
+    SUCCESS      = "SUCCESS"
     FAILED       = "FAILED"
 
-
-# ---------------------------------------------------------------------------
-# CheckpointEntry
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class CheckpointEntry:
-    id: CheckpointId
-    task_id: TaskId
-    plan_id: PlanId
-    stage_order: int
-    conversation_checkpoint: list[LLMMessage]
-    created_at: datetime
-
-
-# ---------------------------------------------------------------------------
-# EvaluationRecord
-# ---------------------------------------------------------------------------
+class EvaluationTarget(str, Enum):
+    TASK_RESULT  = "TASK_RESULT"
+    STAGE_RESULT = "STAGE_RESULT"
+    PLAN         = "PLAN"
 
 @dataclass(frozen=True)
-class EvaluationRecord:
-    target_type: str   # "task" | "step" | "plan"
+class EvaluationReport:
+    target_type: EvaluationTarget   # "task" | "stage" | "plan"
     target_id: str
     passed: bool
     feedback: str
@@ -56,74 +34,57 @@ class EvaluationRecord:
     need_user_clarification: bool = field(default=False)
     clarification_question: str = field(default="")
 
-
-# ---------------------------------------------------------------------------
-# KnowledgeEntryStatus / KnowledgeExtracted / KnowledgeIndexed
-# ---------------------------------------------------------------------------
-
-class KnowledgeEntryStatus(str, Enum):
-    EXTRACTED = "Extracted"
-    INDEXED = "Indexed"
-
-
-@dataclass
-class KnowledgeExtracted(DomainEvent):
-    knowledge_entry_id: KnowledgeEntryId = field(default="")
-    task_id: TaskId = field(default="")
-    content: str = field(default="")
-
-    def __post_init__(self) -> None:
-        self.event_type = "KnowledgeExtracted"
-        self.aggregate_id = self.knowledge_entry_id
-
-
-@dataclass
-class KnowledgeIndexed(DomainEvent):
-    knowledge_entry_id: KnowledgeEntryId = field(default="")
-    task_id: TaskId = field(default="")
-
-    def __post_init__(self) -> None:
-        self.event_type = "KnowledgeIndexed"
-        self.aggregate_id = self.knowledge_entry_id
-
-
-# ---------------------------------------------------------------------------
-# ProviderCapabilities / RoutingDecision
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True)
-class ProviderCapabilities:
-    name: str
-    cognitive_complexity: list[str]
+class LLMProviderCapabilities:
+    tool_name: str
+    cognitive_complexity: list[str] #认知复杂度
     best_scenarios: list[str]
     top_strengths: list[str]
     cost_tier: str
     latency_tier: str
     context_size: int
 
-
 @dataclass(frozen=True)
-class RoutingDecision:
-    """Provider names only; Pipeline resolves to LLMGateway instances via registry."""
+class ModelRoutingDecision:
     primary: str
     fallbacks: list[str] = field(default_factory=list)
 
+@dataclass(slots=True)
+class UserPreferenceEntry:
+    user_id:  str
+    keywords: list[str]
+    content:  str
 
-# ---------------------------------------------------------------------------
-# PlanStep / TaskAnalysis / PlanUpdateTrigger
-# ---------------------------------------------------------------------------
+@dataclass(slots=True)
+class KnowledgeEntry:
+    entry_id: str
+    title: str
+    tags: list[str]
+    content: str
 
 @dataclass(frozen=True)
-class RelatedPreferenceEntry:
+class RelatedUserPreferenceEntry:
     entry: UserPreferenceEntry
     confidence: float  # 0-1
-
 
 @dataclass(frozen=True)
 class RelatedKnowledgeEntry:
     entry: KnowledgeEntry
     confidence: float  # 0-1
 
+class NextDecisionType(str, Enum):
+    TOOL_CALL            = "TOOL_CALL"
+    FINAL_ANSWER         = "FINAL_ANSWER"
+    CONTINUE             = "CONTINUE"
+    CLARIFICATION_NEEDED = "CLARIFICATION_NEEDED"
+    PAUSED               = "PAUSED"
+
+@dataclass(frozen=True)
+class NextDecision:
+    decision_type: NextDecisionType
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    assistant_message: LLMMessage | None = None
+    raw_response: LLMResponse | None = None
 
 @dataclass(frozen=True)
 class PlanStep:
@@ -132,48 +93,6 @@ class PlanStep:
     description: str
     order: int
     key_results: list[str] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class TaskFeature:
-    task_type: str
-    complexity: str
-    required_tools: list[str]
-    estimated_steps: int
-    notes: str
-    preferred_scenarios: list[str] = field(default_factory=list)
-    required_strengths: list[str] = field(default_factory=list)
-    min_context_size: int = 0
-    prefer_low_cost: bool = False
-    prefer_low_latency: bool = False
-
-
-class PlanUpdateTrigger(str, Enum):
-    QUALITY_CHECK_FAILED = "QUALITY_CHECK_FAILED"
-    PLAN_REVIEW_FAILED   = "PLAN_REVIEW_FAILED"
-    STAGE_EVAL_FAILED    = "STAGE_EVAL_FAILED"
-    USER_GUIDANCE        = "USER_GUIDANCE"
-
-
-# ---------------------------------------------------------------------------
-# NextDecisionType / NextDecision
-# ---------------------------------------------------------------------------
-
-class NextDecisionType(str, Enum):
-    TOOL_CALL            = "TOOL_CALL"
-    FINAL_ANSWER         = "FINAL_ANSWER"
-    CONTINUE             = "CONTINUE"
-    CLARIFICATION_NEEDED = "CLARIFICATION_NEEDED"
-
-
-@dataclass(frozen=True)
-class NextDecision:
-    decision_type: NextDecisionType
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    answer: str = ""
-    message: str = ""
-    assistant_message: LLMMessage | None = None
-    raw_response: LLMResponse | None = None
 
 @dataclass(frozen=True)
 class Plan:
@@ -186,6 +105,36 @@ class Plan:
     def step_count(self) -> int:
         return len(self.step_list)
 
+class PlanChangeReason(str, Enum):
+    PLAN_EVALUATE_FAILED     = "PLAN_EVALUATE_FAILED"
+    TASK_RESULT_EVALUATED    = "TASK_RESULT_EVALUATED"
+    STAGE_RESULT_EVALUATED   = "STAGE_RESULT_EVALUATED"
+
+@dataclass(frozen=True)
+class PlanVersion:
+    plan: Plan
+    version: int
+    change_reason: PlanChangeReason
+    changed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class TaskComplexity:
+    level: int
+    features: list[str] = field(default_factory=list) #这个难度的任务有什么特征
+    use_cases: list[str] = field(default_factory=list) #这个难度一般是什么任务
+
+class ReasoningType(str, Enum):
+    SINGLE_STEP          = "single-step reasoning"
+    MULTI_STEP           = "multi-step reasoning"
+
+class TaskStatus(str, Enum):
+    CREATED       = "CREATED"
+    RUNNING       = "RUNNING"
+    PAUSED        = "PAUSED"
+    CANCELLED     = "CANCELLED"
+    SUCCESS       = "SUCCESS"
+    FAILED        = "FAILED"
 
 @dataclass(frozen=True)
 class Task:
@@ -193,16 +142,16 @@ class Task:
     user_id: UserId
     description: str
     created_at: datetime
+    status: TaskStatus = TaskStatus.CREATED
     task_type: str = ""
-    complexity: str = ""
+    intent: str = ""
+    complexity: TaskComplexity = field(default_factory=lambda: TaskComplexity(level=2))
     required_tools: list[str] = field(default_factory=list)
-    reasoning_depth: str = ""
+    reasoning_depth: ReasoningType = ReasoningType.SINGLE_STEP
     output_constraints: str = ""
     notes: str = ""
-    related_user_preference_entries: list[RelatedPreferenceEntry] = field(default_factory=list)
+    related_user_preference_entries: list[RelatedUserPreferenceEntry] = field(default_factory=list)
     related_knowledge_entries: list[RelatedKnowledgeEntry] = field(default_factory=list)
-    plan_id: PlanId | None = None
-    task_feat: TaskFeature | None = None
 
 @dataclass(frozen=True)
 class TaskResult:
@@ -212,15 +161,6 @@ class TaskResult:
     error_reason: str
     delivered_at: datetime
 
-@dataclass(frozen=True)
-class PlanVersion:
-    """Snapshot of a plan at a specific version, kept for audit and rollback."""
-    plan: Plan
-    version: int
-    change_reason: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-
-
 __all__ = [
     "StageStatus",
     "CheckpointEntry",
@@ -229,7 +169,7 @@ __all__ = [
     "KnowledgeExtracted",
     "KnowledgeIndexed",
     "ProviderCapabilities",
-    "RoutingDecision",
+    "ModelRoutingDecision",
     "RelatedPreferenceEntry",
     "RelatedKnowledgeEntry",
     "PlanStep",

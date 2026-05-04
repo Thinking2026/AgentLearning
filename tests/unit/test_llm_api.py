@@ -6,7 +6,7 @@ import pytest
 
 from llm.llm_gateway import classify_http_error, classify_agent_error, RetryConfig
 from llm.registry import LLMProviderRegistry
-from agent.models.model_routing.provider_router import ModelSelector, RoutingDecision
+from agent.models.model_routing.provider_router import ModelSelector, ModelRoutingDecision
 from schemas.errors import (
     AgentError,
     HttpError,

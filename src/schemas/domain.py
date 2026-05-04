@@ -9,6 +9,7 @@ from typing import Any
 @dataclass
 class DomainEvent:
     """Base class for all domain events."""
+
     event_type: str
     aggregate_id: str
     occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -25,7 +26,6 @@ class AggregateRoot(ABC):
         self._domain_events.append(event)
 
     def pull_events(self) -> list[DomainEvent]:
-        """Return and clear all pending domain events."""
         events = list(self._domain_events)
         self._domain_events.clear()
         return events
