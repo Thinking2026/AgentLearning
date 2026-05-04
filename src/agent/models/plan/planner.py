@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from schemas.domain import AggregateRoot
 from schemas.ids import PlanId, PlanStepId, TaskId
-from schemas.task import PlanStep, PlanUpdateTrigger, TaskFeature
+from schemas.task import Plan, PlanStep, PlanUpdateTrigger, PlanVersion, TaskFeature
 from schemas.types import LLMMessage, LLMRequest
 
 from agent.events import TaskPlanFinalized, TaskPlanRenewal, TaskPlanRevised
@@ -38,6 +38,7 @@ class Planner(AggregateRoot):
         self.task_feat: TaskFeature | None = None
         self.steps: list[PlanStep] = []
         self.version: int = 0
+        self.history_plan: list[PlanVersion] = []
         self._llm_gateway = llm_gateway
         self._knowledge_loader = knowledge_loader
 
@@ -67,36 +68,11 @@ class Planner(AggregateRoot):
     # Public methods
     # ------------------------------------------------------------------
 
-    def build_plan(self, task_description: str) -> DTO:
-        try:
-            self.analyze()
-            plan_retries = 0
-            feedback = ""
-            clarification = ""
-            while plan_retries <= self._max_plan_retries:
-                self.build_plan(feedback, clarification)
-                review = self._quality_evaluator.review_plan()
-                if not review.passed:
-                    plan_retries += 1
-                    if review.need_user_clarification:
-                        self._stage_executor.pause(review.clarification_question)
-                        self._resume_event.wait()
-                        self._resume_event.clear()
-                        clarification = self._clarification or ""
-                        self._clarification = None
-                        feedback=review.feedback,
-                        clarification=clarification,
-                    else:
-                        feedback=review.feedback,
-                else:
-                    #success
-                    return     
-        except Exception as exc:
-            return self._failed_result(task_id, f"Plan build failed: {exc}")    
-        finally:
-            return self._failed_result(task_id, f"Plan build failed: {exc}")    
+    def get_plan(self) -> Plan:
+        """Return the current plan as a Plan object."""
+        return Plan(id=self.id, task_id=self.task_id, step_list=list(self.steps))
 
-    def analyze(self) -> Planner:
+    def analyze(self) -> "Planner":
         """Call LLM to analyze the task and fill self.analysis."""
         prompt = (
             f"Analyze the following task and return a JSON object with these fields:\n"
@@ -169,6 +145,12 @@ class Planner(AggregateRoot):
 
     def renew(self, trigger: PlanUpdateTrigger, feedback: str = "", clarification: str = "") -> None:
         """Rebuild all steps from scratch; version+1."""
+        if self.steps:
+            self.history_plan.append(PlanVersion(
+                plan=self.get_plan(),
+                version=self.version,
+                change_reason=trigger.value,
+            ))
         feedback_context = f"\nFeedback: {feedback}\n" if feedback else ""
         clarification_context = f"\nUser clarification: {clarification}\n" if clarification else ""
         prompt = (
@@ -208,6 +190,11 @@ class Planner(AggregateRoot):
         if target is None:
             return
 
+        self.history_plan.append(PlanVersion(
+            plan=self.get_plan(),
+            version=self.version,
+            change_reason=trigger.value,
+        ))
         feedback_context = f"\nFeedback: {feedback}\n" if feedback else ""
         prompt = (
             f"Revise the following execution step.\n"
@@ -298,6 +285,7 @@ class Planner(AggregateRoot):
                         goal=str(item.get("goal", f"Step {i}")),
                         description=str(item.get("description", "")),
                         order=i,
+                        key_results=list(item.get("key_results", [])),
                     )
                 )
             return steps if steps else self._fallback_steps()
@@ -317,6 +305,7 @@ class Planner(AggregateRoot):
                 goal=str(data.get("goal", self.task_description)),
                 description=str(data.get("description", self.task_description)),
                 order=order,
+                key_results=list(data.get("key_results", [])),
             )
         except Exception:
             return PlanStep(

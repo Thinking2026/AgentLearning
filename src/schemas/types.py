@@ -116,3 +116,18 @@ class BudgetResult:
     reserved_tokens: int        # for LLM response + future summary calls
     available_tokens: int       # total_budget - reserved_tokens
     role_budgets: dict[str, RoleBudget] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class UserPreferenceEntry:
+    user_id: str
+    keyword: str
+    content: str
+
+
+@dataclass(slots=True)
+class KnowledgeEntry:
+    entry_id: str
+    title: str
+    tags: list[str]
+    content: str

@@ -1,98 +1,100 @@
 # 需求预研
 
-## 失败一级划分
+## Terms
 
-- A类：可以改变入参重试解决的
-- B类：需要等待一段时间有可能恢复的
-- C类：无法解决的硬错误
+| #    | 术语               | 解释                                                         |
+| ---- | ------------------ | ------------------------------------------------------------ |
+| 1    | Task               | 用户提交的任务                                               |
+| 2    | Plan               | 任务的整体执行计划                                           |
+| 3    | Step               | Plan里制定的任务处理步骤，一个Plan对应N个Step，简单的Plan可以只有一个Step。每个Step都会描述“这一步的目标是什么”/"这一步整体的处理思路"/"这一步需要输出什么关键结果"。 |
+| 4    | Stage              | 任务的执行过程中，根据Step创建的执行步骤。Stage带状态轮转(RUNNING/PAUSED/COMPLETED(只是完成，不一定评审通过)/SUCCESS/FAILED)，而Step是静态的对象 |
+| 5    | Checkpoint         | 任务执行保存点，当几个Stage成功完成后，Agent可以保存检查点（保存时机看策略）。用户可以要求某个任务从某个Checkpoint开始重新执行 |
+| 6    | ER                 | Evaludation Report, 评测报告。Plan/Task的执行结果/Stage的执行结果都会被评测。ER包含的基本信息有评测对象/评测是否通过/评测意见 |
+| 7    | User Preference    | 用户偏好                                                     |
+| 8    | Knowledge          | 之前任务执行留下来的经验总结                                 |
+| 9    | Reasoning Strategy | 特指执行某个Stage时候采用的推理模式，目前只有ReAct：即Thought -> Action -> Observation |
+| 10   | 推理框架           | 是Agent整体如何处理任务的模式，目前采用的模式是：1. 任务特征分析 2. 任务分解Stage制定 3. 对每个分解后的Stage运行N轮ReAct |
 
 ## User Case
 
-| #    | 用户行为                     | 行为描述                                                     |
-| ---- | ---------------------------- | ------------------------------------------------------------ |
-| 1    | 提交任务                     | 用户向Agent提交一个任务 -> Agent进行分析和推理，必要时可调用工具与外部交互 -> 输出任务结果给用户 |
-| 2    | 取消任务                     | 用户向Agent发出取消正在执行的任务，取消的任务不能再继续处理  |
-| 3    | 提交建议                     | 在任务执行期间，如果用户发现执行路径偏离目标可以**主动**提供指导建议，Agent收到用户消息后：1.立即**中止**当前步骤的处理 2.将这一步开始的Context上下文清除掉 3. 结合用户的指导意见，只重新规划当前步骤 |
-| 4    | 用户澄清                     | 如果Agent在执行某步推理时发现需要用户确认，可以主动要求用户澄清，用户提交澄清信息后，Agent继续当前步骤的处理。目前有两个地方可能触发澄清 1.某个步骤执行期间发现 2.Plan评审时需要 |
-| 5    | 用户要求继续处理             | Agent本质是尽力完成任务的，但可能因为一些原因任务执行出现意外，当某个任务遇到B类异常中断点，Agent会暂停当前步骤的处理等待用户介入，用户发现异常中断已解决，可以发起继续任务指令，Agent从当前步骤继续执行 |
-| 6    | 用户要求从最近检查点重新执行 | 因为进程崩溃等异常中断，用户可以要求Agent从最近checkpoint恢复 |
+| #    | 用户行为                                       | 行为描述                                                     |
+| ---- | ---------------------------------------------- | ------------------------------------------------------------ |
+| 1    | 提交任务（用户随时主动发出）                   | 用户向Agent提交一个任务，Agent进行分析和推理，必要时可调用工具与外部交互，最后输出任务处理结论给用户 |
+| 2    | 取消任务（用户随时主动发出）                   | 用户向Agent发出取消任务请求，取消的任务不能再继续处理        |
+| 3    | 提交建议（用户随时主动发出）                   | 在任务执行期间，如果用户发现执行路径偏离目标可以**主动**提供指导建议，Agent收到用户消息后：1.立即**中止**当前Stage的处理 2.将这一Stage涉及的Context上下文清除掉 3. 结合用户的指导意见，只重新规划当前Stage对应的Step |
+| 4    | 用户澄清（系统提示后操作）                     | 如果Agent在执行某步推理时发现需要用户确认，可以主动要求用户澄清，用户提交澄清信息后，Agent继续当前的处理 |
+| 5    | 用户要求继续处理（系统提示后操作）             | Agent本质是尽力完成任务的，但可能因为一些原因任务执行出现意外，当某个任务遇到“等待一段时间可以恢复”类的异常中断点，Agent会暂停当前步骤的处理等待用户介入，用户发现异常中断已解决，可以发起继续任务指令，Agent从当前步骤继续执行 |
+| 6    | 用户要求从最近检查点重新执行（系统提示后操作） | 因为进程崩溃等异常中断，用户可以要求Agent从指定checkpoint恢复并执行 |
 
 ## Agent能力
 
 1. 基于LLM，Tools和Memory能力解决用户提交的任务
-2. 当某个执行步骤成功完成，Agent可以选择保存checkpoint，保存checkpoint是异步的，不影响主流程。当C类中断出现，Agent可以restore checkpoint继续执行
+2. 当某个执行步骤成功完成，Agent可以选择保存checkpoint，保存checkpoint是异步的，不影响主流程。当无法处理的中断出现，Agent可以restore checkpoint继续执行
 3. Agent在每个Stage执行完毕后，需要评估这个Stage执行是否达成Stage目标，没有达到的话revise当前stage的执行计划，然后开始重新执行该Stage 
 4. Agent需要对最后任务的结果使用进行评测，评测通过才能交付给用户，否则需要结合评测报告+原执行计划更新整个执行计划，从第一个Stage开始执行
-5. Agent暂时实现一个飞轮能力，Task执行总结的经验和知识；Task知识是最后Task成功完成落存储的，未来的任务考虑是否使用。Task知识由LLM结合当前任务情况选择性使用（可以不使用）
-6. 目前推理模式不允许在一个任务执行期间动态调整，留作未来扩展
+5. Agent暂时实现2个飞轮能力，用户偏好和Task执行总结的经验和知识。用户偏好和Task知识是最后Task成功完成落存储的，未来任务可酌情使用
+6. 目前推理框架以及Reasoning Strategy不允许在一个任务执行期间动态调整，留作未来扩展
 7. Agent发现一些情况（比如Token不够用）需要等待一段时间才能执行任务时会暂停任务，然后等待用户重新触发继续处理
-8. Agent接收到用户的建议后，会立即中断当前步骤处理，结合用户建议只重新规划本步骤计划，再从当前步骤开始执行。前面已经完成的步骤不受影响
+8. Agent接收到用户的建议后，会立即中断当前步骤处理，结合用户建议只重新规划本Stage对应的计划Step，再从新的Step对应的Stage开始执行，前面已经完成的Stage不受影响
 9. Agent执行任务期间，发现需要用户澄清的事实时，可以暂停步骤执行，向用户询问，等待用户澄清后再继续本步骤的处理
+10. Agent可以根据任务特征和已支持LLM Provider的能力情况，结合具体路由策略选择合适的LLM Provider
 
-## Agent执行流
+# 执行流程
 
-### Pipeline时序
-
-#### 主干流程
-
-##### 三层循环架构
+## 流程三层架构
 
 - Task Level
 
   ```
   1.开始处理Task
   	1.1 分析Task特征
-  		1.1.1 调用LLM分析任务特征
-  		1.1.2 根据任务特征可以引入用户偏好，注入用户偏好
-  		1.1.3 根据任务特征搜索知识库，查找类似任务的执行知识或者经验
-  		1.1.4 发布“任务分析结果”事件（目的是给用户展示执行过程）
+  		1.1.1 提取任务特征
+  		1.1.2 根据任务特征索引用户偏好信息
+  		1.1.3 根据任务特征索引知识库
+  		1.1.4 发布“分析报告已出”事件（目的是给用户展示执行过程）
   		1.1.5 输出任务分析报告
-  	1.2 根据Task特征匹配处理模型
+  	1.2 根据Task特征匹配处理模型，输出可选模型列表
   	1.3 开始制定Task执行计划
   		1.3.1 制定计划
   		1.3.2 评审计划
   			1.3.2.1 [评审成功] 
-  				1.3.2.1.1 发布“公示执行计划”事件（目的是给用户展示执行过程）
+  				1.3.2.1.1 发布“执行计划已确定”事件（目的是给用户展示执行过程）
   				1.3.2.1.2	交付计划
   			1.3.2.2 [评审不成功] 
-  				1.3.2.2.1 [需要用户提供建议] 发布事件，阻塞等待
+  				1.3.2.2.1 [需要用户提供建议] 发布"需要用户帮助制定计划"事件，阻塞等待在收件箱
   					1.3.2.2.1.1 收到用户建议，注入用户建议，go back to 1.3
   				1.3.2.2.2 [不需要用户提供建议] 结合评审意见 go back to 1.3
   	1.4 发布“Task开始执行”事件（目的是给用户展示执行过程）
-  	1.5 按照Task计划步骤执行计划(进入“Stage Leve“处理，获得处理结果)
+  	1.5 按照计划Step执行计划(进入“Stage Leve“处理，获得处理结果)
   		1.5.1 [执行成功] 对任务结果进行评审
-  			1.5.1.1 [评审通过] 
-  				1.5.1.1.1 发布“Task执行结果信息”事件（目的是给用户展示执行过程）
-  				1.5.1.1.2 异步提取任务经验和知识+知识落地
-  				1.5.1.1.3 从用户建议里总结用户偏好并落地
-  				1.5.1.1.4 任务结果交付，执行完毕
-  			1.5.1.2 [评审不通过] 结合评审意见重新制定计划，上下文全部清空，go back to 1.3
-  		1.5.2 [执行失败] 任务失败，组装失败信息，执行完毕
+  			1.5.1.1 [评审通过]  
+  				1.5.1.1.1 异步提取任务经验和知识+知识落地
+  				1.5.1.1.2 从用户建议里总结用户偏好并落地
+  				1.5.1.1.3 任务结果交付,发布“Task执行结果信息”事件（目的是给用户展示执行过程）
+  			1.5.1.2 [评审不通过] 执行上下文全部清空，结合评审意见重新制定计划，go back to 1.3
+  		1.5.2 [执行失败] 任务失败，组装失败信息
+  			1.5.2.1 发布“Task执行结果信息”事件（目的是给用户展示执行过程）
   ```
-
-  
 
 - Stage Level
 
   ```
-  1.从当前Stage开始处理(第一次从第一个Stage)
-  	1.0 发布“Stage执行开始”事件，标准是[A.新Stage执行 B.评审不通过，更新计划后重新执行 C.切换模型后重新执行 D.执行失败，更新计划后重新执行]（目的是给用户展示执行过程）
+  1.从当前Stage开始处理(首次进入从第一个Stage开始)
+  	1.0 发布“XX Stage执行开始”事件，标注开始类型[A.新Stage执行 B.Stage执行结果评审不通过，更新Step后重新执行 C.切换模型后重新执行 D.执行失败，更新计划后重新执行]（目的是给用户展示执行过程）
   	1.1 根据条件考虑是否切回高优先级模型
   	1.2 执行当前Stage的推理循环(进入“Stage内部推理循环”，获得处理结果)
   	1.2.1 [Stage执行成功] 对Stage执行结果进行评审
-  		1.2.1.1 [评审成功] 对这一步执行情况进行总结（Stage描述，目标和结果完整，过程摘要），更新上下文
-  			1.2.1.1.1 发布“Stage执行结果”事件（目的是给用户展示执行过程）
+  		1.2.1.1 [评审成功] 对这一步执行情况进行总结（Stage总结要求目标和结果完整，过程摘要），更新上下文
+  			1.2.1.1.1 非最后一个Stage发布“Stage执行结果已生成”事件（目的是给用户展示执行过程）
   			1.2.1.1.2 根据条件决定是否要落checkpoint（异步进行）
   			1.2.1.1.3 [还有Stage没处理完] go back to 1处理下一个Stage
   			1.2.1.1.4 [Stage都处理完] 交付最终结果
-  		1.2.1.1 [评审不成功] reset掉本Stage上下文，结合评审信息重新规划本步骤，go back to 1 从更新后的本Stage开始处理
-  	1.2.2 [执行失败，需要切模型] 清理掉本Stage涉及上下文
+  		1.2.1.1 [评审不成功] reset掉本Stage上下文，结合评审信息重新规划本Step，go back to 1 从更新后的本Stage开始处理
+  	1.2.2 [执行失败，需要切模型] reset掉本Stage上下文
   		1.2.2.1切换模型 go back to 1 重新处理本Stage
-  	1.2.3 [执行失败，需要重新规划本步骤] 同步骤 1.2.1.1
+  	1.2.3 [Stage内部推理返回需要重新规划本步骤] reset掉本Stage上下文，结合评审信息重新规划本Step，go back to 1 从更新后的本Stage开始处理
   	1.2.4 [执行失败，切模型无法解决] 抛异常，代表无法解决
   ```
-
-  
 
 - Stage内部推理循环
 
@@ -100,94 +102,225 @@
   1.获取执行上下文
   	1.1 不满足context window要求，执行压缩或者摘要
   2.调用LLM进行推理，获取下一步Decision
-  	2.0 发布"展示LLM回复事件"（目的是给用户展示执行过程）
+  	2.0 发布"LLM回复已生成"事件（目的是给用户展示执行过程）
   	2.1 [是最终结果] 交付结果
   	2.2 [需要继续推理] 更新上下文 go back to 1
   	2.3 [是工具调用] 开始调用工具
-  		2.3.0 发布"工具调用开始"事件（目的是给用户展示执行过程）
+  		2.3.0 发布"工具调用已开始"事件（目的是给用户展示执行过程）
   		2.3.1 检查工具权限和入参是否符合要求
   			2.3.1.1 [允许执行] 调用工具
-  				2.3.1.1.1 [调用成功] 将成功结果注入上下文，go back to 1
+  				2.3.1.1.1 [调用成功] 将成功结果注入上下文，发布"工具调用结果"事件（目的是给用户展示执行过程），go back to 1
   				2.3.1.1.2 [调用不成功] 
   					2.3.1.1.2.1 [是搜索工具] 尝试用本地知识库 
   						2.3.1.1.2.1.1 [成功] go back to 2.3.1.1.1
-  					2.3.1.1.2.2 将失败信息注入上下文，go back to 1
-  		  2.3.1.2 [工具前置检查不通过] 注入系统信息，让LLM切换工具，go back to 1
-  		 2.3.2 发布"工具调用结果"事件（目的是给用户展示执行过程）
-  	2.4 [需要用户澄清信息] 更新必要状态，发布事件信息，阻塞等待继续处理
+  					2.3.1.1.2.2 将失败信息注入上下文，发布"工具调用结果"事件（目的是给用户展示执行过程），go back to 1
+  		  2.3.1.2 [工具前置检查不通过] 注入系统信息，让LLM切换工具，发布"工具调用结果"事件（目的是给用户展示执行过程），go back to 1
+  	2.4 [需要用户澄清信息] 更新必要状态，发布“用户澄清请求已发出”事件，阻塞等待继续处理
   		2.4.1 收到用户澄清信息
   			2.4.1.1 更新上下文，go back to 1
-  	2.5 [发现任务需要暂停]，更新必要状态，发布事件信息，阻塞等待继续处理
+  	2.5 [发现任务需要暂停]，更新必要状态，发布“任务已暂停”事件，阻塞等待继续处理
   		2.5.1 收到继续任务的指令
   			2.5.1.1 go back to 1
   3.Loop用户异步提交的信息
   	3.1 用户要求取消任务
-  		3.1.1 更新任务状态，发布事件信息
+  		3.1.1 更新任务状态，清空相关信息，发布“任务已取消”事件
   	3.2 收到用户主动纠偏建议
-  		3.2.1 返回“重新规划本步骤”信息
+  		3.2.1 返回“需要重新规划本步骤”信息给外层
   ```
 
-#### 分支流程
-
-**UC-6 用户要求从Checkpoint处执行**
+- UC-6 用户要求从Checkpoint处执行
 
 ```
 1. 获取Task执行计划和执行进度
-2. 重构Context
-3. 从“Task Leve”中的1.5步开始执行
+2. 重构Agent Context
+3. 从“Task Leve”中的1.4步开始执行
 ```
 
-### 重要实体
+## 重要聚合实体
 
 | #    | 实体                | 功能语义                                                     |
 | ---- | ------------------- | ------------------------------------------------------------ |
-| 1    | Analyzer            | 提取任务特征信息，输出任务分析结果（包含可以利用的用户偏好和相关知识片段）。1. 根据特征信息选择是否应用用户偏好 2.根据特征信息加载知识库相关知识片段。相关用户偏好信息和知识片段都可以注入上下文，以及提供给Planner制定计划时使用。有专门的analyise LLM Provider |
-| 2    | Planner             | 制定计划，更新整个计划或者更新计划的某个Stage。制定计划时Planner还要负责调用QualityEvaluator评审整个计划。最终输出一个“执行计划”聚合。有专门的planner LLM Provider |
-| 3    | CheckpointProcessor | 基于上下文，负责checkpoint的save/restore/list/get/delete     |
+| 1    | Analyzer            | 提取任务特征信息，输出任务分析结果（包含可以利用的用户偏好和相关知识片段），有专门的analyise LLM Provider |
+| 2    | Planner             | 制定计划，更新整个计划或者更新计划的某个Stage。制定计划时Planner还要负责调用QualityEvaluator评审整个计划。最终输出一个“计划”详情，有专门的planner LLM Provider |
+| 3    | CheckpointProcessor | 负责执行点checkpoint的save/restore/list/get/delete，checkpoint有版本和时间信息 |
 | 4    | KnowledgeManager    | 负责1.总结任务处理经验和知识 2.存储经验和知识 3.删除无用的经验和知识 |
-| 5    | QualityEvaluator    | 负责 1.评估整体执行结果是否满足任务目标 2.评估某个Stage执行是否符合预期目标 3.评审执行计划是否符合满足任务目标和要求 |
-| 6    | StageExecutor       | 驱动和执行任务的所有Stage                                    |
-| 7    | KnowledgeLoader     | 负责query与任务相关的，可能用上的知识                        |
+| 5    | QualityEvaluator    | 负责 1.评估整体执行结果是否满足任务目标 2.评估某个Stage执行是否符合预期目标 3.评审执行计划是否符合满足任务目标 |
+| 6    | StageExecutor       | 驱动和执行计划的所有Stage                                    |
+| 7    | KnowledgeLoader     | 负责query与任务相关的可能用上的知识                          |
 | 8    | ModelSelector       | 负责根据任务特征，模型特点，选择本任务适合的模型和备选模型   |
-| 9    | ContextManager      | 负责管理Task执行上下文，包含常规的增删改查，以及为了适应LLM Provider的context_window要求进行压缩，摘要。有专门的Context压缩摘要的LLM Provider |
+| 9    | ContextManager      | 负责管理Task执行上下文，包含常规的增删改查，以及为了适应LLM Provider的context_window要求进行裁剪/压缩/摘要，有专门的Context压缩摘要的LLM Provider |
 | 10   | ReasoningManager    | 负责与LLM打交道，执行单步推理，并输出Next Decision           |
-| 11   | LLMGateway          | 1. 封装LLM不同provider的API 2.处理标准请求/回复协议与各个Provider请求/回复协议的互转处理 3. 一些LLM Provider调用的基础容错，比如调用API超时的自动backoff jitter重试 |
-| 12   | ToolRegistry        | 1. 封装不同工具的调用和返回 2. 处理标准参数/回复协议与各个Tool参数/回复协议的互转 3. 处理一些Tool调用的基础容错，比如调用工具超时的自动backoff jitter重试 |
+| 11   | LLMGateway          | 1. 封装LLM不同provider的API 2.处理标准请求/回复协议与各个Provider请求/回复协议的互转处理 3. 一些LLM Provider调用级别的基础容错，比如调用API超时的自动backoff jitter重试 |
+| 12   | ToolRegistry        | 1. 封装不同工具的调用和返回 2. 处理标准参数/回复协议与各个Tool参数/回复协议的互转 3. 处理一些Tool调用级别的基础容错，比如调用工具超时的自动backoff jitter重试 |
 | 13   | PersonalityManager  | 1. 索引用户偏好信息 2. 提炼用户偏好 3. 存储用户偏好          |
 
-### 应用层
+## 应用层实体
 
-| #    | 应用层实体     | 语义                                                         |
+| #    | 名称           | 语义                                                         |
 | ---- | -------------- | ------------------------------------------------------------ |
-| 1    | Pipeline       | 1. Agent执行流入口 2. 触发构建Agent执行时需要的所有实体      |
-| 2    | PipelineThread | Pipeline执行的容器 1. 负责管理执行线程的生命周期 2. 维护消息队列与通信 |
-| 3    | PipelineDriver | 1. 负责将用户请求/回复与Pipeline Command互转 2. 提供pipeline标准事件handler 3. Pipeline的应用入口 |
-| 4    | client_app     | 代表用户端的执行线程，通过调用PipelineDriver与pipeline交互   |
+| 1    | Pipeline       | 处理Task Level执行流程                                       |
+| 2    | PipelineThread | Pipeline执行的容器 1. 负责管理执行线程的生命周期 2. 维护与client端通信的异步队列 |
+| 3    | PipelineDriver | pipeline与client沟通的桥梁 1. 负责client报文与Pipeline Command互转 2. 提供pipeline标准事件handler，处理pipeline执行过程想向client端发送的消息 |
+| 4    | client_app     | 代表用户端的执行线程，负责与用户UI相关的所有逻辑             |
 
-#### 应用层实体交互关系
+### 应用层实体的同步设施
+
+#### PipelineThread
+
+- TaskQueue: client_app通过这个队列向PipelineThread发送新Task信息/断点恢复消息
+- AgentMessageQueue: client_app通过这个队列向PipelineThread发送用户指令（取消/建议/澄清/resume）
+
+#### client_app
+
+- UserMessageQueue: Pipeline Thread通过这个队列向client端发送Agent执行信息，任务结果信息
+
+### 应用层实体交互关系
 
 - 用户提交任务
 
-​	client_app -> PipelineThread(接收信息) -> PipelineDriver(协议转换) -> Pipeline
+  ```mermaid
+  sequenceDiagram
+      participant client as client_app
+      participant thread as pipeline_thread
+      participant driver as pipeline_driver
+      participant pipeline 
+      client->>thread: 通过TaskQueue发送任务
+      thread->>driver: 发送任务信息
+      driver->>driver: 协议转换
+      driver->>pipeline: 调用pipeline任务处理接口
+      
+  ```
+
+  
 
 - 用户要求从checkpoint恢复执行
 
-  client_app -> PipelineThread(接收信息) -> PipelineDriver(协议转换) -> Pipeline
+  ```mermaid
+  sequenceDiagram
+      participant client as client_app
+      participant thread as pipeline_thread
+      participant driver as pipeline_driver
+      participant pipeline 
+      client->>thread: 通过TaskQueue发送恢复检查点的指令
+      thread->>driver: 发送指令
+      driver->>driver: 协议转换
+      driver->>pipeline: 调用pipeline接口继续处理任务
+      
+  ```
 
-- Pipeline需要用户提供信息
+- 用户取消任务
 
-  Pipeline -> PipelineDriver(通过事件handler处理事件，转换协议) -> PipelineThread -> client_app
+  ```mermaid
+  sequenceDiagram
+      participant client as client_app
+      participant thread as pipeline_thread
+      participant driver as pipeline_driver
+      participant pipeline 
+      client->>thread: 通过AgentMessageQueue发送取消任务指令
+      pipeline->> driver: loop用户指令
+      driver->>thread: fetch用户指令
+      thread->>driver:返回用户指令
+      driver->>driver:协议转换
+      driver->>pipeline:返回取消任务指令
+      pipeline->>pipeline:更新任务状态/清空上下文
+      pipeline->>driver:发布"任务已取消"事件
+      driver->>driver:1.接收事件 2.协议转换
+      driver->>thread:发送用户信息
+      thread->>client:传递用户信息
+      thread->>thread:阻塞在TaskQueue等待新任务或者继续执行某任务
+  ```
+
+- 用户向Agent提交执行建议
+
+  ```mermaid
+  sequenceDiagram
+      participant client as client_app
+      participant thread as pipeline_thread
+      participant driver as pipeline_driver
+      participant pipeline 
+      client->>thread: 通过AgentMessageQueue发送建议
+      pipeline->> driver: loop用户指令
+      driver->>thread: fetch用户指令
+      thread->>driver:返回用户指令
+      driver->>driver:协议转换
+      driver->>pipeline:返回建议提交指令
+      pipeline->>pipeline:走Stage处理用户建议步骤及后续步骤......
+  ```
+
+- Pipeline需要用户提供澄清信息
+
+  ```mermaid
+  sequenceDiagram
+      participant client as client_app
+      participant thread as pipeline_thread
+      participant driver as pipeline_driver
+      participant pipeline 
+      pipeline->>driver:发布需要用户澄清事件
+      driver->>driver:协议转换
+      driver->>thread:给用户发送信息
+      thread->>client:通过UserMessageQueue给用户发送信息
+      thread->>driver:返回
+      driver->>pipeline:返回
+      pipeline->> driver: loop用户指令
+      driver->>thread: fetch用户指令
+      client->>thread: 通过AgentMessageQueue发送用户澄清信息
+      thread->>driver:返回用户信息
+      driver->>driver:协议转换
+      driver->>pipeline:提交用户澄清信息
+      pipeline->>pipeline:走Stage处理用户澄清信息步骤及后续步骤......
+  ```
+
+- pipeline暂停处理+用户要求继续处理
+
+  ```mermaid
+  sequenceDiagram
+      participant client as client_app
+      participant thread as pipeline_thread
+      participant driver as pipeline_driver
+      participant pipeline 
+      pipeline->>pipeline: 更新任务状态
+      pipeline->>driver:发布任务已暂停事件
+      driver->>driver:协议转换
+      driver->>thread:给用户发送信息
+      thread->>client:通过UserMessageQueue给用户发送信息
+      thread->>driver:返回
+      driver->>pipeline:返回
+      pipeline->> driver: loop用户指令
+      driver->>thread: fetch用户指令
+      client->>thread: 通过AgentMessageQueue发送用户要求继续的指令
+      thread->>driver:返回用户信息
+      driver->>driver:协议转换
+      driver->>pipeline:提交用户指令
+      pipeline->>pipeline:走Stage处理暂停恢复步骤及后续步骤......
+  ```
+
+  
 
 - Pipeline向用户提供执行流程信息
 
-  Pipeline -> PipelineDriver(通过事件handler处理事件，转换协议) -> PipelineThread -> client_app
+  ```mermaid
+  sequenceDiagram
+      participant client as client_app
+      participant thread as pipeline_thread
+      participant driver as pipeline_driver
+      participant pipeline 
+      pipeline->>driver:发布事件
+      driver->>driver:协议转换
+      driver->>thread:给用户发送信息
+      thread->>client:通过UserMessageQueue给用户发送信息
+      thread->>driver:返回
+      driver->>pipeline:返回
+      pipeline->> pipeline: 继续后续流程....
+  ```
 
-### 代码目录结构
+  
+
+## 代码目录结构
 
 
 ```
 NanoAgent/
-├── bin/                          # CLI 入口
+├── bin/                          # 二进制目录
 │   └── nanoagent
 ├── config/                       # 运行时配置文件
 │   └── config.json
@@ -197,13 +330,13 @@ NanoAgent/
 │   ├── archive/                  # 历史设计文档归档
 │   └── knowledge/                # 知识库文档
 ├── src/
-│   ├── main.py                   # 程序入口
+│   ├── main.py                   # 程序主函数
 │   ├── agent/                    # 核心 Agent 领域
 │   │   ├── application/
-│   │   │   └── pipeline.py       # 应用层编排（Pipeline）
-│   │   │   └── driver.py         # pipeline driver
-│   │   │   └── thread.py         # pipeline thread
-│   │   ├── events/               # 领域事件定义（E1-E44）
+│   │   │   └── pipeline.py         # 应用层编排（Pipeline）
+│   │   │   └── driver.py           # pipeline driver
+│   │   │   └── pipeline_thread.py  # pipeline thread
+│   │   ├── events/               # 领域事件定义
 │   │   ├── factory/
 │   │   └── models/               # 领域模型
 │   │   		├── analysis/         # Analyzer聚合
@@ -217,17 +350,17 @@ NanoAgent/
 │   │       ├── knowledge/        # KnowledgeManager 聚合 + KnowledgeLoader聚合
 │   │       ├── model_routing/    # ModelSelector聚合
 │   │       ├── personality/      # PersonalityManager聚合
-│   │       ├── plan/             # Planner 聚合（ExecutionPlan/PlanStep）
+│   │       ├── plan/             # Planner 聚合
 │   │       └── reasoning/        # ReasoningManager（Strategy 抽象 + ReAct 实现）
 │   │           └── impl/react/
-│   ├── config/                   # 配置读取
+│   ├── config/                   # 配置处理相关
 │   │   ├── config.py
 │   │   └── reader.py
-│   ├── driver/                   # 应用驱动层（线程模型）
+│   ├── driver/                   # 用户线程
 │   │   ├── demo.py
 │   │   └── user_thread.py
 │   ├── infra/                    # 基础设施
-│   │   ├── cache/
+│   │   ├── cache/                # 负责缓存相关
 │   │   ├── db/                   # 存储后端（SQLite/MySQL/ChromaDB）
 │   │   │   ├── storage.py        # 存储抽象接口
 │   │   │   ├── registry.py       # StorageRegistry
@@ -236,7 +369,7 @@ NanoAgent/
 │   │   │   └── event_bus.py
 │   │   └── observability/        # 可观测性（Metrics/Tracing）
 │   ├── llm/                      # LLM 网关层
-│   │   ├── llm_gateway.py            # 要改成LLMGateway聚合
+│   │   ├── llm_gateway.py        # LLMGateway聚合
 │   │   ├── registry.py           # LLMProviderRegistry
 │   │   ├── providers/            # 各 Provider 实现
 │   │   │   ├── claude_api.py
@@ -246,17 +379,18 @@ NanoAgent/
 │   │   │   ├── minmax_api.py
 │   │   │   ├── glm_api.py
 │   │   │   └── deepseek_api.py
-│   ├── schemas/                  # 跨层共享类型与错误码
-│   │   ├── domain.py             # DomainEvent / AggregateRoot
-│   │   ├── types.py              # LLMRequest/Response, ToolCall/Result, UIMessage
-│   │   ├── errors.py             # ErrorCategory, LLMErrorCode, AgentError
+│   ├── schemas/                  # 跨层共享类型
+│   │   ├── types.py              
+│   │   ├── errors.py            
 │   │   ├── consts.py
 │   │   ├── event_bus.py
 │   │   ├── ids.py
 │   │   └── message_convert.py
+│   │   └── interface.py 					#定义基类
+│   │   └── task.py 					    #定义一些和Task相关的对象
 │   ├── tools/                    # 工具层
 │   │   ├── tool_registry.py      # ToolRegistry / ToolChainRouter
-│   │   ├── models.py             # BaseTool / build_tool_output
+│   │   ├── tool_base.py          # 工具基类
 │   │   └── impl/                 # 工具实现
 │   │       ├── search_tool.py
 │   │       ├── sql_query_tool.py
@@ -269,8 +403,8 @@ NanoAgent/
 │   │       ├── calculator_tool.py
 │   │       ├── current_time_tool.py
 │   │       └── run_python_tool.py
-│   └── utils/                    # 通用工具
-│       ├── concurrency/          # 并发原语（WaitGroup/MessageQueue）
+│   └── utils/                    # 通用功能函数
+│       ├── concurrency/          
 │       ├── env_util/
 │       ├── http/
 │       ├── log/
@@ -281,59 +415,138 @@ NanoAgent/
     └── runtime/
 ```
 
+## 关键类定义
 
----
+### Task
 
-## 领域模型详细定义
+- 文件位置：`src/schemas/task.py`
+- 职责：没有方法的静态对象，提供围绕Task的基础信息   
 
-### 值对象与 ID 类型
+#### 任务难度定义
 
-依据需要定义
+| 复杂度      | 特征                     | 适用场景                         |
+| ----------- | ------------------------ | -------------------------------- |
+| **L1 简单** | 单步、模板化、低幻觉要求 | 寒暄、格式化、标签分类、简单提取 |
+| **L2 标准** | 单步推理、常识、短上下文 | 客服问答、邮件起草、基础翻译     |
+| **L3 复杂** | 多步推理、代码、分析     | 代码审查、数据分析、报告生成     |
+| **L4 专家** | 深度推理、创意、长链思维 | 架构设计、数学证明、策略规划     |
 
----
+#### 成员变量
+
+- id: task 唯一ID
+- user_id: 提交任务的用户唯一ID
+- description: 用户提交的原始任务描述
+- task_type: 任务类型标签，如 "data_analysis", "code_generation"
+- complexity: "L1简单" | "L2标准" | "L3负责" | "L4专家"
+- required_tools:      预估需要的工具名称列表
+- reasoning_depth:     单步推理 | 多步推理
+- output_constraints: 输出约束，包括格式要求/长度要求/实效性要求/语言要求等等
+- notes: LLM 分析备注（约束、风险、前提条件等）
+- related_user_preference_entries: 任务相关用户偏好，包含两个部分：一是user_preference信息 二是置信度0-1
+- related_knowledge_entries: 任务相关的先验知识，包含两个部分：一是user_preference信息 二是置信度0-1
+- plan_id: task关联的执行计划ID
+
+### PlanStep
+
+- 文件位置：`src/schemas/task.py`
+- 职责：没有方法的静态对象，描述任务计划一个步骤的基础信息
+
+#### 成员变量
+
+- order: step步骤编号
+- goal: 该步骤的目标
+- description: 该步骤做什么的描述
+- key_results: list[str]. 这一步要产生哪些关键输出
+
+### Plan
+
+- 文件位置：`src/schemas/task.py`
+- 职责：没有方法的静态对象，描述任务的执行计划
+
+#### 成员变量
+
+- id: plan 唯一ID
+- task_id: 关联的task id
+- step_count: 执行计划的步骤数
+- step_list: list[PlanStep]. 步骤列表
+- created_at
+
+### PlanVersion
+
+- 文件位置：`src/schemas/task.py`
+- 职责：描述历史版本的执行计划
+
+#### 成员变量
+
+- plan: Plan
+- change_reason  #计划评审不通过/任务结果评审不通过/任务步骤结果评审不通过/用户主动纠偏/
+
+### EvaluationResult
+
+- 文件位置：`src/schemas/task.py`
+- 职责：描述评测结果
+
+#### 成员变量
+
+- evaluation_target: 评测对象 plan | task_result | stage_ result
+- passed: 是否通过
+- feedback: 评测反馈
+
+
+
+### User Preference Entry
+
+- 文件位置：`src/schemas/types.py`
+- 职责：用户偏好
+
+#### 成员变量
+
+- user_id: 用户ID
+- keyword: 偏好关键字
+- content: 偏好内容
+
+### Knowledge Entry
+
+- 文件位置：`src/schemas/types.py`
+- 职责：知识条目
+
+#### 成员变量
+
+- entry_id: 用户ID
+- title: 标题
+- tags: 标签列表
+- content: 知识内容
 
 ### Analyzer
 
 #### 文件位置
 
-`src/agent/models/plan/.py`
+`src/agent/models/plan/analyzer.py`
 
 #### 职责
 
-1. 调用LLM提取任务特征信息
+1. 调用LLM或者策略类提取任务特征信息
 2. 根据特征信息获取相关用户偏好信息
-3. 根据特征信息获取可复用knowledge信息
-4. 输出任务分析结果
+3. 根据特征信息获取相关knowledge信息
+4. 正常输出Task对象，异常抛异常
 
 #### 接口
 
 **接口名**
 
-analyze(函数签名你来定义)
-
-注意：遇到错误需要抛出对应异常
+analyze(self, task_description, llm_gateway, knowledge_loader, personality_manager, tool_registry) ->Task
 
 **输入**
 
-用户提交的任务信息
+- 用户提交的原始任务信息
+- llm_gateway: 调用LLM Provider
+- knowledge_loader: 获取任务相关知识
+- personality_manager: 获取用户偏好信息
+- tool_registry: 工具列表
 
 **输出**
 
-AnalysisReport
-
-```python
-@dataclass(frozen=True)
-class AnalysisReport:
-    task_type: str            # 任务类型标签，如 "data_analysis", "code_generation"
-    complexity: str           # "L1简单" | "L2标准" | "L3负责" | "L4专家"
-    required_tools: list[str] # 预估需要的工具名称列表
-    estimated_steps: int      # 预估步骤数
-    user_preference_can_apply # 这个任务需要考虑的用户偏好，类型需要定义
-    related_knowledge         # 这个任务可以参考的相关知识，类型需要定义
-    notes: str                # LLM 分析备注（约束、风险、前提条件等）
-```
-
-
+Task对象
 
 ### CheckpointProcessor（聚合根）
 
@@ -362,43 +575,6 @@ class AnalysisReport:
 
 checkpoint聚合实体，需要定义
 
-### Planner
-
-#### 文件位置
-
-`src/agent/models/plan/planner.py`
-
-#### 职责
-
-- 制定计划 
-- Plan评审不通过或者Task执行结果不符合预期时，更新整个计划
-- 更新计划的某个Stage 
-- 调用QualityEvaluator评审整个计划
-- 计划制定或者更新过程中，需要用户澄清时，可以发布“需要用户澄清事件”，然后阻塞在消息队列等待消息
-
-#### 成员变量
-
-需要定义
-
-#### 方法签名
-
-需要定义
-
-#### 最终输出
-
-计划报告，至少包含 1.完成需要哪些执行步骤 2.每个执行步骤要做什么 3.每个执行步骤的目标是什么 4. 每个步骤应该产出哪些Key Results。计划报告的数据结构需要定义
-
-#### 枚举：PlanUpdateTrigger
-
-```python
-class PlanUpdateTrigger(str, Enum):
-    QUALITY_CHECK_FAILED  = "QUALITY_CHECK_FAILED"   # 整体质检不通过
-    PLAN_REVIEW_FAILED    = "PLAN_REVIEW_FAILED"     # 计划评审不通过
-    STAGE_EVAL_FAILED     = "STAGE_EVAL_FAILED"      # 步骤评测不通过
-    USER_GUIDANCE         = "USER_GUIDANCE"          # 用户主动建议
-    STAGE_INFEASIBLE      = "STAGE_INFEASIBLE"       # 步骤执行中发现无法完成
-```
-
 ### ContextManager
 
 #### 文件位置
@@ -424,8 +600,6 @@ ContextManager的管理的上下文信息，先要转换成标准协议里的LLM
 
 需要定义
 
-
-
 #### 设计说明
 
 - tool call 配对修复：如果消息列表末尾存在 `tool_use` 但没有对应的 `tool_result`，`get_context_window()` 会移除该孤立的 `tool_use`，防止 LLM API 报错
@@ -442,23 +616,21 @@ ContextManager的管理的上下文信息，先要转换成标准协议里的LLM
 
 1. 评估整体任务结果是否符合预期
 2. 评估单个Stage执行结果是否符合预期
-3. 评估执行计划是否符合预期
+3. 评估执行计划设计是否符合预期
 
 #### 成员变量
 
-需要定义
+- 无
 
-先做简单一点，不需要存很多状态，类似一个方法对象。
+#### 接口
 
-先实现调用LLM进行评估，未来可以增加基于规则的评估。即一次评估可以组合不同的规则评估或者LLM评估
+evaluate_plan(task: Task, plan:Plan, llmgateway: LLMGateway): EvaluationResult
 
-#### 重要输出
+evaluate_task_result(task: Task, result: str, llmgateway: LLMGateway): EvaluationResult
 
-评估报告，需要定义，至少包含：1.当前被评估的实体（哪个Task结果，哪个Task的哪个Stage结果，哪个Plan的结果） 2.是否通过 3.不通过的理由
+evaluate_stage_result(step: PlanStep, result:str, llmgateway: LLMGateway): EvaluationResult
 
-#### 方法签名
 
-需要定义
 
 ### StageExecutor
 
@@ -496,7 +668,38 @@ class StageStatus(str, Enum):
 
 至少要两个方法：（1）execute负责Stage level循环 （2）execute_one_stage负责Stage内部推理循环
 
+### Planner
 
+#### 文件位置
+
+`src/agent/models/plan/planner.py`
+
+#### 职责
+
+- 制定计划 
+- Plan评审不通过或者Task执行结果不符合预期时，更新整个计划
+- 更新计划的某个Stage 
+- 调用QualityEvaluator评审整个计划
+- 计划制定或者更新过程中，需要用户澄清时，可以发布“需要用户澄清事件”，然后阻塞在消息队列等待消息
+
+#### 成员变量
+
+- current_plan: 当前计划
+- history_plan: list[PlanVersion] 历史计划
+
+#### 方法签名
+
+make_plan(task: Task, llm_api: llmgateway) : Plan —— 根据Task里面有用的字段，调用大模型llmgateway生成一个plan
+
+renew_plan(task:Task, feedback: str,llm_api: llmgateway): Plan —— 结合feedback, 调用大模型llmgateway重新生成一个plan
+
+renew_plan_step(step:PlanStep, feedback:str, llm_api: llmgateway): PlanStep —— 结合feedback重新制定某个Step
+
+get_plan_step(plan: Plan, order_id: int): PlanStep | None —— 获取Plan里某一个Step
+
+update_plan_step(plan: Plan, order_id: int, step: PlanStep) —— 替换某一个Step
+
+get_plan(): Plan —— 返回整个计划
 
 
 

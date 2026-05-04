@@ -4,7 +4,7 @@ import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable
 
-from schemas.ids import TaskId
+from schemas.ids import TaskId, UserId
 from schemas.errors import AgentError
 from schemas.task import PlanUpdateTrigger, Task, TaskResult
 from schemas.types import UIMessage
@@ -114,6 +114,7 @@ class Pipeline:
 
         self._task = Task(
             id=task_id,
+            user_id=UserId(""),
             description=task_description,
             created_at=datetime.now(timezone.utc),
         )

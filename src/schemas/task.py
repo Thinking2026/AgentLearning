@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from schemas.domain import DomainEvent
@@ -11,8 +11,9 @@ from schemas.ids import (
     PlanId,
     PlanStepId,
     TaskId,
+    UserId,
 )
-from schemas.types import LLMMessage, LLMResponse, ToolCall
+from schemas.types import KnowledgeEntry, LLMMessage, LLMResponse, ToolCall, UserPreferenceEntry
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +114,24 @@ class RoutingDecision:
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class RelatedPreferenceEntry:
+    entry: UserPreferenceEntry
+    confidence: float  # 0-1
+
+
+@dataclass(frozen=True)
+class RelatedKnowledgeEntry:
+    entry: KnowledgeEntry
+    confidence: float  # 0-1
+
+
+@dataclass(frozen=True)
 class PlanStep:
     id: PlanStepId
     goal: str
     description: str
     order: int
+    key_results: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -139,7 +153,6 @@ class PlanUpdateTrigger(str, Enum):
     PLAN_REVIEW_FAILED   = "PLAN_REVIEW_FAILED"
     STAGE_EVAL_FAILED    = "STAGE_EVAL_FAILED"
     USER_GUIDANCE        = "USER_GUIDANCE"
-    STAGE_INFEASIBLE     = "STAGE_INFEASIBLE"
 
 
 # ---------------------------------------------------------------------------
@@ -163,10 +176,32 @@ class NextDecision:
     raw_response: LLMResponse | None = None
 
 @dataclass(frozen=True)
+class Plan:
+    id: PlanId
+    task_id: TaskId
+    step_list: list[PlanStep] = field(default_factory=list)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def step_count(self) -> int:
+        return len(self.step_list)
+
+
+@dataclass(frozen=True)
 class Task:
     id: TaskId
+    user_id: UserId
     description: str
     created_at: datetime
+    task_type: str = ""
+    complexity: str = ""
+    required_tools: list[str] = field(default_factory=list)
+    reasoning_depth: str = ""
+    output_constraints: str = ""
+    notes: str = ""
+    related_user_preference_entries: list[RelatedPreferenceEntry] = field(default_factory=list)
+    related_knowledge_entries: list[RelatedKnowledgeEntry] = field(default_factory=list)
+    plan_id: PlanId | None = None
     task_feat: TaskFeature | None = None
 
 @dataclass(frozen=True)
@@ -176,6 +211,14 @@ class TaskResult:
     result: str
     error_reason: str
     delivered_at: datetime
+
+@dataclass(frozen=True)
+class PlanVersion:
+    """Snapshot of a plan at a specific version, kept for audit and rollback."""
+    plan: Plan
+    version: int
+    change_reason: str
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 __all__ = [
@@ -187,10 +230,15 @@ __all__ = [
     "KnowledgeIndexed",
     "ProviderCapabilities",
     "RoutingDecision",
+    "RelatedPreferenceEntry",
+    "RelatedKnowledgeEntry",
     "PlanStep",
+    "Plan",
     "TaskFeature",
     "PlanUpdateTrigger",
     "NextDecisionType",
     "NextDecision",
+    "Task",
     "TaskResult",
+    "PlanVersion",
 ]

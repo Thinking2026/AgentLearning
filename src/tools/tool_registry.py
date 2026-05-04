@@ -19,7 +19,7 @@ from schemas import (
     build_error,
 )
 from infra.observability.tracing import Span, Tracer
-from tools.models import BaseTool
+from tools.tool_base import BaseTool
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
