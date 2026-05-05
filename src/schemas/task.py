@@ -42,7 +42,7 @@ class EvaluationReport:
 
 @dataclass(frozen=True)
 class LLMProviderCapabilities:
-    tool_name: str
+    name: str
     cognitive_complexity: list[str] #认知复杂度
     best_scenarios: list[str]
     top_strengths: list[str]
@@ -131,6 +131,30 @@ class TaskComplexity:
     level: int
     features: list[str] = field(default_factory=list) #这个难度的任务有什么特征
     use_cases: list[str] = field(default_factory=list) #这个难度一般是什么任务
+
+L1 = TaskComplexity(
+    level=1,
+    features=["单步", "模板化", "低幻觉要求"],
+    use_cases=["寒暄", "格式化", "标签分类", "简单提取"],
+)
+
+L2 = TaskComplexity(
+    level=2,
+    features=["单步推理", "常识", "短上下文"],
+    use_cases=["客服问答", "邮件起草", "基础翻译"],
+)
+
+L3 = TaskComplexity(
+    level=3,
+    features=["多步推理", "代码", "分析"],
+    use_cases=["代码审查", "数据分析", "报告生成"],
+)
+
+L4 = TaskComplexity(
+    level=4,
+    features=["深度推理", "创意", "长链思维"],
+    use_cases=["架构设计", "数学证明", "策略规划"],
+)
 
 class ReasoningType(str, Enum):
     SINGLE_STEP          = "single-step reasoning"
