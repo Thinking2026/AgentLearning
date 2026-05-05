@@ -8,7 +8,7 @@ import pytest
 from agent.models.reasoning.decision import NextDecision, NextDecisionType
 from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
 from agent.models.reasoning.impl.react.react_strategy import ReActStrategy
-from schemas.types import LLMMessage, LLMRequest, LLMResponse, ToolCall
+from schemas.types import LLMMessage, UnifiedLLMRequest, LLMResponse, ToolCall
 
 
 # ---------------------------------------------------------------------------
@@ -20,10 +20,10 @@ def test_formatter_build_request():
     msgs = [LLMMessage(role="user", content="hello")]
     tools = [{"name": "calc"}]
     req = fmt.build_request(system_prompt="sys", conversation=msgs, tools=tools)
-    assert isinstance(req, LLMRequest)
+    assert isinstance(req, UnifiedLLMRequest)
     assert req.system_prompt == "sys"
     assert req.messages is msgs
-    assert req.tools is tools
+    assert req.tool_schemas is tools
 
 
 def test_formatter_format_tool_observation_success():
@@ -128,20 +128,18 @@ def test_parse_multiple_tool_calls():
 
 def test_build_llm_request():
     strategy = make_strategy()
-    context = MagicMock()
-    context.get_context_window.return_value = SimpleNamespace(
-        system_prompt="",
+    req_in = UnifiedLLMRequest(
+        system_prompt="base context",
         messages=[LLMMessage(role="user", content="hi")],
-        token_count=1,
+        tool_schemas=[{"name": "calc"}],
     )
-    tool_registry = MagicMock()
-    tool_registry.get_tool_schemas.return_value = [{"name": "calc"}]
 
-    req = strategy.build_llm_request(context, tool_registry)
-    assert isinstance(req, LLMRequest)
-    assert req.system_prompt == ReActStrategy.SYSTEM_PROMPT
+    req = strategy.build_llm_request(req_in)
+    assert isinstance(req, UnifiedLLMRequest)
+    assert req.system_prompt.startswith(ReActStrategy.SYSTEM_PROMPT)
+    assert "base context" in req.system_prompt
     assert len(req.messages) == 1
-    assert req.tools == [{"name": "calc"}]
+    assert req.tool_schemas == [{"name": "calc"}]
 
 
 # ---------------------------------------------------------------------------

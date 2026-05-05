@@ -10,7 +10,7 @@ from schemas import (
     HttpError,
     LLMError,
     LLMErrorCode,
-    LLMRequest,
+    UnifiedLLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
     LLM_NETWORK_ERROR,
@@ -103,7 +103,7 @@ class BaseLLMClient(ABC):
         return tracer.start_span(name=name, type="llm", attributes=attributes)
 
     @abstractmethod
-    def generate(self, request: LLMRequest) -> LLMResponse:
+    def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
         raise NotImplementedError
 
 
@@ -146,7 +146,7 @@ class LLMGateway(BaseLLMClient):
     def provider_name(self) -> str:  # type: ignore[override]
         return self._provider_name
 
-    def generate(self, request: LLMRequest) -> LLMResponse:
+    def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
         import time as _time
         logger = Logger.get_instance()
         logger.info(

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable
 
 from agent.models.context.budget.token_budget_manager import BaseTokenBudgetManager
 from agent.models.context.estimator.token_estimator import BaseTokenEstimator
-from schemas.types import LLMMessage, LLMRequest
+from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 class ContextTruncator(ABC):
     @abstractmethod
-    def truncate(self, request: LLMRequest, total_budget: int, estimator: BaseTokenEstimator) -> TruncationResult:
+    def truncate(self, request: UnifiedLLMRequest, total_budget: int, estimator: BaseTokenEstimator) -> TruncationResult:
         ...
 
 # ===========================================================================
@@ -29,7 +29,7 @@ class ContextTruncator(ABC):
 
 @dataclass
 class TruncationResult:
-    request: LLMRequest
+    request: UnifiedLLMRequest
     compacted_messages: list[LLMMessage] | None  # None = no truncation needed
 
 
@@ -100,7 +100,7 @@ class ReActContextTruncator(ContextTruncator):
     def __init__(
         self,
         budget_manager: BaseTokenBudgetManager,
-        llm_client_factory: Callable[[str], BaseLLMClient],
+        llm_client_factory: Callable[[str], BaseLLMClient] | None,
         logger: Logger,
         config: ReActTruncationConfig | None = None,
     ) -> None:
@@ -109,7 +109,7 @@ class ReActContextTruncator(ContextTruncator):
         self._logger = logger
         self._cfg = config or ReActTruncationConfig()
 
-    def truncate(self, request: LLMRequest, total_budget: int, effective_estimator: BaseTokenEstimator) -> TruncationResult:
+    def truncate(self, request: UnifiedLLMRequest, total_budget: int, effective_estimator: BaseTokenEstimator) -> TruncationResult:
         if (effective_estimator is None) or (request is None) or (0 == total_budget):
             raise ValueError("Effective estimator, request, and tool budget must be provided and non-zero")
 
@@ -140,7 +140,7 @@ class ReActContextTruncator(ContextTruncator):
         fits = self._make_fits_fn(budget, effective_estimator)
 
         def _log_truncation_result(strategy: str, msgs_after: list[LLMMessage]) -> None:
-            est_after = effective_estimator.estimate(LLMRequest(messages=msgs_after), ["assistant", "tool"])
+            est_after = effective_estimator.estimate(UnifiedLLMRequest(messages=msgs_after), ["assistant", "tool"])
             tokens_after = est_after["assistant"] + est_after["tool"]
             ratio = ((tokens_before - tokens_after) / tokens_before) if tokens_before > 0 else 0.0
             self._logger.info(
@@ -167,7 +167,7 @@ class ReActContextTruncator(ContextTruncator):
         self._logger.info("Strategy B insufficient, trying C/D")
 
         # C and D are applied selectively based on which role is over budget
-        est = effective_estimator.estimate(LLMRequest(messages=msgs), ["assistant", "tool"])
+        est = effective_estimator.estimate(UnifiedLLMRequest(messages=msgs), ["assistant", "tool"])
         if est["assistant"] > assistant_budget:
             msgs = self._strategy_c_trim_args(msgs)
         if est["tool"] > tool_budget:
@@ -193,7 +193,7 @@ class ReActContextTruncator(ContextTruncator):
         if dropped := self._strategy_e_binary_drop(msgs, fits):
             msgs = dropped
             if not fits(msgs):
-                est_after = effective_estimator.estimate(LLMRequest(messages=msgs), ["assistant", "tool"])
+                est_after = effective_estimator.estimate(UnifiedLLMRequest(messages=msgs), ["assistant", "tool"])
                 tokens_after = est_after["assistant"] + est_after["tool"]
                 ratio = (tokens_before - tokens_after) / tokens_before if tokens_before > 0 else 0.0
                 self._logger.warning(
@@ -386,14 +386,14 @@ class ReActContextTruncator(ContextTruncator):
             history_text = "\n".join(
                 f"[{m.role}] {m.content}" for m in msgs_to_summarize
             )
-            summary_request = LLMRequest(
+            summary_request = UnifiedLLMRequest(
                 system_prompt=(
                     "You are a context compressor. Summarize the following reasoning steps "
                     "into a single concise assistant message. Preserve key facts, tool results, "
                     "and conclusions. Output only the summary text, no preamble."
                 ),
                 messages=[LLMMessage(role="user", content=history_text)],
-                tools=[],
+                tool_schemas=[],
             )
             response = client.generate(summary_request)
             self._logger.info("Strategy F: summary LLM response", content=response.assistant_message.content)
@@ -423,17 +423,17 @@ class ReActContextTruncator(ContextTruncator):
         middle = units[kf:end_idx]
         return head, middle, tail
 
-    def _make_result(self, request: LLMRequest, messages: list[LLMMessage]) -> TruncationResult:
-        new_request = LLMRequest(
+    def _make_result(self, request: UnifiedLLMRequest, messages: list[LLMMessage]) -> TruncationResult:
+        new_request = UnifiedLLMRequest(
             system_prompt=request.system_prompt,
             messages=messages,
-            tools=request.tools,
+            tool_schemas=request.tool_schemas,
         )
         return TruncationResult(request=new_request, compacted_messages=messages)
 
     def _make_fits_fn(self, budget, estimator: BaseTokenEstimator) -> Callable[[list[LLMMessage]], bool]:
         def fits(m: list[LLMMessage]) -> bool:
-            est = estimator.estimate(LLMRequest(messages=m), ["assistant", "tool"])
+            est = estimator.estimate(UnifiedLLMRequest(messages=m), ["assistant", "tool"])
             return (
                 est["assistant"] <= budget.role_budgets["assistant"].token_budget
                 and est["tool"] <= budget.role_budgets["tool"].token_budget
@@ -447,7 +447,7 @@ class TruncatorFactory:
         cls,
         strategy: str,
         budget_manager: BaseTokenBudgetManager,
-        llm_client_factory: Callable[[str], BaseLLMClient],
+        llm_client_factory: Callable[[str], BaseLLMClient] | None,
         logger: Logger,
         config: JsonConfig | None = None,
     ) -> ContextTruncator:

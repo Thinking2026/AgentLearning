@@ -12,7 +12,7 @@ from schemas.task import (
     PlanStep,
     Task,
 )
-from schemas.types import LLMMessage, LLMRequest
+from schemas.types import LLMMessage, UnifiedLLMRequest
 from agent.models.evaluate.quality_evaluator import QualityEvaluator
 from agent.events.events import UserClarificationRequested
 from utils.log.log import Logger, zap
@@ -198,7 +198,7 @@ class Planner:
             f"Produce a revised step."
         )
         response = llm_api.generate(
-            LLMRequest(
+            UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=_RENEW_STEP_SYSTEM_PROMPT,
             )
@@ -236,7 +236,7 @@ class Planner:
         system: str = _MAKE_PLAN_SYSTEM_PROMPT,
     ) -> Plan:
         response = llm_api.generate(
-            LLMRequest(
+            UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=system,
             )

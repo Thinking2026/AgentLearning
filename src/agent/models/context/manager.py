@@ -3,16 +3,16 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
-from schemas import LLMMessage, LLMRequest
+from schemas import LLMMessage, UnifiedLLMRequest, LLMResponse
+from schemas.task import KnowledgeEntry, UserPreferenceEntry
 from schemas.types import LLMRole
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from agent.models.context.estimator.token_estimator import BaseTokenEstimator
-    from agent.models.context.truncation.token_truncation import ContextTruncator as _ContextTruncator
+    from agent.models.context.truncation.token_truncation import ContextTruncator
     from config.config import JsonConfig
     from llm.llm_gateway import BaseLLMClient
 
@@ -26,65 +26,64 @@ class ContextMessage:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-@dataclass(frozen=True)
-class ContextWindow:
-    system_prompt: str
-    messages: list[LLMMessage]
-    token_count: int = 0
-
-@dataclass(frozen=True)
-class AgentContext:
-    system_prompt: str
-    tool_schemas: str
-    messages: list[ContextMessage]
-    stage_index: list[int]
-    variables: dict[str, Any]
-
-
-class ContextTruncator(Protocol):
-    def truncate(self, request: LLMRequest, total_budget: int, estimator: Any) -> Any:
-        ...
+@dataclass
+class StageRecord:
+    stage_index: int
+    first_message_id: str | None = None
+    last_message_id: str | None = None
+    summary: str | None = None
+    dropped: bool = False
 
 
 class ContextManager:
-    """Manage the context for one Stage execution.
+    """Single source of truth for all context sent to the LLM.
 
-    The raw ContextMessage history is kept for debug/checkpoint use. The
-    ContextWindow view is the only LLM-facing view and repairs incomplete tool
-    call/tool result pairs before a request is built.
-
-    Pass a JsonConfig to enable automatic token estimation and truncation via
-    prepare_context(). Without a config the manager still works but
-    prepare_context() falls back to get_context_window() with no trimming.
+    Responsibilities:
+    - Owns system_prompt, tool_schemas, knowledge_entries, user_preferences, variables
+    - Tracks conversation messages in _ctx_window (mutable) and _history (append-only)
+    - Tracks stage boundaries by message ID (immune to index shifting)
+    - Assembles and optionally truncates LLMRequest via get_context_window()
     """
 
     def __init__(
         self,
         config: JsonConfig | None = None,
         strategy_name: str = "react",
+        llm_client_factory: Callable[[str], BaseLLMClient] | None = None,
     ) -> None:
-        self._system_prompt = ""
-        self._tool_schemas = ""
-        self._messages: list[ContextMessage] = []
-        self._variables: dict[str, Any] = {}
-        self._lock = threading.RLock()
         self._config = config
         self._strategy_name = strategy_name
-        # Lazily-created caches: estimator per provider, truncator per strategy
+        self._llm_client_factory = llm_client_factory
+
+        self._system_prompt: str = ""
+        self._tool_schemas: list[dict[str, Any]] = []
+        self._knowledge_entries: list[KnowledgeEntry] = []
+        self._user_preferences_entries: list[UserPreferenceEntry] = []
+        self._variables: dict[str, Any] = {}
+
+        self._ctx_window: list[ContextMessage] = []
+        self._history: list[ContextMessage] = []
+
+        self._stage_records: list[StageRecord] = []
+        self._message_id_to_stage: dict[str, int] = {}
+        self._active_stage_index: int | None = None
+
         self._estimators: dict[str, BaseTokenEstimator] = {}
-        self._truncator: _ContextTruncator | None = None
+        self._truncator: ContextTruncator | None = None
+
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
-    # System prompt
+    # Configuration setters
     # ------------------------------------------------------------------
-
-    def get_system_prompt(self) -> str:
-        with self._lock:
-            return self._system_prompt
 
     def set_system_prompt(self, prompt: str) -> None:
         with self._lock:
             self._system_prompt = prompt
+
+    def get_system_prompt(self) -> str:
+        with self._lock:
+            return self._system_prompt
 
     def append_system_prompt(self, text: str) -> None:
         with self._lock:
@@ -93,6 +92,124 @@ class ContextManager:
     def append_system_prompt_line(self, text: str) -> None:
         with self._lock:
             self._system_prompt += f"\n{text}"
+
+    def set_tool_schemas(self, schemas: list[dict[str, Any]]) -> None:
+        with self._lock:
+            self._tool_schemas = list(schemas)
+
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._tool_schemas)
+
+    def set_knowledge_entries(self, entries: list[KnowledgeEntry]) -> None:
+        with self._lock:
+            self._knowledge_entries = list(entries)
+
+    def set_user_preferences(self, entries: list[UserPreferenceEntry]) -> None:
+        with self._lock:
+            self._user_preferences_entries = list(entries)
+
+    def set_variables(self, variables: dict[str, Any]) -> None:
+        with self._lock:
+            self._variables = dict(variables)
+
+    def get_variables(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._variables)
+
+    # ------------------------------------------------------------------
+    # Stage lifecycle
+    # ------------------------------------------------------------------
+
+    def begin_stage(self, stage_index: int) -> None:
+        """Record the start of a new stage. The next add_message call will
+        set first_message_id for this stage."""
+        with self._lock:
+            while len(self._stage_records) <= stage_index:
+                self._stage_records.append(
+                    StageRecord(stage_index=len(self._stage_records))
+                )
+            self._active_stage_index = stage_index
+
+    def end_stage(self, stage_index: int) -> None:
+        """Mark the stage as complete, recording last_message_id."""
+        with self._lock:
+            if stage_index >= len(self._stage_records):
+                return
+            record = self._stage_records[stage_index]
+            last_id = self._ctx_window[-1].id if self._ctx_window else None
+            self._stage_records[stage_index] = StageRecord(
+                stage_index=record.stage_index,
+                first_message_id=record.first_message_id,
+                last_message_id=last_id,
+                summary=record.summary,
+                dropped=record.dropped,
+            )
+            if self._active_stage_index == stage_index:
+                self._active_stage_index = None
+
+    def drop_stage(self, stage_index: int) -> None:
+        """Remove all ctx_window messages for stage_index. History is unchanged."""
+        with self._lock:
+            if stage_index >= len(self._stage_records):
+                return
+            stage_msg_ids = self._get_stage_message_ids(stage_index)
+            self._ctx_window = [m for m in self._ctx_window if m.id not in stage_msg_ids]
+            record = self._stage_records[stage_index]
+            self._stage_records[stage_index] = StageRecord(
+                stage_index=record.stage_index,
+                first_message_id=record.first_message_id,
+                last_message_id=record.last_message_id,
+                summary=record.summary,
+                dropped=True,
+            )
+
+    def summarize_stage(self, stage_index: int, summary: str) -> None:
+        """Replace stage messages in ctx_window with a single summary message."""
+        with self._lock:
+            if stage_index >= len(self._stage_records):
+                return
+            stage_msg_ids = self._get_stage_message_ids(stage_index)
+            if not stage_msg_ids:
+                return
+
+            summary_msg = ContextMessage(
+                id=str(uuid4()),
+                role="assistant",
+                content=summary,
+                metadata={"summarized": True, "stage_index": stage_index},
+            )
+            new_window: list[ContextMessage] = []
+            inserted = False
+            for m in self._ctx_window:
+                if m.id in stage_msg_ids:
+                    if not inserted:
+                        new_window.append(summary_msg)
+                        self._message_id_to_stage[summary_msg.id] = stage_index
+                        inserted = True
+                else:
+                    new_window.append(m)
+            self._ctx_window = new_window
+
+            record = self._stage_records[stage_index]
+            self._stage_records[stage_index] = StageRecord(
+                stage_index=record.stage_index,
+                first_message_id=record.first_message_id,
+                last_message_id=record.last_message_id,
+                summary=summary,
+                dropped=record.dropped,
+            )
+
+    def get_stage_messages(self, stage_index: int) -> list[LLMMessage]:
+        """Return ctx_window messages for stage_index as LLMMessages."""
+        with self._lock:
+            if stage_index >= len(self._stage_records):
+                return []
+            if self._stage_records[stage_index].dropped:
+                return []
+            stage_msg_ids = self._get_stage_message_ids(stage_index)
+            msgs = [m for m in self._ctx_window if m.id in stage_msg_ids]
+            return self._to_llm_messages(msgs)
 
     # ------------------------------------------------------------------
     # Message management
@@ -104,173 +221,141 @@ class ContextManager:
         content: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
+        """Append a message to ctx_window and history. Returns the message UUID."""
         with self._lock:
-            message = ContextMessage(
+            msg = ContextMessage(
                 id=str(uuid4()),
                 role=role,
                 content=content,
-                metadata=dict(metadata or {}),
+                metadata=dict(metadata) if metadata else {},
             )
-            self._messages.append(message)
-            return message.id
+            self._ctx_window.append(msg)
+            self._history.append(msg)
 
-    def update_message(self, message_id: str, content: str) -> None:
-        with self._lock:
-            self._messages = [
-                self._replace_content(message, content) if message.id == message_id else message
-                for message in self._messages
-            ]
+            if self._active_stage_index is not None:
+                idx = self._active_stage_index
+                self._message_id_to_stage[msg.id] = idx
+                record = self._stage_records[idx]
+                if record.first_message_id is None:
+                    self._stage_records[idx] = StageRecord(
+                        stage_index=record.stage_index,
+                        first_message_id=msg.id,
+                        last_message_id=record.last_message_id,
+                        summary=record.summary,
+                        dropped=record.dropped,
+                    )
+            return msg.id
 
-    def delete_message(self, message_id: str) -> None:
-        with self._lock:
-            self._messages = [message for message in self._messages if message.id != message_id]
-
-    def get_message_by_id(self, message_id: str) -> ContextMessage | None:
-        with self._lock:
-            for message in self._history:
-                if message.id == message_id:
-                    return self._clone_context_message(message)
-            return None
-
-    def get_history(self, limit: int | None = None, offset: int = 0) -> list[ContextMessage]:
-        with self._lock:
-            messages = self._messages[offset:]
-            if limit is not None:
-                messages = messages[:limit]
-            return [self._clone_context_message(message) for message in messages]
-
-    def filter_by_role(self, role: LLMRole) -> list[ContextMessage]:
-        with self._lock:
-            return [
-                self._clone_context_message(message)
-                for message in self._messages
-                if message.role == role
-            ]
-
-    def reset(self) -> None:
-        with self._lock:
-            self._messages.clear()
-            self._variables.clear()
-
-    # ------------------------------------------------------------------
-    # Variables
-    # ------------------------------------------------------------------
-
-    def set_variables(self, variables: dict[str, Any]) -> None:
-        with self._lock:
-            self._variables = dict(variables)
-
-    def get_variables(self) -> dict[str, Any]:
-        with self._lock:
-            return dict(self._variables)
-
-    # ------------------------------------------------------------------
-    # Token and LLM views
-    # ------------------------------------------------------------------
-
-    def get_token_count(self) -> int:
-        with self._lock:
-            total_chars = len(self._system_prompt)
-            for msg in self._messages:
-                total_chars += len(msg.content)
-            return total_chars // 4  # rough 4-chars-per-token fallback
-
-    def summarize(self, strategy: Any) -> None:
-        with self._lock:
-            replacement = strategy.summarize(self._to_llm_messages(self._messages))
-            if isinstance(replacement, str):
-                self._messages = [
-                    ContextMessage(id=str(uuid4()), role="assistant", content=replacement)
-                ]
-            elif isinstance(replacement, list):
-                self._messages = [self._from_llm_message(message) for message in replacement]
-            self._history = list(self._messages)
+    def add_llm_response(self, response: LLMResponse) -> None:
+        """Append the assistant message from an LLMResponse to context."""
+        msg = response.assistant_message
+        self.add_message(
+            role=msg.role,
+            content=msg.content,
+            metadata=dict(msg.metadata),
+        )
 
     def get_conversation_history(self) -> list[LLMMessage]:
+        """Return the full append-only history as LLMMessages."""
         with self._lock:
-            return self._to_llm_messages(self._messages)
+            return self._to_llm_messages(list(self._history))
 
     def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
+        """Replace ctx_window and history (used for checkpoint restore)."""
         with self._lock:
-            self._messages = [self._from_llm_message(m) for m in messages]
+            ctx_msgs = [self._from_llm_message(m) for m in messages]
+            self._ctx_window = ctx_msgs
+            self._history = list(ctx_msgs)
+            self._stage_records = []
+            self._message_id_to_stage = {}
+            self._active_stage_index = None
 
-    def get_context_window(self) -> ContextWindow:
+    # ------------------------------------------------------------------
+    # Core: build LLMRequest
+    # ------------------------------------------------------------------
+
+    def get_context_window(self, provider_name: str) -> UnifiedLLMRequest:
+        """Assemble, optionally truncate, and return the LLMRequest for the LLM."""
         with self._lock:
-            messages = self._repair_tool_pairs(self._messages)
-            llm_messages = self._to_llm_messages(messages)
-            system_prompt = self._system_prompt_with_variables()
-            rough_tokens = (len(system_prompt) + sum(len(m.content) for m in messages)) // 4
-            return ContextWindow(
+            system_prompt = self._build_system_prompt()
+            repaired = self._repair_tool_pairs(list(self._ctx_window))
+            messages = self._to_llm_messages(repaired)
+            request = UnifiedLLMRequest(
                 system_prompt=system_prompt,
-                messages=llm_messages,
-                token_count=rough_tokens,
+                messages=messages,
+                tool_schemas=self._tool_schemas if self._tool_schemas else None,
             )
+            truncator = self._get_truncator()
+            if truncator is not None:
+                estimator = self._get_estimator(provider_name)
+                total_budget = self._get_total_budget(provider_name)
+                result = truncator.truncate(request, total_budget, estimator)
+                return result.request
+            return request
 
-    def prepare_context(self, provider_name: str) -> ContextWindow:
-        """Return a context window ready for LLM consumption.
+    # ------------------------------------------------------------------
+    # Reset / release
+    # ------------------------------------------------------------------
 
-        Reads context_window size from config for the given provider, estimates
-        current token usage, and truncates if usage exceeds the trim threshold.
-        Falls back to get_context_window() when config is absent or the provider
-        has no context_window entry.
-        """
-        window = self.get_context_window()
-        if self._config is None:
-            return window
-
-        context_window_size: int = self._config.get(
-            f"llm.provider_settings.{provider_name}.context_window", 0
-        )
-        if context_window_size <= 0:
-            return window
-
-        estimator = self._get_estimator(provider_name)
-        request = LLMRequest(
-            system_prompt=window.system_prompt,
-            messages=window.messages,
-        )
-        estimation = estimator.estimate(request)
-        if estimation["total"] <= context_window_size * 0.85:
-            return window
-
-        truncator = self._get_truncator()
-        if truncator is None:
-            return window
-
-        result = truncator.truncate(request, context_window_size, estimator)
-        if result.compacted_messages is None:
-            return window
-
-        compacted = result.compacted_messages
-        est_after = estimator.estimate(
-            LLMRequest(system_prompt=window.system_prompt, messages=compacted)
-        )
-        return ContextWindow(
-            system_prompt=window.system_prompt,
-            messages=compacted,
-            token_count=est_after["total"],
-        )
-
-    def get_context(self) -> AgentContext:
+    def reset(self) -> None:
+        """Clear ctx_window and stage tracking. Preserves history and config."""
         with self._lock:
-            return AgentContext(
-                system_prompt=self._system_prompt_with_variables(),
-                messages=[self._clone_context_message(message) for message in self._history],
-                variables=dict(self._variables),
-                token_count=self.get_token_count(),
-            )
+            self._ctx_window.clear()
+            self._stage_records.clear()
+            self._message_id_to_stage.clear()
+            self._active_stage_index = None
 
     def release(self) -> None:
+        """Full teardown: clear everything."""
         with self._lock:
             self._system_prompt = ""
-            self._messages.clear()
+            self._tool_schemas = []
+            self._knowledge_entries = []
+            self._user_preferences_entries = []
+            self._variables = {}
+            self._ctx_window.clear()
             self._history.clear()
-            self._archived_tasks.clear()
-            self._variables.clear()
+            self._stage_records.clear()
+            self._message_id_to_stage.clear()
+            self._active_stage_index = None
+            self._estimators.clear()
+            self._truncator = None
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _build_system_prompt(self) -> str:
+        """Assemble the full system prompt from base + knowledge + preferences + variables."""
+        parts: list[str] = [self._system_prompt]
+
+        if self._knowledge_entries:
+            lines = ["## Knowledge Base"]
+            for entry in self._knowledge_entries:
+                lines.append(f"- {entry.title}: {entry.content}")
+            parts.append("\n".join(lines))
+
+        if self._user_preferences_entries:
+            lines = ["## User Preferences"]
+            for pref in self._user_preferences_entries:
+                lines.append(f"- {pref.content}")
+            parts.append("\n".join(lines))
+
+        if self._variables:
+            lines = ["## Task Variables"]
+            for key, value in sorted(self._variables.items()):
+                lines.append(f"- {key}: {value}")
+            parts.append("\n".join(lines))
+
+        return "\n\n".join(p for p in parts if p)
+
+    def _get_stage_message_ids(self, stage_index: int) -> set[str]:
+        """Return the set of ctx_window message IDs belonging to stage_index."""
+        return {
+            msg_id
+            for msg_id, idx in self._message_id_to_stage.items()
+            if idx == stage_index
+        }
 
     def _get_estimator(self, provider_name: str) -> BaseTokenEstimator:
         if provider_name not in self._estimators:
@@ -278,43 +363,51 @@ class ContextManager:
             self._estimators[provider_name] = TokenEstimatorFactory.get_estimator(provider_name)
         return self._estimators[provider_name]
 
-    def _get_truncator(self) -> _ContextTruncator | None:
-        if self._config is None or self._llm_client_factory is None:
+    def _get_truncator(self) -> ContextTruncator | None:
+        if self._truncator is not None:
+            return self._truncator
+        if self._config is None:
             return None
-        if self._truncator is None:
-            from agent.models.context.truncation.token_truncation import TruncatorFactory
-            from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
-            from utils.log.log import get_logger
-            budget_manager = TokenBudgetManagerFactory.create(self._strategy_name, self._config)
-            logger = get_logger(__name__)
-            self._truncator = TruncatorFactory.create(
-                self._strategy_name, budget_manager, self._llm_client_factory, logger, self._config
-            )
+        from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
+        from agent.models.context.truncation.token_truncation import TruncatorFactory
+        from utils.log.log import get_logger
+        budget_manager = TokenBudgetManagerFactory.create(self._strategy_name, self._config)
+        logger = get_logger(__name__)
+        self._truncator = TruncatorFactory.create(
+            self._strategy_name,
+            budget_manager,
+            self._llm_client_factory,
+            logger,
+            self._config,
+        )
         return self._truncator
 
-    def _system_prompt_with_variables(self) -> str:
-        if not self._variables:
-            return self._system_prompt
-        lines = [self._system_prompt, "", "Task variables:"]
-        lines.extend(f"- {key}: {value}" for key, value in sorted(self._variables.items()))
-        return "\n".join(line for line in lines if line != "")
+    def _get_total_budget(self, provider_name: str) -> int:
+        if self._config is None:
+            return 32000
+        return int(
+            self._config.get(
+                f"llm.provider_settings.{provider_name}.context_window", 32000
+            )
+        )
 
     @classmethod
     def _repair_tool_pairs(cls, messages: list[ContextMessage]) -> list[ContextMessage]:
+        """Remove trailing assistant messages whose tool calls have no matching tool results."""
         repaired = list(messages)
         while repaired:
             last = repaired[-1]
             if last.role != "assistant" or not last.metadata.get("tool_calls"):
                 break
             tool_call_ids = {
-                tool_call.get("llm_raw_tool_call_id")
-                for tool_call in last.metadata.get("tool_calls", [])
-                if isinstance(tool_call, dict)
+                tc.get("llm_raw_tool_call_id")
+                for tc in last.metadata.get("tool_calls", [])
+                if isinstance(tc, dict)
             }
             following_tool_ids = {
-                message.metadata.get("llm_raw_tool_call_id")
-                for message in repaired
-                if message.role == "tool"
+                m.metadata.get("llm_raw_tool_call_id")
+                for m in repaired
+                if m.role == "tool"
             }
             if tool_call_ids and not tool_call_ids.issubset(following_tool_ids):
                 repaired.pop()
@@ -340,24 +433,4 @@ class ContextManager:
             role=message.role,
             content=message.content,
             metadata=dict(message.metadata),
-        )
-
-    @staticmethod
-    def _clone_context_message(message: ContextMessage) -> ContextMessage:
-        return ContextMessage(
-            id=message.id,
-            role=message.role,
-            content=message.content,
-            metadata=dict(message.metadata),
-            created_at=message.created_at,
-        )
-
-    @staticmethod
-    def _replace_content(message: ContextMessage, content: str) -> ContextMessage:
-        return ContextMessage(
-            id=message.id,
-            role=message.role,
-            content=content,
-            metadata=dict(message.metadata),
-            created_at=message.created_at,
         )

@@ -19,7 +19,7 @@ from schemas.errors import (
     LLM_RESPONSE_ERROR,
     LLM_CONFIG_ERROR,
 )
-from schemas.types import LLMRequest
+from schemas.types import UnifiedLLMRequest
 
 
 # ---------------------------------------------------------------------------

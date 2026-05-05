@@ -8,7 +8,7 @@ from schemas import (
     AgentError,
     HttpError,
     LLMMessage,
-    LLMRequest,
+    UnifiedLLMRequest,
     LLMResponse,
     LLMUsage,
     LLM_CONFIG_ERROR,
@@ -58,7 +58,7 @@ class OpenAILLMClient(BaseLLMClient):
             timeout=timeout,
         )
 
-    def generate(self, request: LLMRequest) -> LLMResponse:
+    def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
         last_message = request.messages[-1].content if request.messages else ""
         with self._start_span(
             "llm.generate",
@@ -76,7 +76,7 @@ class OpenAILLMClient(BaseLLMClient):
                     "max_tokens": request.max_tokens,
                     "temperature": request.temperature,
                 }
-                tools = self._serialize_tools(request.tools)
+                tools = self._serialize_tools(request.tool_schemas)
                 if tools:
                     payload["tools"] = tools
                     payload["tool_choice"] = "auto"
@@ -105,7 +105,7 @@ class OpenAILLMClient(BaseLLMClient):
         return self._http.post_json(path, payload)
 
     @staticmethod
-    def _serialize_messages(request: LLMRequest) -> list[dict]:
+    def _serialize_messages(request: UnifiedLLMRequest) -> list[dict]:
         serialized_messages: list[dict] = []
         if request.system_prompt:
             serialized_messages.append({"role": "system", "content": request.system_prompt})

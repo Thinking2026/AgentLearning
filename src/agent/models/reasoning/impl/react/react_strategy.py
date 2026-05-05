@@ -7,15 +7,14 @@ from agent.models.reasoning.impl.react.message_formatter import MessageFormatter
 from agent.models.reasoning.strategy import Strategy
 from schemas import (
     LLMMessage,
-    LLMRequest,
+    UnifiedLLMRequest,
     LLMResponse,
     ToolCall,
     ToolResult,
 )
 
 if TYPE_CHECKING:
-    from agent.models.context.manager import ContextWindow
-    from tools import ToolRegistry
+    pass
 
 
 class ReActStrategy(Strategy):
@@ -73,20 +72,15 @@ Final Answer: value1 均值 42.50，value2 均值 18.30，已写入 result.txt�
     def __init__(self) -> None:
         self._formatter = MessageFormatter()
 
-    def build_llm_request(
-        self,
-        context_window: ContextWindow,
-        tool_registry: ToolRegistry,
-        selected_tool_names: list[str] | None = None,
-    ) -> LLMRequest:
-        if selected_tool_names:
-            tools = tool_registry.get_tool_schemas_for(selected_tool_names)
-        else:
-            tools = tool_registry.get_tool_schemas()
-        return self._formatter.build_request(
-            system_prompt=self._merge_system_prompt(context_window.system_prompt),
-            conversation=context_window.messages,
-            tools=tools,
+    def build_llm_request(self, request: UnifiedLLMRequest) -> UnifiedLLMRequest:
+        """Prepend the ReAct system prompt to the request's system prompt."""
+        merged_prompt = self._merge_system_prompt(request.system_prompt or "")
+        return UnifiedLLMRequest(
+            system_prompt=merged_prompt,
+            messages=request.messages,
+            tool_schemas=request.tool_schemas,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
         )
 
     def parse_llm_response(self, response: LLMResponse) -> NextDecision:

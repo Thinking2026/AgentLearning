@@ -59,7 +59,7 @@ from .types import (
     KeyValueGetRequest,
     KeyValueSetRequest,
     LLMMessage,
-    LLMRequest,
+    UnifiedLLMRequest,
     LLMResponse,
     LLMUsage,
     SQLQueryRequest,

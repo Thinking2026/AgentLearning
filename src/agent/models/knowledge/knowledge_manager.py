@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from schemas.task import KnowledgeEntry, Task
-from schemas.types import LLMMessage, LLMRequest
+from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
 
@@ -42,7 +42,7 @@ class KnowledgeManager:
         self, task_summary: str, llm_gateway: LLMGateway
     ) -> list[KnowledgeEntry] | None:
         response = llm_gateway.generate(
-            LLMRequest(
+            UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=task_summary)],
                 system_prompt=_EXTRACT_SYSTEM_PROMPT,
                 max_tokens=1024,

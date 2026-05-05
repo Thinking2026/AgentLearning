@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 
-from schemas.types import LLMRequest, ALL_ROLES
+from schemas.types import UnifiedLLMRequest, ALL_ROLES
 
 
 TokenEstimation = dict[str, int]
 """Keys: 'system', 'user', 'assistant', 'tool', 'total'"""
 
 class BaseTokenEstimator(ABC):
-    def estimate(self, request: LLMRequest, roles: list[str] | str | None = None) -> TokenEstimation:
+    def estimate(self, request: UnifiedLLMRequest, roles: list[str] | str | None = None) -> TokenEstimation:
         if roles is None:
             target_roles = list(ALL_ROLES)
         elif isinstance(roles, str):
@@ -43,9 +43,9 @@ class OpenAICompatibleTokenEstimator(BaseTokenEstimator):
         return len(self._enc.encode(text))
 
 
-def _estimate_by_role(request: LLMRequest, count: ..., role: str) -> int:
+def _estimate_by_role(request: UnifiedLLMRequest, count: ..., role: str) -> int:
     if role == "system":
-        system_tokens = count(request.system_prompt or "") + (count(json.dumps(request.tools)) if request.tools else 0)
+        system_tokens = count(request.system_prompt or "") + (count(json.dumps(request.tool_schemas)) if request.tool_schemas else 0)
         return system_tokens
     elif role == "user":
         user_tokens = 0
@@ -88,10 +88,13 @@ class TokenEstimatorFactory:
         "deepseek": OpenAICompatibleTokenEstimator,
         "qwen":     OpenAICompatibleTokenEstimator,
     }
+    _cache: dict[str, BaseTokenEstimator] = {}
 
     @classmethod
     def get_estimator(cls, provider_name: str) -> BaseTokenEstimator:
-        estimator_cls = cls._REGISTRY.get(provider_name)
-        if estimator_cls is None:
-            raise ValueError(f"Unknown LLM provider: {provider_name!r}")
-        return estimator_cls()
+        if provider_name not in cls._cache:
+            estimator_cls = cls._REGISTRY.get(provider_name)
+            if estimator_cls is None:
+                raise ValueError(f"Unknown LLM provider: {provider_name!r}")
+            cls._cache[provider_name] = estimator_cls()
+        return cls._cache[provider_name]

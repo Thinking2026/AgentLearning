@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import LLMMessage, LLMRequest, LLMResponse
+from schemas import LLMMessage, UnifiedLLMRequest, LLMResponse
 
 
 class MessageFormatter:
@@ -11,11 +11,11 @@ class MessageFormatter:
         system_prompt: str,
         conversation: list[LLMMessage],
         tools: list[dict[str, Any]],
-    ) -> LLMRequest:
-        return LLMRequest(
+    ) -> UnifiedLLMRequest:
+        return UnifiedLLMRequest(
             system_prompt=system_prompt,
             messages=conversation,
-            tools=tools,
+            tool_schemas=tools,
         )
 
     def format_tool_observation(

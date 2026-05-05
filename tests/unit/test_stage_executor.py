@@ -36,6 +36,8 @@ class FakeReasoningManager:
         self,
         context_manager: ContextManager,
         tool_registry: object,
+        selected_tool_names: list[str] | None = None,
+        provider_name: str | None = None,
     ) -> NextDecision:
         return self._decisions.pop(0)
 
@@ -58,6 +60,15 @@ class FakeToolRegistry:
     def execute(self, tool_call: ToolCall) -> ToolResult:
         self.calls.append(tool_call)
         return self.result
+
+    def get_tool_schemas(self) -> list[dict]:
+        return []
+
+    def has_tool(self, name: str) -> bool:
+        return True
+
+    def validate_arguments(self, tool_call: ToolCall) -> list[str]:
+        return []
 
 
 class FakeKnowledgeLoader:

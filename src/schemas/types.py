@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Literal
 
 from schemas.errors import AgentError
@@ -12,10 +13,10 @@ LLMRole = Literal["user", "assistant", "tool"]
 ALL_ROLES = ("system", "user", "assistant", "tool")
 
 @dataclass(slots=True)
-class LLMRequest:
+class UnifiedLLMRequest:
     messages: list[LLMMessage]
     system_prompt: str | None = None
-    tools: list[dict[str, Any]] | None = None
+    tool_schemas: list[dict[str, Any]] | None = None
     max_tokens: int = 1024
     temperature: float = 0.0
 
@@ -80,6 +81,13 @@ class KeyValueSetRequest:
     key: str
     value: Any
     ttl_seconds: int | None = None
+
+
+@dataclass(slots=True)
+class ClientMessage:
+    role: str
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

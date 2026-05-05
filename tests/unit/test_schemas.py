@@ -7,7 +7,7 @@ from schemas.types import (
     LLMMessage,
     ToolCall,
     ToolResult,
-    LLMRequest,
+    UnifiedLLMRequest,
     LLMResponse,
     AgentExecutionResult,
     RoleBudget,
@@ -90,9 +90,9 @@ def test_tool_result_failure():
 # ---------------------------------------------------------------------------
 
 def test_llm_request_defaults():
-    req = LLMRequest(messages=[])
+    req = UnifiedLLMRequest(messages=[])
     assert req.system_prompt is None
-    assert req.tools is None
+    assert req.tool_schemas is None
 
 
 def test_llm_response_defaults():
@@ -218,7 +218,7 @@ def test_http_error_no_retry_after():
 # ---------------------------------------------------------------------------
 
 def test_provider_failure():
-    req = LLMRequest(messages=[])
+    req = UnifiedLLMRequest(messages=[])
     err = ProviderFailure(provider_name="openai", message="failed", final_request=req)
     assert err.provider_name == "openai"
     assert err.final_request is req

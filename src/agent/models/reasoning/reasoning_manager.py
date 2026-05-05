@@ -37,18 +37,18 @@ class ReasoningManager:
     ) -> NextDecision:
         """Execute one reasoning step.
 
-        1. Prepare context window via context_manager (trims if needed).
-        2. Build LLMRequest from context window via strategy.
+        1. Build LLMRequest from context_manager (assembles + truncates if needed).
+        2. Apply strategy-specific transformations (e.g. prepend ReAct system prompt).
         3. Call LLMGateway.generate().
         4. Parse LLMResponse into a NextDecision via strategy.
 
         Any LLMError raised by the gateway propagates to the caller (StageExecutor).
         """
-        
-        request = self._strategy.build_llm_request(context_window, tool_registry, selected_tool_names)
+        effective_provider = provider_name or self._llm_gateway.provider_name
+        raw_request = context_manager.get_context_window(effective_provider)
+        request = self._strategy.build_llm_request(raw_request)
         response = self._llm_gateway.generate(request)
-        decision = self._strategy.parse_llm_response(response)
-        return decision
+        return self._strategy.parse_llm_response(response)
 
     def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:
         """Replace the current gateway (called by StageExecutor on provider fallback)."""

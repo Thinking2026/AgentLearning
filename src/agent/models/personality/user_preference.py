@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from schemas.task import Task, UserPreferenceEntry
-from schemas.types import LLMMessage, LLMRequest
+from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
 
@@ -47,7 +47,7 @@ class PersonalityManager:
         self, input: str, llm_gateway: LLMGateway
     ) -> list[UserPreferenceEntry] | None:
         response = llm_gateway.generate(
-            LLMRequest(
+            UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=input)],
                 system_prompt=_EXTRACT_SYSTEM_PROMPT,
                 max_tokens=512,
@@ -96,7 +96,7 @@ class PersonalityManager:
         )
         try:
             response = llm_gateway.generate(
-                LLMRequest(
+                UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=prompt)],
                     system_prompt=_QUERY_SYSTEM_PROMPT,
                     max_tokens=256,

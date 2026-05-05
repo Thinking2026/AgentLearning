@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from schemas.task import KnowledgeEntry, Task
-from schemas.types import LLMMessage, LLMRequest
+from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
 
@@ -61,7 +61,7 @@ class KnowledgeLoader:
         )
         try:
             response = llm_gateway.generate(
-                LLMRequest(
+                UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=prompt)],
                     system_prompt=_QUERY_SYSTEM_PROMPT,
                     max_tokens=256,

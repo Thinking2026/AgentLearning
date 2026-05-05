@@ -9,7 +9,7 @@ from agent.models.context.estimator.token_estimator import (
     TokenEstimatorFactory,
     _estimate_by_role,
 )
-from schemas.types import LLMMessage, LLMRequest
+from schemas.types import LLMMessage, UnifiedLLMRequest
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ def make_request(
     tool_msgs: list[str] | None = None,
     system_prompt: str | None = None,
     tools: list | None = None,
-) -> LLMRequest:
+) -> UnifiedLLMRequest:
     messages: list[LLMMessage] = []
     for content in user_msgs or []:
         messages.append(LLMMessage(role="user", content=content))
@@ -30,7 +30,7 @@ def make_request(
         messages.append(LLMMessage(role="assistant", content=content))
     for content in tool_msgs or []:
         messages.append(LLMMessage(role="tool", content=content, metadata={"tool_name": "t", "llm_raw_tool_call_id": "id1"}))
-    return LLMRequest(messages=messages, system_prompt=system_prompt, tools=tools)
+    return UnifiedLLMRequest(messages=messages, system_prompt=system_prompt, tool_schemas=tools)
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ def make_request(
 
 def test_claude_estimator_empty_request():
     est = ClaudeTokenEstimator()
-    req = LLMRequest(messages=[])
+    req = UnifiedLLMRequest(messages=[])
     result = est.estimate(req)
     assert result["total"] == 0
 
@@ -115,7 +115,7 @@ def test_claude_estimator_assistant_with_tool_calls():
             ]
         },
     )
-    req = LLMRequest(messages=[msg])
+    req = UnifiedLLMRequest(messages=[msg])
     result = est.estimate(req, roles=["assistant"])
     # Should count name + id + args
     assert result["assistant"] > 0
@@ -147,6 +147,6 @@ def test_factory_openai_returns_estimator():
 # ---------------------------------------------------------------------------
 
 def test_estimate_by_role_unknown_raises():
-    req = LLMRequest(messages=[])
+    req = UnifiedLLMRequest(messages=[])
     with pytest.raises(ValueError, match="Unknown role"):
         _estimate_by_role(req, lambda t: len(t), "unknown_role")

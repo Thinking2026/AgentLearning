@@ -9,7 +9,7 @@ from schemas import (
     LLMError,
     LLMErrorCode,
     LLMMessage,
-    LLMRequest,
+    UnifiedLLMRequest,
     LLMResponse,
     LLMUsage,
     LLM_CONFIG_ERROR,
@@ -68,7 +68,7 @@ class ClaudeLLMClient(BaseLLMClient):
             anthropic_version=anthropic_version,
         )
 
-    def generate(self, request: LLMRequest) -> LLMResponse:
+    def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
         last_message = request.messages[-1].content if request.messages else ""
         with self._start_span(
             "llm.generate",
@@ -90,7 +90,7 @@ class ClaudeLLMClient(BaseLLMClient):
                 if request.system_prompt:
                     payload["system"] = request.system_prompt
 
-                tools = self._serialize_tools(request.tools)
+                tools = self._serialize_tools(request.tool_schemas)
                 if tools:
                     payload["tools"] = tools
 
@@ -121,7 +121,7 @@ class ClaudeLLMClient(BaseLLMClient):
         return self._http.post_json(path, payload)
 
     @staticmethod
-    def _serialize_messages(request: LLMRequest) -> list[dict[str, object]]:
+    def _serialize_messages(request: UnifiedLLMRequest) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []
         for message in request.messages:
             serialized = ClaudeLLMClient._serialize_message(message)

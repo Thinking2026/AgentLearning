@@ -98,6 +98,10 @@ class StageExecutor:
             frozenset(forbidden_tools) if forbidden_tools else frozenset()
         )
         self._current_stage: Stage | None = None
+        self._current_stage_index: int = 0
+
+        # Wire tool schemas into context manager once at construction time
+        self._context_manager.set_tool_schemas(tool_registry.get_tool_schemas())
 
         # Signalled by Pipeline from its thread
         self._interrupted = threading.Event()
@@ -136,6 +140,27 @@ class StageExecutor:
     def provide_clarification(self, text: str) -> None:
         self._clarification_text = text
         self._clarification_ready.set()
+
+    def execute_stage(
+        self,
+        task_id: TaskId,
+        plan_step_id: PlanStepId,
+        plan_step_goal: str,
+        plan_step_description: str,
+        provider_name: str = "claude",
+    ) -> Stage:
+        """Run a single stage directly (used in tests and simple pipelines)."""
+        stage = Stage(
+            id=StageId(str(uuid4())),
+            task_id=task_id,
+            plan_step_id=plan_step_id,
+            plan_step_goal=plan_step_goal,
+            plan_step_description=plan_step_description,
+        )
+        self._current_stage = stage
+        self._interrupted.clear()
+        self._execute_stage(stage, provider_name)
+        return stage
 
     # ------------------------------------------------------------------
     # Stage Level loop
@@ -206,6 +231,7 @@ class StageExecutor:
                     if eval_record.passed:
                         last_result = stage.result
                         self.archive_current_stage_context()
+                        self._current_stage_index += 1
                         step_index += 1
                         break
                     else:
@@ -247,6 +273,7 @@ class StageExecutor:
 
     def _execute_stage(self, stage: Stage, provider_name: str) -> None:
         """ReAct reasoning loop for a single stage."""
+        self._context_manager.begin_stage(self._current_stage_index)
         self._context_manager.set_variables({
             "stage_goal": stage.plan_step_goal,
             "stage_description": stage.plan_step_description,
@@ -283,7 +310,9 @@ class StageExecutor:
                 return
 
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
+                stage.increment_iteration()
                 stage.complete(decision.answer)
+                self._context_manager.end_stage(self._current_stage_index)
                 return
 
             if decision.decision_type == NextDecisionType.CONTINUE:
@@ -311,7 +340,8 @@ class StageExecutor:
                     self._context_manager.add_message(
                         "assistant", decision.assistant_message.content
                     )
-                # Notify user and wait for clarification
+                else:
+                    self._context_manager.add_message("assistant", question)
                 if self._send_to_user:
                     self._send_to_user(ClientMessage(
                         role="assistant",
@@ -319,16 +349,10 @@ class StageExecutor:
                         metadata={"source": "clarification_request"},
                     ))
                 stage.pause(question)
-                self._clarification_ready.clear()
-                self._clarification_ready.wait()  # blocks until Pipeline calls provide_clarification()
-                clarification = self._clarification_text
-                self._clarification_ready.clear()
-                self._context_manager.add_message("user", f"Clarification: {clarification}")
-                stage.status = StageStatus.RUNNING
-                stage.increment_iteration()
-                continue
+                return
 
         stage.fail(f"Max iterations ({self._max_iterations}) exceeded")
+        self._context_manager.end_stage(self._current_stage_index)
 
     # ------------------------------------------------------------------
     # Public helpers used by Pipeline

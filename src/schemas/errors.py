@@ -4,7 +4,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from schemas.types import LLMRequest
+    from schemas.types import UnifiedLLMRequest
 
 # ---------------------------------------------------------------------------
 # Structured LLM error hierarchy (level-1 category + level-2 code)
@@ -146,7 +146,7 @@ class ProviderFailure(Exception):
     can pass it to the next provider unchanged.
     """
 
-    def __init__(self, provider_name: str, message: str, final_request: "LLMRequest") -> None:
+    def __init__(self, provider_name: str, message: str, final_request: "UnifiedLLMRequest") -> None:
         super().__init__(message)
         self.provider_name = provider_name
         self.final_request = final_request

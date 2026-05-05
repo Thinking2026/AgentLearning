@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from schemas.task import EvaluationReport, EvaluationTarget, Plan, PlanStep, Task
-from schemas.types import LLMMessage, LLMRequest
+from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.time.timezone import now
 from utils.log.log import Logger, zap
 
@@ -39,7 +39,7 @@ class QualityEvaluator:
         )
         try:
             response = llmgateway.generate(
-                LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)])
             )
         except Exception as exc:
             Logger.get_instance().error("Error occurred while evaluating plan",zap.any("error", exc))
@@ -75,7 +75,7 @@ class QualityEvaluator:
         )
         try:
             response = llmgateway.generate(
-                LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)])
             )
         except Exception as exc:
             Logger.get_instance().error("Error occurred while evaluating task result", zap.any("error", exc))
@@ -108,7 +108,7 @@ class QualityEvaluator:
         )
         try:
             response = llmgateway.generate(
-                LLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)])
             )
         except Exception as exc:
             Logger.get_instance().error("Error occurred while evaluating stage result", zap.any("error", exc))

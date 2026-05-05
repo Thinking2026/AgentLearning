@@ -17,7 +17,13 @@ class StageStatus(str, Enum):
     COMPLETED    = "COMPLETED"
     PAUSED       = "PAUSED"
     SUCCESS      = "SUCCESS"
+    INTERRUPTED  = "INTERRUPTED"
     FAILED       = "FAILED"
+
+class PlanUpdateTrigger(str, Enum):
+    STAGE_EVAL_FAILED    = "STAGE_EVAL_FAILED"
+    USER_GUIDANCE        = "USER_GUIDANCE"
+    QUALITY_CHECK_FAILED = "QUALITY_CHECK_FAILED"
 
 class EvaluationTarget(str, Enum):
     TASK_RESULT  = "TASK_RESULT"
@@ -85,6 +91,8 @@ class NextDecision:
     tool_calls: list[ToolCall] = field(default_factory=list)
     assistant_message: LLMMessage | None = None
     raw_response: LLMResponse | None = None
+    message: str = ""
+    answer: str = ""
 
 @dataclass(frozen=True)
 class PlanStep:
