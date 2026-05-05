@@ -19,13 +19,15 @@ class PipelineDriver:
 
     def __init__(
         self,
-        pipeline: Pipeline,
-        thread: PipelineThread,
         loop_user_messages_timeout_seconds: float = 0.5,
     ) -> None:
-        self._pipeline = pipeline
-        self._thread = thread
         self._loop_user_messages_timeout_seconds = loop_user_messages_timeout_seconds
+
+    def set_pipeline(self, pipeline: Pipeline) -> None:
+        self._pipeline = pipeline
+
+    def set_thread(self, thread: PipelineThread) -> None:
+        self._thread = thread   
 
     # ------------------------------------------------------------------
     # Task lifecycle entry points

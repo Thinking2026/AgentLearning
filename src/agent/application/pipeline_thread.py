@@ -9,6 +9,7 @@ from agent.factory.agent_factory import AgentFactory
 from agent.application.driver import PipelineDriver
 from schemas.ids import TaskId
 from schemas.errors import AgentError, build_error, AGENT_THREAD_ERROR, LLM_ALL_PROVIDERS_FAILED
+from schemas.task import TaskResult
 from schemas.types import UserMessage
 from infra.observability.tracing import Span, Tracer
 from utils.log.log import Logger, zap
@@ -61,6 +62,13 @@ class PipelineThread(threading.Thread):
 
     def run(self) -> None:
         try:
+            driver = PipelineDriver()
+            self._active_driver = driver
+            pipeline = self._factory.build_pipeline(task_id, self._active_driver)
+            pipeline.stage_executor.set_driver(driver)
+            driver.set_pipeline(pipeline)
+            driver.set_thread(self)
+
             while self._is_running():
                 # Wait for the next task from the user
                 user_message = self._task_queue.get(timeout=None)
@@ -76,34 +84,25 @@ class PipelineThread(threading.Thread):
                 task_description = user_message.content.strip()
 
                 # Build a fresh Pipeline + Driver for each task
-                try:
-                    pipeline = self._factory.build_pipeline(task_id, self._active_driver)
-                except Exception as exc:
-                    self._logger.error("Pipeline build failed", zap.any("error", str(exc)))
-                    self._finish_session_trace(error=self._normalize_error(exc))
-                    continue
-
-                driver = PipelineDriver(
-                    pipeline=pipeline,
-                    send_to_user=self._agent_to_user_queue.send_agent_message,
-                    logger=self._logger,
-                )
-                self._active_driver = driver
-                pipeline.stage_executor.set_driver(driver)
                 result = driver.submit_task(task_id, task_description)
-                if result.succeeded:
-                    self._send_task_completed()
-                else:
+                if not result.succeeded:
                     self._logger.error(
                         "Task execution failed",
                         zap.any("task_id", task_id),
                         zap.any("error", result.error),
                     )
+                self._send_task_completed(result)
 
         except Exception as exc:
             self._logger.error("PipelineThread crashed", zap.any("error", exc))
         finally:
             self._stop()
+
+    def _send_task_completed(self, result: TaskResult) -> None:
+        msg = UserMessage(
+            content={"success": result.succeeded, "error": result.error, "output": result.output},
+        )
+        self.publish_event(msg)
 
     # ------------------------------------------------------------------
     # Tracing helpers
