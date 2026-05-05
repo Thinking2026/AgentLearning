@@ -63,7 +63,7 @@ class PipelineThread(threading.Thread):
         try:
             while self._is_running():
                 # Wait for the next task from the user
-                user_message = self._task_queue.get_user_message(timeout=None)
+                user_message = self._task_queue.get(timeout=None)
                 if not self._is_running():
                     break
                 if user_message is None:
@@ -200,17 +200,6 @@ class PipelineThread(threading.Thread):
         ):
             return
 
-    # ------------------------------------------------------------------
-    # Lifecycle helpers
-    # ------------------------------------------------------------------
-
-    def _send_task_completed(self) -> None:
-        self._agent_to_user_queue.send_agent_message(ClientMessage(
-            role="assistant",
-            content="",
-            metadata={"control": True, "task_completed": True},
-        ))
-
     def _stop(self) -> None:
         self._stop_callback(self.name)
 
@@ -219,10 +208,6 @@ class PipelineThread(threading.Thread):
         if isinstance(exc, AgentError):
             return exc
         return build_error(AGENT_THREAD_ERROR, str(exc))
-
-    @staticmethod
-    def _is_hard_error(error: AgentError | None) -> bool:
-        return error is not None and error.code == LLM_ALL_PROVIDERS_FAILED
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()
