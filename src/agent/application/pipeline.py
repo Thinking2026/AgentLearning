@@ -64,12 +64,6 @@ class Pipeline:
 
         # Cross-thread control signals
         self._cancelled = threading.Event()
-        self._resume_event = threading.Event()
-        self._guidance_event = threading.Event()
-        self._clarification_event = threading.Event()
-        self._guidance_text: str = ""
-        self._clarification_text: str = ""
-
         # Optional callback to push progress messages to the user
         self._send_to_user: Callable[[ClientMessage], None] | None = None
 
@@ -87,24 +81,6 @@ class Pipeline:
     def set_send_to_user(self, callback: Callable[[ClientMessage], None]) -> None:
         self._send_to_user = callback
 
-    def cancel(self) -> None:
-        self._cancelled.set()
-        self._stage_executor.cancel()
-
-    def provide_guidance(self, guidance: str) -> None:
-        self._guidance_text = guidance
-        self._guidance_event.set()
-        self._stage_executor.interrupt(guidance)
-
-    def provide_clarification(self, clarification: str) -> None:
-        self._clarification_text = clarification
-        self._clarification_event.set()
-        self._stage_executor.provide_clarification(clarification)
-
-    def resume(self) -> None:
-        self._resume_event.set()
-        self._stage_executor.resume()
-
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -113,27 +89,7 @@ class Pipeline:
         self,
         task_description: str,
     ) -> TaskResult:
-        """Execute a task end-to-end and return the final TaskResult."""
-        self._cancelled.clear()
-        self._resume_event.clear()
-        self._guidance_event.clear()
-        self._clarification_event.clear()
-        self._guidance_text = ""
-        self._clarification_text = ""
 
-        self._task = Task(
-            id=task_id,
-            user_id=UserId(""),
-            description=task_description,
-            created_at=datetime.now(timezone.utc),
-        )
-
-        try:
-            return self._run_task(task_id, task_description)
-        except AgentError as exc:
-            return self._failed_result(task_id, f"Agent error: {exc.message}")
-        except Exception as exc:
-            return self._failed_result(task_id, f"Unexpected error: {exc}")
 
     def continue_from_checkpoint(self, task_id: TaskId, cpt_id: CheckpointId) -> TaskResult:
         """Restore from the latest checkpoint and resume execution."""
@@ -145,87 +101,6 @@ class Pipeline:
             checkpoint.conversation_checkpoint
         )
         return self.run(task_id, task_description)
-
-    # ------------------------------------------------------------------
-    # Internal task execution
-    # ------------------------------------------------------------------
-
-    def _run_task(self, plan: Plan) -> TaskResult:
-        # 1. Analyze task
-        self._planner.analyze()
-        if self._cancelled.is_set():
-            return self._cancelled_result(task_id)
-
-        # 2. Model routing
-        routing = self._model_selector.route(self._planner.task_feat)
-        provider_chain = [routing.primary] + list(routing.fallbacks)
-
-        self._notify_user(f"Task analysis complete. Planning with {routing.primary}.")
-
-        # 3. Outer quality-retry loop
-        quality_retries = 0
-        plan_feedback = ""
-        plan_clarification = ""
-
-        while quality_retries <= self._max_quality_retries:
-            if self._cancelled.is_set():
-                return self._cancelled_result(task_id)
-
-            # 3a. Plan loop (build + review)
-            plan = self._build_reviewed_plan(
-                task_id, plan_feedback, plan_clarification
-            )
-            if plan is None:
-                return self._failed_result(task_id, "Failed to build a valid execution plan")
-
-            if self._cancelled.is_set():
-                return self._cancelled_result(task_id)
-
-            self._notify_user(
-                f"Execution plan ready ({len(self._planner.steps)} steps). Starting execution."
-            )
-
-            # 3b. Execute all stages
-            result = self._stage_executor.execute(
-                plan=plan,
-                provider_chain=provider_chain,
-            )
-
-            if self._cancelled.is_set():
-                return self._cancelled_result(task_id)
-
-            if result is None:
-                return self._failed_result(task_id, "Stage execution failed")
-
-            # 3c. Quality check
-            qc = self._quality_evaluator.evaluate_task_result(result)
-            if qc.passed:
-                self._notify_user("Task completed successfully.")
-                self._extract_knowledge_async(task_id, task_description, result)
-                return TaskResult(
-                    task_id=task_id,
-                    succeeded=True,
-                    result=result,
-                    error_reason="",
-                    delivered_at=datetime.now(timezone.utc),
-                )
-
-            # Quality check failed: renew plan and retry
-            quality_retries += 1
-            plan_feedback = qc.feedback
-            plan_clarification = ""
-            self._notify_user(
-                f"Quality check failed (attempt {quality_retries}/{self._max_quality_retries}). "
-                f"Replanning. Feedback: {qc.feedback}"
-            )
-            # Full context reset before replanning
-            self._stage_executor.reset_for_next_stage()
-            self._planner.renew(
-                PlanUpdateTrigger.QUALITY_CHECK_FAILED,
-                feedback=plan_feedback,
-            )
-
-        return self._failed_result(task_id, "Max quality retries exceeded")
 
     def _build_reviewed_plan(
         self,
