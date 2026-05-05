@@ -75,8 +75,8 @@ class Pipeline:
         self._tool_registry = tool_registry
         self._llm_gateway = llm_gateway
 
-        self._max_plan_retries = max_plan_retries
-        self._max_quality_retries = max_quality_retries
+        self._max_make_plan_retries = max_plan_retries
+        self._max_task_retries = max_quality_retries
 
         self._task: Task | None = None
 
@@ -117,15 +117,12 @@ class Pipeline:
         self._pipeline_driver.publish_event(
             TaskAnalysisCompleted(task_id=task.id, content=task.intent)
         )
-        # 1.1.5 输出任务分析报告
-        self._notify_user(self._format_analysis_report(task))
-
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
-        routing = self._model_selector.route()
+        routing = self._model_selector.route(task=self._task, enable_fallback=True)
         provider_chain = [routing.primary] + routing.fallbacks
 
         # ── 1.3 制定并评审执行计划（含重试循环）──────────────────────
-        plan = self._build_reviewed_plan(task)
+        plan = self._planner.make_plan(task, self._llm_gateway, self._quality_evaluator, self._pipeline_driver)
         if plan is None:
             event = TaskExecutionFailed(task_id=task.id, content="Failed to produce a valid plan")
             self._pipeline_driver.publish_event(event)
@@ -142,11 +139,8 @@ class Pipeline:
         )
 
         # ── 1.5 按照计划执行 ──────────────────────────────────────────
-        quality_retries = 0
+        current_task_retries = 0
         while True:
-            if self._cancelled.is_set():
-                return self._cancelled_result(task.id)
-
             raw_result = self._stage_executor.execute(plan=plan, provider_chain=provider_chain)
 
             # 1.5.2 执行失败
@@ -178,8 +172,8 @@ class Pipeline:
                 )
 
             # 1.5.1.2 评审不通过 → 清空上下文，结合评审意见重新制定计划
-            quality_retries += 1
-            if quality_retries > self._max_quality_retries:
+            current_task_retries += 1
+            if current_task_retries > self._max_task_retries:
                 event = TaskExecutionFailed(
                     task_id=task.id, content="Quality check failed after retries"
                 )
@@ -202,54 +196,6 @@ class Pipeline:
         )
         task_description = self._task.description if self._task else ""
         return self.run(task_description)
-
-    # ------------------------------------------------------------------
-    # Plan building with review loop
-    # ------------------------------------------------------------------
-
-    def _build_reviewed_plan(self, task: Task) -> Plan | None:
-        """Make a plan via Planner (which handles its own review loop internally)."""
-        plan_retries = 0
-        feedback = ""
-
-        while plan_retries <= self._max_plan_retries:
-            if self._cancelled.is_set():
-                return None
-
-            if plan_retries == 0:
-                plan = self._planner.make_plan(
-                    task=task,
-                    llm_api=self._llm_gateway,
-                    evaluator=self._quality_evaluator,
-                    driver=self._pipeline_driver,
-                )
-            else:
-                plan = self._planner.renew_plan(
-                    task=task, feedback=feedback, llm_api=self._llm_gateway
-                )
-
-            review = self._quality_evaluator.evaluate_plan(
-                task=task, plan=plan, llmgateway=self._llm_gateway
-            )
-
-            if review.passed:
-                return plan
-
-            plan_retries += 1
-
-            if review.need_user_clarification:
-                # 1.3.2.2.1 发布"请求用户建议已发出"事件，阻塞等待
-                self._pipeline_driver.publish_event(
-                    UserSuggestionRequested(task_id=task.id, content=review.clarification_question)
-                )
-                user_cmd = self._pipeline_driver.loop_user_messages(timeout=300.0)
-                if user_cmd is None or self._cancelled.is_set():
-                    return None
-                feedback = f"{review.feedback}\nUser suggestion: {user_cmd.content}"
-            else:
-                feedback = review.feedback
-
-        return None
 
     # ------------------------------------------------------------------
     # Async side-effects
@@ -291,14 +237,6 @@ class Pipeline:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    def _notify_user(self, message: str) -> None:
-        if self._send_to_user and message:
-            self._send_to_user(ClientMessage(
-                role="assistant",
-                content=message,
-                metadata={"source": "progress"},
-            ))
 
     def _format_analysis_report(self, task: Task) -> str:
         lines = [

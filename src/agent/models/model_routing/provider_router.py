@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from schemas.task import ProviderCapabilities, ModelRoutingDecision, TaskFeature
+from schemas.task import ProviderCapabilities, ModelRoutingDecision, Task, TaskFeature
 from schemas import LLM_CONFIG_ERROR, build_error
 
 # Maps LLM-output complexity labels to TD cognitive-complexity tiers.
@@ -24,7 +24,7 @@ class RoutingStrategy(Protocol):
 
     def select(
         self,
-        task_feat: TaskFeature | None,
+        task: Task,
         candidates: list[ProviderCapabilities],
     ) -> list[str]:
         """Return provider names in priority order (best first). Must be non-empty."""
@@ -49,32 +49,32 @@ class CapabilityMatchStrategy:
 
     def select(
         self,
-        task_feat: TaskFeature | None,
+        task: Task,
         candidates: list[ProviderCapabilities],
     ) -> list[str]:
         if not candidates:
             raise build_error(LLM_CONFIG_ERROR, "no provider candidates available")
-        if task_feat is None:
+        if task is None:
             return [c.name for c in candidates]
 
-        accepted_tiers = _COMPLEXITY_TO_TIERS.get(task_feat.complexity, [task_feat.complexity])
+        accepted_tiers = _COMPLEXITY_TO_TIERS.get(task.complexity, [task.complexity])
 
         scored: list[tuple[int, str]] = []
         for cap in candidates:
             score = 0
-            for scenario in task_feat.preferred_scenarios:
+            for scenario in task.feature.preferred_scenarios:
                 if scenario in cap.best_scenarios:
                     score += 3
-            for strength in task_feat.required_strengths:
+            for strength in task.feature.required_strengths:
                 if strength in cap.top_strengths:
                     score += 2
             if any(t in cap.cognitive_complexity for t in accepted_tiers):
                 score += 2
-            if task_feat.min_context_size > 0 and cap.context_size < task_feat.min_context_size:
+            if task.feature.min_context_size > 0 and cap.context_size < task.feature.min_context_size:
                 score -= 2
-            if task_feat.prefer_low_cost and cap.cost_tier == "high":
+            if task.feature.prefer_low_cost and cap.cost_tier == "high":
                 score -= 1
-            if task_feat.prefer_low_latency and cap.latency_tier != "fast":
+            if task.feature.prefer_low_latency and cap.latency_tier != "fast":
                 score -= 1
             scored.append((score, cap.name))
 
@@ -144,7 +144,7 @@ class ModelSelector:
 
     def route(
         self,
-        task_feat: TaskFeature | None = None,
+        task: Task,
         enable_fallback: bool | None = None,
         excluded_providers: set[str] | None = None,
     ) -> ModelRoutingDecision:
@@ -155,7 +155,7 @@ class ModelSelector:
         if not candidates:
             raise build_error(LLM_CONFIG_ERROR, "no available providers after applying exclusions")
 
-        ordered = self._strategy.select(task_feat, candidates)
+        ordered = self._strategy.select(task, candidates)
         if not ordered:
             raise build_error(LLM_CONFIG_ERROR, "routing strategy returned an empty provider list")
 
