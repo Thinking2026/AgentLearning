@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agent.models.reasoning.decision import NextDecision
+from schemas.types import UnifiedLLMRequest
 
 if TYPE_CHECKING:
     from agent.models.context.manager import ContextManager
@@ -30,22 +31,8 @@ class ReasoningManager:
 
     def reason_once(
         self,
-        context_manager: ContextManager,
-        tool_registry: ToolRegistry,
-        selected_tool_names: list[str] | None = None,
-        provider_name: str | None = None,
+        raw_request: UnifiedLLMRequest,
     ) -> NextDecision:
-        """Execute one reasoning step.
-
-        1. Build LLMRequest from context_manager (assembles + truncates if needed).
-        2. Apply strategy-specific transformations (e.g. prepend ReAct system prompt).
-        3. Call LLMGateway.generate().
-        4. Parse LLMResponse into a NextDecision via strategy.
-
-        Any LLMError raised by the gateway propagates to the caller (StageExecutor).
-        """
-        effective_provider = provider_name or self._llm_gateway.provider_name
-        raw_request = context_manager.get_context_window(effective_provider)
         request = self._strategy.build_llm_request(raw_request)
         response = self._llm_gateway.generate(request)
         return self._strategy.parse_llm_response(response)

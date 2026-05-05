@@ -4,11 +4,19 @@ import json
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from agent.events.events import (
+    LLMResponseGenerated,
+    TaskCancelled,
+    TaskPaused,
+    ToolCallResultProduced,
+    ToolCallStarted,
+    UserClarificationRequested,
+)
 from schemas.ids import PlanStepId, StageId, TaskId
-from schemas.types import LLMMessage, ToolCall, ToolResult, ClientMessage
+from schemas.types import LLMMessage, ToolCall, ToolResult
 from schemas.errors import (
     AgentError,
     LLMError,
@@ -17,9 +25,10 @@ from schemas.errors import (
     TOOL_ARGUMENT_ERROR,
     build_error,
 )
-from schemas.task import NextDecisionType, StageStatus, PlanUpdateTrigger, Task
+from schemas.task import NextDecisionType, Plan, PlanStep, StageStatus, PlanUpdateTrigger, Task
 
 if TYPE_CHECKING:
+    from agent.application.driver import PipelineDriver
     from agent.models.context.manager import ContextManager
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader
     from agent.models.reasoning.reasoning_manager import ReasoningManager
@@ -79,6 +88,7 @@ class StageExecutor:
 
     def __init__(
         self,
+        driver: PipelineDriver,
         reasoning_manager: ReasoningManager,
         context_manager: ContextManager,
         tool_registry: ToolRegistry,
@@ -88,6 +98,7 @@ class StageExecutor:
         max_stage_eval_retries: int = 2,
         forbidden_tools: list[str] | None = None,
     ) -> None:
+        self._driver = driver
         self._reasoning_manager = reasoning_manager
         self._context_manager = context_manager
         self._tool_registry = tool_registry
@@ -114,15 +125,9 @@ class StageExecutor:
         self._pause_reason: str = ""
         self._clarification_text: str = ""
 
-        # Optional callback to push UIMessages to the user
-        self._send_to_user: Callable[[ClientMessage], None] | None = None
-
     # ------------------------------------------------------------------
     # Public control API (called by Pipeline from its thread)
     # ------------------------------------------------------------------
-
-    def set_send_to_user(self, callback: Callable[[ClientMessage], None]) -> None:
-        self._send_to_user = callback
 
     def interrupt(self, guidance: str) -> None:
         self._interrupt_guidance = guidance
@@ -142,37 +147,13 @@ class StageExecutor:
         self._clarification_text = text
         self._clarification_ready.set()
 
-    def execute_stage(
-        self,
-        task_id: TaskId,
-        plan_step_id: PlanStepId,
-        plan_step_goal: str,
-        plan_step_description: str,
-        plan_step_key_results: list[str] | None = None,
-        provider_name: str = "claude",
-    ) -> Stage:
-        """Run a single stage directly (used in tests and simple pipelines)."""
-        stage = Stage(
-            id=StageId(str(uuid4())),
-            task_id=task_id,
-            plan_step_id=plan_step_id,
-            plan_step_goal=plan_step_goal,
-            plan_step_description=plan_step_description,
-            plan_step_key_results=plan_step_key_results or [],
-        )
-        self._current_stage = stage
-        self._interrupted.clear()
-        self._execute_stage(stage, provider_name)
-        return stage
-
     # ------------------------------------------------------------------
     # Stage Level loop
     # ------------------------------------------------------------------
 
     def execute(
         self,
-        task: Task,
-        planner: Planner,
+        plan: Plan,
         provider_chain: list[str],
     ) -> str | None:
         """Iterate over all plan steps and return the final answer, or None on failure."""
@@ -276,10 +257,21 @@ class StageExecutor:
     # ------------------------------------------------------------------
 
     def _execute_stage(self, stage: Stage, provider_name: str) -> None:
-        """ReAct reasoning loop for a single stage."""
+        """ReAct reasoning loop for a single stage.
+
+        Flow per iteration:
+          3.   Poll async user commands (cancel / guidance).
+          1.   get_context_window — truncation handled inside ContextManager.
+          2.   Call LLM → Decision.
+          2.0  Publish LLMResponseGenerated event.
+          2.1  FINAL_ANSWER  → complete stage, return.
+          2.2  CONTINUE      → inject assistant message, loop.
+          2.3  TOOL_CALL     → dispatch tools (with events), loop.
+          2.4  CLARIFICATION → publish event, block, inject reply, loop.
+          2.5  PAUSED        → publish event, block, resume, loop.
+        """
         self._context_manager.begin_stage(self._current_stage_index)
 
-        # Inject a user message describing this stage so the LLM has explicit context
         stage_prompt_lines = [
             f"## Stage Goal: {stage.plan_step_goal}",
             "",
@@ -296,43 +288,59 @@ class StageExecutor:
         )
         self._context_manager.add_message("user", "\n".join(stage_prompt_lines))
 
-        #self._load_knowledge(stage.plan_step_goal)
-
         while stage.iteration_count < self._max_iterations:
-            # Check for user interrupt (guidance)
-            if self._interrupted.is_set():
-                self._interrupted.clear()
-                stage.interrupt(self._interrupt_guidance)
-                return
 
-            # Check for cancel
+            # ── 3. Poll async user commands ────────────────────────────────
+            user_cmd = self._driver.loop_user_messages()
+            if user_cmd is not None:
+                if user_cmd.type == "CANCEL":
+                    # 3.1 cancel
+                    self._cancelled.set()
+                    self._driver.publish_event(
+                        TaskCancelled(task_id=stage.task_id, content="Task cancelled by user.")
+                    )
+                    stage.fail("Cancelled by user.")
+                    return
+                if user_cmd.type == "GUIDANCE":
+                    # 3.2 user correction — signal outer loop to replan this step
+                    stage.interrupt(user_cmd.content or "")
+                    return
+
             if self._cancelled.is_set():
-                stage.fail("Cancelled by user")
+                stage.fail("Cancelled.")
                 return
 
-            # Check for pause (B-class error signalled externally)
-            if self._paused.is_set():
-                stage.pause(self._pause_reason)
-                return
-
+            # ── 1. Get context window (truncation handled inside) ──────────
             try:
-                decision = self._reasoning_manager.reason_once(
-                    context_manager=self._context_manager,
-                    tool_registry=self._tool_registry,
-                    provider_name=provider_name,
-                )
+                unified_llm_request = self._context_manager.get_context_window(provider_name)
+                # ── 2. Call LLM ────────────────────────────────────────────
+                decision = self._reasoning_manager.reason_once(unified_llm_request)
             except LLMError:
                 raise
             except AgentError as exc:
                 stage.fail(f"Agent error: {exc.message}")
                 return
 
+            # 2.0 publish "LLM reply generated" event
+            self._driver.publish_event(
+                LLMResponseGenerated(
+                    task_id=stage.task_id,
+                    order=str(stage.iteration_count),
+                    content=decision.message or (
+                        decision.assistant_message.content
+                        if decision.assistant_message else ""
+                    ),
+                )
+            )
+
+            # ── 2.1 Final answer ───────────────────────────────────────────
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
                 stage.increment_iteration()
                 stage.complete(decision.answer)
                 self._context_manager.end_stage(self._current_stage_index, success=True)
                 return
 
+            # ── 2.2 Continue reasoning ─────────────────────────────────────
             if decision.decision_type == NextDecisionType.CONTINUE:
                 content = decision.message or (
                     decision.assistant_message.content if decision.assistant_message else ""
@@ -341,6 +349,7 @@ class StageExecutor:
                 stage.increment_iteration()
                 continue
 
+            # ── 2.3 Tool call ──────────────────────────────────────────────
             if decision.decision_type == NextDecisionType.TOOL_CALL:
                 if decision.assistant_message:
                     self._context_manager.add_message(
@@ -348,10 +357,11 @@ class StageExecutor:
                         decision.assistant_message.content,
                         decision.assistant_message.metadata,
                     )
-                self._dispatch_tool_calls(decision.tool_calls)
+                self._dispatch_tool_calls(stage, decision.tool_calls)
                 stage.increment_iteration()
                 continue
 
+            # ── 2.4 Clarification needed ───────────────────────────────────
             if decision.decision_type == NextDecisionType.CLARIFICATION_NEEDED:
                 question = decision.message or "Please provide clarification."
                 if decision.assistant_message:
@@ -360,14 +370,57 @@ class StageExecutor:
                     )
                 else:
                     self._context_manager.add_message("assistant", question)
-                if self._send_to_user:
-                    self._send_to_user(ClientMessage(
-                        role="assistant",
+
+                self._driver.publish_event(
+                    UserClarificationRequested(
+                        task_id=stage.task_id,
+                        order=str(stage.iteration_count),
+                        question=question,
                         content=question,
-                        metadata={"source": "clarification_request"},
-                    ))
-                stage.pause(question)
-                return
+                    )
+                )
+
+                # block until clarification arrives
+                self._clarification_ready.clear()
+                self._clarification_ready.wait()
+                self._clarification_ready.clear()
+
+                if self._cancelled.is_set():
+                    stage.fail("Cancelled while waiting for clarification.")
+                    return
+
+                # 2.4.1 inject clarification and loop back
+                self._context_manager.add_message(
+                    "user", f"Clarification: {self._clarification_text}"
+                )
+                stage.increment_iteration()
+                continue
+
+            # ── 2.5 Paused ────────────────────────────────────────────────
+            if decision.decision_type == NextDecisionType.PAUSED:
+                reason = decision.message or "Task paused."
+                if decision.assistant_message:
+                    self._context_manager.add_message(
+                        "assistant", decision.assistant_message.content
+                    )
+
+                self._driver.publish_event(
+                    TaskPaused(task_id=stage.task_id, reason=reason, content=reason)
+                )
+                stage.pause(reason)
+
+                # block until resumed
+                self._paused.wait()
+                self._paused.clear()
+
+                if self._cancelled.is_set():
+                    stage.fail("Cancelled while paused.")
+                    return
+
+                # 2.5.1 resume — loop back
+                stage.status = StageStatus.RUNNING
+                stage.increment_iteration()
+                continue
 
         stage.fail(f"Max iterations ({self._max_iterations}) exceeded")
         self._context_manager.end_stage(self._current_stage_index, success=False)
@@ -413,10 +466,23 @@ class StageExecutor:
             variables["reusable_knowledge"] = snippets
             self._context_manager.set_variables(variables)
 
-    def _dispatch_tool_calls(self, tool_calls: list[ToolCall]) -> None:
+    def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:
+            # 2.3.0 publish "tool call started" event
+            self._driver.publish_event(
+                ToolCallStarted(
+                    task_id=stage.task_id,
+                    order=str(stage.iteration_count),
+                    tool_name=tool_call.name,
+                    arguments=dict(tool_call.arguments),
+                    content=f"Calling tool: {tool_call.name}",
+                )
+            )
+
+            # 2.3.1 pre-flight check
             rejection = self._check_tool_call(tool_call)
             if rejection is not None:
+                # 2.3.1.2 check failed — inject system message so LLM can switch tools
                 observation = self._reasoning_manager.format_tool_observation(
                     tool_call=tool_call,
                     result=rejection,
@@ -426,15 +492,26 @@ class StageExecutor:
                     observation.content,
                     observation.metadata,
                 )
+                self._driver.publish_event(
+                    ToolCallResultProduced(
+                        task_id=stage.task_id,
+                        order=str(stage.iteration_count),
+                        tool_name=tool_call.name,
+                        content=f"Tool pre-check failed: {tool_call.name}",
+                    )
+                )
                 continue
 
+            # 2.3.1.1 execute tool
             result: ToolResult = self._tool_registry.execute(tool_call)
 
             if not result.success and tool_call.name == "search":
+                # 2.3.1.1.2.1 search fallback via knowledge base
                 fallback = self._knowledge_search_fallback(tool_call)
                 if fallback is not None:
                     result = fallback
 
+            # 2.3.1.1.1 / 2.3.1.1.2.2 inject result and publish event
             observation = self._reasoning_manager.format_tool_observation(
                 tool_call=tool_call,
                 result=self._tool_result_for_observation(result),
@@ -443,6 +520,14 @@ class StageExecutor:
                 observation.role,
                 observation.content,
                 observation.metadata,
+            )
+            self._driver.publish_event(
+                ToolCallResultProduced(
+                    task_id=stage.task_id,
+                    order=str(stage.iteration_count),
+                    tool_name=tool_call.name,
+                    content=f"Tool result: {tool_call.name} {'succeeded' if result.success else 'failed'}",
+                )
             )
 
     def _check_tool_call(self, tool_call: ToolCall) -> ToolResult | None:

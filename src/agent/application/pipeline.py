@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable
 from agent.application.driver import PipelineDriver
 from schemas.ids import TaskId, UserId
 from schemas.errors import AgentError
-from schemas.task import PlanUpdateTrigger, Task, TaskResult
+from schemas.task import Plan, PlanUpdateTrigger, Task, TaskResult
 from schemas.types import ClientMessage
 
 if TYPE_CHECKING:
@@ -144,7 +144,7 @@ class Pipeline:
     # Internal task execution
     # ------------------------------------------------------------------
 
-    def _run_task(self, task_id: TaskId, task_description: str) -> TaskResult:
+    def _run_task(self, plan: Plan) -> TaskResult:
         # 1. Analyze task
         self._planner.analyze()
         if self._cancelled.is_set():
@@ -182,7 +182,7 @@ class Pipeline:
             # 3b. Execute all stages
             result = self._stage_executor.execute(
                 task=self._task,  # type: ignore[arg-type]
-                planner=self._planner,
+                plan=plan,
                 provider_chain=provider_chain,
             )
 

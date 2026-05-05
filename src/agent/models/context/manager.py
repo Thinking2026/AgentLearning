@@ -391,10 +391,6 @@ class ContextManager:
             task_lines.append(f"**User Intent:** {self._task.intent}")
         if self._task.output_constraints:
             task_lines.append(f"**Output Constraints:** {self._task.output_constraints}")
-        if self._plan.step_list:
-            task_lines.append(f"**Execution Plan ({len(self._plan.step_list)} steps):**")
-            for step in self._plan.step_list:
-                task_lines.append(f"  {step.order}. {step.goal}")
         parts.append("\n".join(task_lines))
 
         # Domain knowledge — authoritative references the agent should consult
