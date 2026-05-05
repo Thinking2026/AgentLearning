@@ -18,6 +18,7 @@
   "llm": {
     "enable_provider_fallback": true,
     "priority_chain": ["deepseek", "claude", "openai"],
+    "summary_provider": "deepseek",
     "context_trimming": {
     },
     "retry": {
@@ -115,6 +116,7 @@
     }
   },
   "context_truncation": {
+    "strategy": "react",
     "react": {
       "tool_arg_max_chars": 300,
       "tool_result_max_chars": 500,

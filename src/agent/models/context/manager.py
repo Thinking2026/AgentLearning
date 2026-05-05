@@ -53,14 +53,13 @@ class ContextManager:
         self._config = config
         self._task = task
         self._plan = plan
-        self._strategy_name = None #从配置里自己取
         self._llm_gateway = llm_gateway
 
         self._system_prompt: str = ""
         self._tool_schemas: list[dict[str, Any]] = []
         self._knowledge_entries: list[KnowledgeEntry] = []
         self._user_preferences_entries: list[UserPreferenceEntry] = []
-        self._variables: dict[str, Any] = {} #动态加入的参数
+        self._variables: dict[str, Any] = {}
 
         self._ctx_window: list[ContextMessage] = []
         self._history: list[ContextMessage] = []
@@ -69,8 +68,8 @@ class ContextManager:
         self._message_id_to_stage: dict[str, int] = {}
         self._active_stage_index: int | None = None
         self._last_success_stage_index: int | None = None
-        
-        self._token_estimator: BaseTokenEstimator = None 
+
+        self._token_estimator: BaseTokenEstimator = None
         self._token_truncator: ContextTruncator | None = None
 
         self._lock = threading.RLock()
@@ -84,6 +83,7 @@ class ContextManager:
 
     def get_plan(self) -> Plan:
         return self._plan
+
     # ------------------------------------------------------------------
     # Configuration setters
     # ------------------------------------------------------------------
@@ -143,7 +143,7 @@ class ContextManager:
             self._active_stage_index = stage_index
 
     def end_stage(self, stage_index: int, success: bool) -> None:
-        """Mark the stage as complete, recording last_message_id."""
+        """Mark the stage as complete. On success, triggers async LLM summarization."""
         with self._lock:
             if stage_index >= len(self._stage_records):
                 return
@@ -160,6 +160,10 @@ class ContextManager:
                 self._active_stage_index = None
             if success:
                 self._last_success_stage_index = stage_index
+
+        # Generate summary outside the lock to avoid blocking during LLM call
+        if success:
+            self._generate_stage_summary(stage_index)
 
     def drop_stage(self, stage_index: int) -> None:
         """Remove all ctx_window messages for stage_index. History is unchanged."""
@@ -292,19 +296,21 @@ class ContextManager:
         with self._lock:
             system_prompt = self._build_system_prompt()
             repaired = self._repair_tool_pairs(list(self._ctx_window))
-            messages = self._to_llm_messages(repaired)
-            request = UnifiedLLMRequest(
-                system_prompt=system_prompt,
-                messages=messages,
-                tool_schemas=self._tool_schemas if self._tool_schemas else None,
-            )
+
             truncator = self._get_truncator()
             if truncator is not None:
                 estimator = self._get_estimator(provider_name)
                 total_budget = self._get_total_budget(provider_name)
-                result = truncator.truncate(request, total_budget, estimator)
-                return result.request
-            return request
+                truncated = truncator.truncate(repaired, total_budget, estimator)
+                messages = self._to_llm_messages(truncated)
+            else:
+                messages = self._to_llm_messages(repaired)
+
+            return UnifiedLLMRequest(
+                system_prompt=system_prompt,
+                messages=messages,
+                tool_schemas=self._tool_schemas if self._tool_schemas else None,
+            )
 
     # ------------------------------------------------------------------
     # Reset / release
@@ -338,26 +344,87 @@ class ContextManager:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _generate_stage_summary(self, stage_index: int) -> None:
+        """Call LLM to summarize a completed stage and replace its messages."""
+        if self._llm_gateway is None:
+            return
+        stage_messages = self.get_stage_messages(stage_index)
+        if not stage_messages:
+            return
+        try:
+            summary_provider = (
+                self._config.get("llm.summary_provider", "deepseek")
+                if self._config else "deepseek"
+            )
+            gateway = self._llm_gateway.for_provider(summary_provider)
+            history_text = "\n".join(
+                f"[{m.role}] {m.content}" for m in stage_messages
+            )
+            request = UnifiedLLMRequest(
+                system_prompt=(
+                    "You are a context compressor for an AI agent. "
+                    "Summarize the following stage execution into a concise paragraph. "
+                    "Preserve: key decisions made, tools used and their outcomes, "
+                    "important findings, and the final result of the stage. "
+                    "Output only the summary text, no preamble or labels."
+                ),
+                messages=[LLMMessage(role="user", content=history_text)],
+                tool_schemas=[],
+            )
+            response = gateway.generate(request)
+            self.summarize_stage(stage_index, response.assistant_message.content)
+        except Exception:
+            # Summary is best-effort; a failure must not affect stage completion
+            pass
+
     def _build_system_prompt(self) -> str:
-        """Assemble the full system prompt from base + knowledge + preferences + variables."""
-        parts: list[str] = [self._system_prompt]
+        """Assemble the full system prompt from base + task context + knowledge + preferences."""
+        parts: list[str] = []
 
+        if self._system_prompt:
+            parts.append(self._system_prompt)
+
+        # Task and plan overview so the agent always knows the big picture
+        task_lines: list[str] = ["## Task Context"]
+        task_lines.append(f"**Objective:** {self._task.description}")
+        if self._task.intent:
+            task_lines.append(f"**User Intent:** {self._task.intent}")
+        if self._task.output_constraints:
+            task_lines.append(f"**Output Constraints:** {self._task.output_constraints}")
+        if self._plan.step_list:
+            task_lines.append(f"**Execution Plan ({len(self._plan.step_list)} steps):**")
+            for step in self._plan.step_list:
+                task_lines.append(f"  {step.order}. {step.goal}")
+        parts.append("\n".join(task_lines))
+
+        # Domain knowledge — authoritative references the agent should consult
         if self._knowledge_entries:
-            lines = ["## Knowledge Base"]
+            lines: list[str] = [
+                "## Domain Knowledge",
+                "The following entries are relevant to this task. "
+                "Treat them as authoritative references and avoid redundant searches "
+                "for information already covered here.",
+            ]
             for entry in self._knowledge_entries:
-                lines.append(f"- {entry.title}: {entry.content}")
+                tags_str = f" `[{', '.join(entry.tags)}]`" if entry.tags else ""
+                lines.append(f"\n### {entry.title}{tags_str}")
+                lines.append(entry.content)
             parts.append("\n".join(lines))
 
+        # User preferences — behavioral constraints that must be respected
         if self._user_preferences_entries:
-            lines = ["## User Preferences"]
+            lines = [
+                "## User Preferences",
+                "Strictly follow these preferences throughout the task. "
+                "They reflect the user's working style, quality standards, and expectations. "
+                "Violating them is considered a task failure.",
+            ]
             for pref in self._user_preferences_entries:
-                lines.append(f"- {pref.content}")
-            parts.append("\n".join(lines))
-
-        if self._variables:
-            lines = ["## Task Variables"]
-            for key, value in sorted(self._variables.items()):
-                lines.append(f"- {key}: {value}")
+                if pref.keywords:
+                    keyword_str = ", ".join(pref.keywords)
+                    lines.append(f"- **[{keyword_str}]** {pref.content}")
+                else:
+                    lines.append(f"- {pref.content}")
             parts.append("\n".join(lines))
 
         return "\n\n".join(p for p in parts if p)
@@ -373,7 +440,6 @@ class ContextManager:
     def _get_estimator(self, provider_name: str) -> BaseTokenEstimator:
         if self._token_estimator is not None:
             return self._token_estimator
-
         from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
         self._token_estimator = TokenEstimatorFactory.get_estimator(provider_name)
         return self._token_estimator
@@ -383,13 +449,14 @@ class ContextManager:
             return self._token_truncator
         if self._config is None:
             return None
+        strategy_name = self._config.get("context_truncation.strategy", "react")
         from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
         from agent.models.context.truncation.token_truncation import TruncatorFactory
         from utils.log.log import get_logger
-        budget_manager = TokenBudgetManagerFactory.create(self._strategy_name, self._config)
+        budget_manager = TokenBudgetManagerFactory.create(strategy_name, self._config)
         logger = get_logger(__name__)
         self._token_truncator = TruncatorFactory.create(
-            self._strategy_name,
+            strategy_name,
             budget_manager,
             logger,
             self._config,

@@ -35,6 +35,7 @@ class Stage:
     plan_step_id: PlanStepId
     plan_step_goal: str
     plan_step_description: str
+    plan_step_key_results: list[str] = field(default_factory=list)
     status: StageStatus = StageStatus.RUNNING
     result: str = ""
     interrupt_guidance: str = ""
@@ -147,6 +148,7 @@ class StageExecutor:
         plan_step_id: PlanStepId,
         plan_step_goal: str,
         plan_step_description: str,
+        plan_step_key_results: list[str] | None = None,
         provider_name: str = "claude",
     ) -> Stage:
         """Run a single stage directly (used in tests and simple pipelines)."""
@@ -156,6 +158,7 @@ class StageExecutor:
             plan_step_id=plan_step_id,
             plan_step_goal=plan_step_goal,
             plan_step_description=plan_step_description,
+            plan_step_key_results=plan_step_key_results or [],
         )
         self._current_stage = stage
         self._interrupted.clear()
@@ -203,6 +206,7 @@ class StageExecutor:
                     plan_step_id=step.id,
                     plan_step_goal=step.goal,
                     plan_step_description=step.description,
+                    plan_step_key_results=list(step.key_results),
                 )
                 self._current_stage = stage
                 self._interrupted.clear()
@@ -274,10 +278,24 @@ class StageExecutor:
     def _execute_stage(self, stage: Stage, provider_name: str) -> None:
         """ReAct reasoning loop for a single stage."""
         self._context_manager.begin_stage(self._current_stage_index)
-        self._context_manager.set_variables({
-            "stage_goal": stage.plan_step_goal,
-            "stage_description": stage.plan_step_description,
-        })
+
+        # Inject a user message describing this stage so the LLM has explicit context
+        stage_prompt_lines = [
+            f"## Stage Goal: {stage.plan_step_goal}",
+            "",
+            f"**Description:** {stage.plan_step_description}",
+        ]
+        if stage.plan_step_key_results:
+            stage_prompt_lines.append("")
+            stage_prompt_lines.append("**Key Results Expected:**")
+            for kr in stage.plan_step_key_results:
+                stage_prompt_lines.append(f"- {kr}")
+        stage_prompt_lines.append("")
+        stage_prompt_lines.append(
+            "Please complete this stage according to the description and key results above."
+        )
+        self._context_manager.add_message("user", "\n".join(stage_prompt_lines))
+
         #self._load_knowledge(stage.plan_step_goal)
 
         while stage.iteration_count < self._max_iterations:
