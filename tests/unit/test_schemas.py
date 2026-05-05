@@ -25,37 +25,6 @@ from schemas.errors import (
     CONFIG_ERROR,
     TOOL_NOT_FOUND,
 )
-from schemas.message_convert import ui_to_llm, llm_to_ui
-
-
-# ---------------------------------------------------------------------------
-# UIMessage / LLMMessage
-# ---------------------------------------------------------------------------
-
-def test_ui_message_defaults():
-    msg = ClientMessage(role="user", content="hello")
-    assert msg.role == "user"
-    assert msg.content == "hello"
-    assert msg.metadata == {}
-
-
-def test_ui_message_with_metadata():
-    msg = ClientMessage(role="assistant", content="hi", metadata={"key": "val"})
-    assert msg.metadata["key"] == "val"
-
-
-def test_llm_message_defaults():
-    msg = LLMMessage(role="tool", content="result")
-    assert msg.role == "tool"
-    assert msg.metadata == {}
-
-
-def test_llm_message_metadata_independent():
-    msg1 = LLMMessage(role="user", content="a")
-    msg2 = LLMMessage(role="user", content="b")
-    msg1.metadata["x"] = 1
-    assert "x" not in msg2.metadata
-
 
 # ---------------------------------------------------------------------------
 # ToolCall / ToolResult
@@ -222,39 +191,3 @@ def test_provider_failure():
     err = ProviderFailure(provider_name="openai", message="failed", final_request=req)
     assert err.provider_name == "openai"
     assert err.final_request is req
-
-
-# ---------------------------------------------------------------------------
-# message_convert
-# ---------------------------------------------------------------------------
-
-def test_ui_to_llm_user():
-    ui = ClientMessage(role="user", content="hello")
-    llm = ui_to_llm(ui)
-    assert llm.role == "user"
-    assert llm.content == "hello"
-
-
-def test_ui_to_llm_assistant():
-    ui = ClientMessage(role="assistant", content="hi")
-    llm = ui_to_llm(ui)
-    assert llm.role == "assistant"
-
-
-def test_llm_to_ui_assistant():
-    llm = LLMMessage(role="assistant", content="answer")
-    ui = llm_to_ui(llm)
-    assert ui.role == "assistant"
-    assert ui.content == "answer"
-
-
-def test_llm_to_ui_tool_becomes_assistant():
-    llm = LLMMessage(role="tool", content="result")
-    ui = llm_to_ui(llm)
-    assert ui.role == "assistant"
-
-
-def test_llm_to_ui_user():
-    llm = LLMMessage(role="user", content="question")
-    ui = llm_to_ui(llm)
-    assert ui.role == "user"

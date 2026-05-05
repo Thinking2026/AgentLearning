@@ -312,7 +312,7 @@ class StageExecutor:
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
                 stage.increment_iteration()
                 stage.complete(decision.answer)
-                self._context_manager.end_stage(self._current_stage_index)
+                self._context_manager.end_stage(self._current_stage_index, success=True)
                 return
 
             if decision.decision_type == NextDecisionType.CONTINUE:
@@ -352,7 +352,7 @@ class StageExecutor:
                 return
 
         stage.fail(f"Max iterations ({self._max_iterations}) exceeded")
-        self._context_manager.end_stage(self._current_stage_index)
+        self._context_manager.end_stage(self._current_stage_index, success=False)
 
     # ------------------------------------------------------------------
     # Public helpers used by Pipeline

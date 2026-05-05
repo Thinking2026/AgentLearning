@@ -11,7 +11,6 @@ from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
-    from llm.llm_gateway import BaseLLMClient
     from config.config import JsonConfig
 
 # ===========================================================================
@@ -100,14 +99,14 @@ class ReActContextTruncator(ContextTruncator):
     def __init__(
         self,
         budget_manager: BaseTokenBudgetManager,
-        llm_client_factory: Callable[[str], BaseLLMClient] | None,
         logger: Logger,
         config: ReActTruncationConfig | None = None,
+        json_config: JsonConfig | None = None,
     ) -> None:
         self._budget_manager = budget_manager
-        self._llm_client_factory = llm_client_factory
         self._logger = logger
         self._cfg = config or ReActTruncationConfig()
+        self._json_config = json_config
 
     def truncate(self, request: UnifiedLLMRequest, total_budget: int, effective_estimator: BaseTokenEstimator) -> TruncationResult:
         if (effective_estimator is None) or (request is None) or (0 == total_budget):
@@ -382,7 +381,11 @@ class ReActContextTruncator(ContextTruncator):
         msgs_to_summarize: list[LLMMessage],
     ) -> LLMMessage | None:
         try:
-            client = self._llm_client_factory(self._cfg.summary_provider)
+            if self._json_config is None:
+                self._logger.error("Strategy F: no json_config available, cannot build summary LLM client")
+                return None
+            from agent.factory.agent_factory import AgentFactory
+            client = AgentFactory(self._json_config).build_llm_gateway(self._cfg.summary_provider)
             history_text = "\n".join(
                 f"[{m.role}] {m.content}" for m in msgs_to_summarize
             )
@@ -447,7 +450,6 @@ class TruncatorFactory:
         cls,
         strategy: str,
         budget_manager: BaseTokenBudgetManager,
-        llm_client_factory: Callable[[str], BaseLLMClient] | None,
         logger: Logger,
         config: JsonConfig | None = None,
     ) -> ContextTruncator:
@@ -463,5 +465,5 @@ class TruncatorFactory:
                 keep_last_units=int(config.get("context_truncation.react.keep_last_units", 3)) if config is not None else 3,
                 summary_ratio=float(config.get("context_truncation.react.summary_ratio", 0.20)) if config is not None else 0.20,
             )
-            return ReActContextTruncator(budget_manager, llm_client_factory, logger, trunc_cfg)
+            return ReActContextTruncator(budget_manager, logger, trunc_cfg, json_config=config)
         raise ValueError(f"Unknown truncation strategy: {strategy!r}")

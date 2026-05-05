@@ -7,14 +7,13 @@ from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
 from schemas import LLMMessage, UnifiedLLMRequest, LLMResponse
-from schemas.task import KnowledgeEntry, UserPreferenceEntry
+from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
 from schemas.types import LLMRole
 
 if TYPE_CHECKING:
     from agent.models.context.estimator.token_estimator import BaseTokenEstimator
     from agent.models.context.truncation.token_truncation import ContextTruncator
     from config.config import JsonConfig
-    from llm.llm_gateway import BaseLLMClient
 
 
 @dataclass(frozen=True)
@@ -23,8 +22,6 @@ class ContextMessage:
     role: LLMRole
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-
 
 @dataclass
 class StageRecord:
@@ -47,19 +44,20 @@ class ContextManager:
 
     def __init__(
         self,
+        task: Task,
+        plan: Plan,
         config: JsonConfig | None = None,
-        strategy_name: str = "react",
-        llm_client_factory: Callable[[str], BaseLLMClient] | None = None,
     ) -> None:
         self._config = config
-        self._strategy_name = strategy_name
-        self._llm_client_factory = llm_client_factory
+        self._task = task
+        self._plan = plan
+        self._strategy_name = None #从配置里自己取
 
         self._system_prompt: str = ""
         self._tool_schemas: list[dict[str, Any]] = []
         self._knowledge_entries: list[KnowledgeEntry] = []
         self._user_preferences_entries: list[UserPreferenceEntry] = []
-        self._variables: dict[str, Any] = {}
+        self._variables: dict[str, Any] = {} #动态加入的参数
 
         self._ctx_window: list[ContextMessage] = []
         self._history: list[ContextMessage] = []
@@ -67,9 +65,10 @@ class ContextManager:
         self._stage_records: list[StageRecord] = []
         self._message_id_to_stage: dict[str, int] = {}
         self._active_stage_index: int | None = None
-
-        self._estimators: dict[str, BaseTokenEstimator] = {}
-        self._truncator: ContextTruncator | None = None
+        self._last_success_stage_index: int | None = None
+        
+        self._token_estimator: BaseTokenEstimator = None 
+        self._token_truncator: ContextTruncator | None = None
 
         self._lock = threading.RLock()
 
@@ -131,7 +130,7 @@ class ContextManager:
                 )
             self._active_stage_index = stage_index
 
-    def end_stage(self, stage_index: int) -> None:
+    def end_stage(self, stage_index: int, success: bool) -> None:
         """Mark the stage as complete, recording last_message_id."""
         with self._lock:
             if stage_index >= len(self._stage_records):
@@ -147,6 +146,8 @@ class ContextManager:
             )
             if self._active_stage_index == stage_index:
                 self._active_stage_index = None
+            if success:
+                self._last_success_stage_index = stage_index
 
     def drop_stage(self, stage_index: int) -> None:
         """Remove all ctx_window messages for stage_index. History is unchanged."""
@@ -318,8 +319,8 @@ class ContextManager:
             self._stage_records.clear()
             self._message_id_to_stage.clear()
             self._active_stage_index = None
-            self._estimators.clear()
-            self._truncator = None
+            self._token_estimator = None
+            self._token_truncator = None
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -358,14 +359,16 @@ class ContextManager:
         }
 
     def _get_estimator(self, provider_name: str) -> BaseTokenEstimator:
-        if provider_name not in self._estimators:
-            from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
-            self._estimators[provider_name] = TokenEstimatorFactory.get_estimator(provider_name)
-        return self._estimators[provider_name]
+        if self._token_estimator is not None:
+            return self._token_estimator
+
+        from agent.models.context.estimator.token_estimator import TokenEstimatorFactory
+        self._token_estimator = TokenEstimatorFactory.get_estimator(provider_name)
+        return self._token_estimator
 
     def _get_truncator(self) -> ContextTruncator | None:
-        if self._truncator is not None:
-            return self._truncator
+        if self._token_truncator is not None:
+            return self._token_truncator
         if self._config is None:
             return None
         from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
@@ -373,14 +376,13 @@ class ContextManager:
         from utils.log.log import get_logger
         budget_manager = TokenBudgetManagerFactory.create(self._strategy_name, self._config)
         logger = get_logger(__name__)
-        self._truncator = TruncatorFactory.create(
+        self._token_truncator = TruncatorFactory.create(
             self._strategy_name,
             budget_manager,
-            self._llm_client_factory,
             logger,
             self._config,
         )
-        return self._truncator
+        return self._token_truncator
 
     def _get_total_budget(self, provider_name: str) -> int:
         if self._config is None:

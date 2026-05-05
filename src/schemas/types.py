@@ -36,7 +36,7 @@ class LLMResponse:
 
 @dataclass(slots=True)
 class LLMMessage:
-    """Message conforming to LLM API spec, used in conversation history and LLM calls."""
+    """留作未来扩展，从context_message应该经过比如渲染引擎转换变成LLMMessage，然后转成UnifiedLLMRequest发送给LLM"""
     role: LLMRole
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
