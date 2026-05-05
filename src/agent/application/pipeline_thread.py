@@ -77,11 +77,10 @@ class PipelineThread(threading.Thread):
 
                 # Build a fresh Pipeline + Driver for each task
                 try:
-                    pipeline = self._factory.build_pipeline(task_id, task_description)
+                    pipeline = self._factory.build_pipeline(task_id, self._active_driver)
                 except Exception as exc:
                     self._logger.error("Pipeline build failed", zap.any("error", str(exc)))
                     self._finish_session_trace(error=self._normalize_error(exc))
-                    self._send_task_completed()
                     continue
 
                 driver = PipelineDriver(
@@ -91,57 +90,15 @@ class PipelineThread(threading.Thread):
                 )
                 self._active_driver = driver
                 pipeline.stage_executor.set_driver(driver)
-
-                # Run the pipeline in a sub-thread so this thread can keep
-                # forwarding user messages (cancel / guidance / clarification).
-                result_holder: list = [None]
-                error_holder: list = [None]
-
-                def _run_pipeline() -> None:
-                    try:
-                        result_holder[0] = driver.submit_task(task_id, task_description)
-                    except Exception as exc:
-                        error_holder[0] = exc
-
-                pipeline_thread = threading.Thread(
-                    target=_run_pipeline, name="PipelineWorker", daemon=True
-                )
-                pipeline_thread.start()
-
-                # Forward user messages while the pipeline is running
-                while pipeline_thread.is_alive():
-                    msg = self._task_queue.get_user_message(timeout=0.5)
-                    if msg is not None:
-                        driver.route_user_message(msg)
-
-                pipeline_thread.join()
-                self._active_driver = None
-
-                # Handle result
-                if error_holder[0] is not None:
-                    normalized = self._normalize_error(error_holder[0])
-                    self._logger.error("Task execution failed", zap.any("error", normalized))
-                    self._finish_session_trace(error=normalized)
-                    if self._is_hard_error(normalized):
-                        break
+                result = driver.submit_task(task_id, task_description)
+                if result.succeeded:
+                    self._send_task_completed()
                 else:
-                    result = result_holder[0]
-                    if result is not None:
-                        if result.succeeded and result.result:
-                            self._agent_to_user_queue.send_agent_message(ClientMessage(
-                                role="assistant",
-                                content=result.result,
-                                metadata={"source": "task_result"},
-                            ))
-                        elif result.error_reason:
-                            self._agent_to_user_queue.send_agent_message(ClientMessage(
-                                role="assistant",
-                                content=result.error_reason,
-                                metadata={"source": "error"},
-                            ))
-                    self._finish_session_trace(error=None)
-
-                self._send_task_completed()
+                    self._logger.error(
+                        "Task execution failed",
+                        zap.any("task_id", task_id),
+                        zap.any("error", result.error),
+                    )
 
         except Exception as exc:
             self._logger.error("PipelineThread crashed", zap.any("error", exc))
