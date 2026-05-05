@@ -73,13 +73,19 @@ class Pipeline:
         # Optional callback to push progress messages to the user
         self._send_to_user: Callable[[ClientMessage], None] | None = None
 
+        # Wire checkpoint saving into the executor
+        self._stage_executor.set_checkpoint_callback(self._save_checkpoint_async)
+
     # ------------------------------------------------------------------
     # Public control API (thread-safe, called from PipelineThread)
     # ------------------------------------------------------------------
 
+    @property
+    def stage_executor(self) -> StageExecutor:
+        return self._stage_executor
+
     def set_send_to_user(self, callback: Callable[[ClientMessage], None]) -> None:
         self._send_to_user = callback
-        self._stage_executor.set_send_to_user(callback)
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -181,7 +187,6 @@ class Pipeline:
 
             # 3b. Execute all stages
             result = self._stage_executor.execute(
-                task=self._task,  # type: ignore[arg-type]
                 plan=plan,
                 provider_chain=provider_chain,
             )

@@ -1,40 +1,68 @@
 from __future__ import annotations
 
 import json
-import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from enum import Enum, auto
+import threading
+from typing import TYPE_CHECKING 
 from uuid import uuid4
 
 from agent.events.events import (
     LLMResponseGenerated,
+    StageExecutionStarted,
+    StageResultProduced,
     TaskCancelled,
     TaskPaused,
     ToolCallResultProduced,
     ToolCallStarted,
     UserClarificationRequested,
 )
-from schemas.ids import PlanStepId, StageId, TaskId
-from schemas.types import LLMMessage, ToolCall, ToolResult
 from schemas.errors import (
+    AGENT_MAX_ITERATIONS_EXCEEDED,
     AgentError,
-    LLMError,
     ErrorCategory,
+    LLMError,
     TOOL_NOT_FOUND,
     TOOL_ARGUMENT_ERROR,
     build_error,
 )
-from schemas.task import NextDecisionType, Plan, PlanStep, StageStatus, PlanUpdateTrigger, Task
+from schemas.ids import PlanStepId, StageId, TaskId
+from schemas.task import (
+    NextDecisionType,
+    Plan,
+    PlanStep,
+    StageStatus,
+)
+from schemas.types import LLMMessage, ToolCall, ToolResult, UserCommandType
 
 if TYPE_CHECKING:
     from agent.application.driver import PipelineDriver
     from agent.models.context.manager import ContextManager
-    from agent.models.knowledge.knowledge_loader import KnowledgeLoader
-    from agent.models.reasoning.reasoning_manager import ReasoningManager
     from agent.models.evaluate.quality_evaluator import QualityEvaluator
+    from agent.models.knowledge.knowledge_loader import KnowledgeLoader
     from agent.models.plan.planner import Planner
+    from agent.models.reasoning.reasoning_manager import ReasoningManager
+    from llm.llm_gateway import LLMGateway
     from tools.tool_registry import ToolRegistry
+
+
+# ── Stage start reason labels (shown to user) ─────────────────────────────────
+
+class _StartReason(str, Enum):
+    NEW          = "A. 新Stage执行"
+    EVAL_RETRY   = "B. Stage执行结果评审不通过，更新Step后重新执行"
+    MODEL_SWITCH = "C. 切换模型后重新执行"
+    REPLAN       = "D. 执行失败，更新计划后重新执行"
+
+
+# ── Internal outcome codes from _execute_stage ────────────────────────────────
+
+class _StageOutcome(Enum):
+    SUCCESS        = auto()  # stage.complete() was called
+    NEED_REPLAN    = auto()  # LLM signalled replan (INTERRUPTED with guidance)
+    SWITCH_MODEL   = auto()  # LLMError that warrants a provider switch
+    FATAL          = auto()  # cancelled / unrecoverable error
 
 
 @dataclass
@@ -47,8 +75,6 @@ class Stage:
     plan_step_key_results: list[str] = field(default_factory=list)
     status: StageStatus = StageStatus.RUNNING
     result: str = ""
-    interrupt_guidance: str = ""
-    clarification_question: str = ""
     iteration_count: int = 0
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
@@ -66,14 +92,9 @@ class Stage:
         self.result = reason
         self.completed_at = datetime.now(timezone.utc)
 
-    def interrupt(self, guidance: str) -> None:
-        self.status = StageStatus.INTERRUPTED
-        self.interrupt_guidance = guidance
-        self.completed_at = datetime.now(timezone.utc)
-
-    def pause(self, question: str = "") -> None:
+    def pause(self, reason: str = "") -> None:
         self.status = StageStatus.PAUSED
-        self.clarification_question = question
+        self.result = reason
 
 
 class StageExecutor:
@@ -88,15 +109,17 @@ class StageExecutor:
 
     def __init__(
         self,
-        driver: PipelineDriver,
         reasoning_manager: ReasoningManager,
         context_manager: ContextManager,
         tool_registry: ToolRegistry,
         quality_evaluator: QualityEvaluator,
         knowledge_loader: KnowledgeLoader,
-        max_iterations: int = 60,
-        max_stage_eval_retries: int = 2,
-        forbidden_tools: list[str] | None = None,
+        planner: Planner,
+        llm_gateway: LLMGateway,
+        driver: PipelineDriver | None = None,
+        max_iterations: int = 60, #自己从配置里取
+        max_stage_eval_retries: int = 2, #自己从配置里取
+        forbidden_tools: list[str] | None = None, #自己从配置里取
     ) -> None:
         self._driver = driver
         self._reasoning_manager = reasoning_manager
@@ -104,48 +127,25 @@ class StageExecutor:
         self._tool_registry = tool_registry
         self._quality_evaluator = quality_evaluator
         self._knowledge_loader = knowledge_loader
+        self._planner = planner
+        self._llm_gateway = llm_gateway
+        self._context_manager.set_tool_schemas(tool_registry.get_tool_schemas())
+
         self._max_iterations = max_iterations
+        self._max_replan_stage_retries = max_stage_eval_retries
         self._max_stage_eval_retries = max_stage_eval_retries
         self._forbidden_tools: frozenset[str] = (
             frozenset(forbidden_tools) if forbidden_tools else frozenset()
         )
         self._current_stage: Stage | None = None
         self._current_stage_index: int = 0
-
-        # Wire tool schemas into context manager once at construction time
-        self._context_manager.set_tool_schemas(tool_registry.get_tool_schemas())
-
-        # Signalled by Pipeline from its thread
-        self._interrupted = threading.Event()
-        self._paused = threading.Event()
         self._cancelled = threading.Event()
-        self._clarification_ready = threading.Event()
 
-        self._interrupt_guidance: str = ""
-        self._pause_reason: str = ""
-        self._clarification_text: str = ""
-
-    # ------------------------------------------------------------------
-    # Public control API (called by Pipeline from its thread)
-    # ------------------------------------------------------------------
-
-    def interrupt(self, guidance: str) -> None:
-        self._interrupt_guidance = guidance
-        self._interrupted.set()
-
-    def pause(self, reason: str) -> None:
-        self._pause_reason = reason
-        self._paused.set()
-
-    def resume(self) -> None:
-        self._paused.clear()
+    def set_driver(self, driver: PipelineDriver) -> None:
+        self._driver = driver
 
     def cancel(self) -> None:
         self._cancelled.set()
-
-    def provide_clarification(self, text: str) -> None:
-        self._clarification_text = text
-        self._clarification_ready.set()
 
     # ------------------------------------------------------------------
     # Stage Level loop
@@ -156,122 +156,163 @@ class StageExecutor:
         plan: Plan,
         provider_chain: list[str],
     ) -> str | None:
-        """Iterate over all plan steps and return the final answer, or None on failure."""
-        provider_index = 0
-        step_index = 0
-        last_result = ""
+        """Execute all stages in *plan* and return the final result string.
 
-        while step_index < planner.total_steps():
-            if self._cancelled.is_set():
+        Returns None if execution is cancelled, interrupted, or fatally failed.
+
+        Flow per step:
+          1.0  Publish StageExecutionStarted with start-reason label.
+          1.1  Consider switching back to the highest-priority provider.
+          1.2  Run the internal reasoning loop (_execute_stage).
+          1.2.1  SUCCESS → evaluate result.
+            1.2.1.1  Eval passed → summarise, checkpoint, advance (or deliver).
+            1.2.1.2  Eval failed → reset ctx, replan step, retry from 1.
+          1.2.2  SWITCH_MODEL → reset ctx, switch provider, retry from 1.
+          1.2.3  NEED_REPLAN → reset ctx, replan step, retry from 1.
+          1.2.4  FATAL → return None.
+        """
+        provider_index: int = 0
+        step_index: int = 0
+        start_reason: _StartReason = _StartReason.NEW
+        current_replan_stage_attempts = 0
+
+        while step_index < len(plan.step_list):
+            step = plan.step_list[step_index]
+
+            # ── 1.0 Publish stage-start event ─────────────────────────────
+            self._current_stage_index = step_index
+            self._current_stage = Stage(
+                id=StageId(str(uuid4())),
+                task_id=plan.task_id,
+                plan_step_id=step.id,
+                plan_step_goal=step.goal,
+                plan_step_description=step.description,
+                plan_step_key_results=step.key_results,
+            )
+            self._driver.publish_event(
+                StageExecutionStarted(
+                    task_id=plan.task_id,
+                    order=str(step_index),
+                    content=(
+                        f"Stage {step_index + 1} 执行开始 [{start_reason.value}]: {step.goal}"
+                    ),
+                )
+            )
+
+            # ── 1.1 Consider switching back to highest-priority provider ───
+            if provider_index > 0 and self._should_use_primary_provider():
+                provider_index = 0
+                self._switch_provider(provider_chain[provider_index])
+
+            # ── 1.2 Run reasoning loop ─────────────────────────────────────
+            self._context_manager.begin_stage(step_index)
+            outcome, guidance = self._execute_stage(
+                self._current_stage, provider_chain[provider_index]
+            )
+
+            # ── 1.2.4 Fatal (cancel / unrecoverable) ──────────────────────
+            if outcome == _StageOutcome.FATAL:
                 return None
 
-            step = planner.get_step_by_order(step_index)
-            if step is None:
-                break
-
-            stage_eval_retries = 0
-
-            while True:
-                if self._cancelled.is_set():
-                    return None
-
-                provider_name = (
-                    provider_chain[provider_index]
-                    if provider_index < len(provider_chain)
-                    else provider_chain[-1]
-                )
-
-                stage = Stage(
-                    id=StageId(str(uuid4())),
-                    task_id=task.id,
-                    plan_step_id=step.id,
-                    plan_step_goal=step.goal,
-                    plan_step_description=step.description,
-                    plan_step_key_results=list(step.key_results),
-                )
-                self._current_stage = stage
-                self._interrupted.clear()
-
-                try:
-                    self._execute_stage(stage, provider_name)
-                except LLMError as exc:
-                    # Provider-level failure: try next provider
-                    if exc.category in (
-                        ErrorCategory.AUTH,
-                        ErrorCategory.CONFIG,
-                        ErrorCategory.RESPONSE,
-                    ):
-                        next_idx = provider_index + 1
-                        if next_idx >= len(provider_chain):
-                            return None
-                        provider_index = next_idx
-                        self._context_manager.reset()
-                        continue
-                    return None
-                except AgentError:
-                    return None
-
-                if stage.status == StageStatus.COMPLETED:
-                    eval_record = self._quality_evaluator.evaluate_step_result(step, stage.result)
-                    if eval_record.passed:
-                        last_result = stage.result
-                        self.archive_current_stage_context()
-                        self._current_stage_index += 1
-                        step_index += 1
-                        break
-                    else:
-                        if stage_eval_retries >= self._max_stage_eval_retries:
-                            return None
-                        stage_eval_retries += 1
-                        planner.revise(
-                            step.id,
-                            PlanUpdateTrigger.STAGE_EVAL_FAILED,
-                            eval_record.feedback,
-                        )
-                        step = planner.get_step(step.id) or step
-                        self._context_manager.reset()
-
-                elif stage.status == StageStatus.INTERRUPTED:
-                    # User guidance: revise this step and retry
-                    planner.revise(
-                        step.id,
-                        PlanUpdateTrigger.USER_GUIDANCE,
-                        stage.interrupt_guidance,
+            # ── 1.2.2 Switch model ─────────────────────────────────────────
+            if outcome == _StageOutcome.SWITCH_MODEL:
+                next_index = provider_index + 1
+                if next_index >= len(provider_chain):
+                    # 1.2.4 No more providers — unrecoverable
+                    raise AgentError(
+                        "LLM_ALL_PROVIDERS_FAILED",
+                        f"All providers exhausted at stage {step_index + 1}: {step.goal}",
                     )
-                    step = planner.get_step(step.id) or step
-                    self._context_manager.reset()
-                    stage_eval_retries = 0
+                self._context_manager.drop_stage(step_index)
+                provider_index = next_index
+                self._switch_provider(provider_chain[provider_index])
+                start_reason = _StartReason.MODEL_SWITCH
+                continue  # retry same step_index
 
-                elif stage.status == StageStatus.PAUSED:
-                    # B-class error or clarification wait: Pipeline already handles
-                    # resume signalling; just reset and retry the stage
-                    self._context_manager.reset()
+            # ── 1.2.3 Replan step (LLM-signalled) ─────────────────────────
+            if outcome == _StageOutcome.NEED_REPLAN:
+                self._context_manager.drop_stage(step_index)
+                step = self._replan_step(step, guidance or "")
+                plan = _replace_step(plan, step_index, step)
+                start_reason = _StartReason.REPLAN
+                continue  # retry same step_index with updated step
 
-                elif stage.status == StageStatus.FAILED:
-                    return None
+            # ── 1.2.1 Stage succeeded — evaluate result ────────────────────
+            assert outcome == _StageOutcome.SUCCESS
+            eval_report = self._quality_evaluator.evaluate_stage_result(
+                step,
+                self._current_stage.result,
+                self._reasoning_manager.get_llm_gateway(),
+            )
 
-        return last_result or None
+            if not eval_report.passed:
+                current_replan_stage_attempts += 1
+                if current_replan_stage_attempts > self._max_replan_stage_retries:
+                    raise AgentError(
+                        "LLM_REPLAN_LIMIT_EXCEEDED",
+                        f"Max replan attempts exceeded at stage {step_index + 1}: {step.goal}",
+                    )
+                # 1.2.1.2 Eval failed — reset, replan step, retry
+                self._context_manager.drop_stage(step_index)
+                step = self._replan_step(step, eval_report.feedback)
+                plan = _replace_step(plan, step_index, step)
+                start_reason = _StartReason.EVAL_RETRY
+                continue  # retry same step_index
+
+            # ── 1.2.1.1 Eval passed ────────────────────────────────────────
+            is_last = step_index == len(plan.step_list) - 1
+
+            # Summarise and update context (async LLM summarisation inside end_stage)
+            self._context_manager.end_stage(step_index, success=True)
+
+            if not is_last:
+                self._driver.publish_event(
+                    StageResultProduced(
+                        task_id=plan.task_id,
+                        order=str(step_index),
+                        content=(
+                            f"Stage {step_index + 1} 执行结果已生成: {self._current_stage.result}"
+                        ),
+                    )
+                )
+
+            # Async checkpoint
+            #TODO
+
+            if is_last:
+                # 1.2.1.1.4 All stages done — deliver final result
+                return self._current_stage.result
+
+            # 1.2.1.1.3 Advance to next stage
+            step_index += 1
+            current_replan_stage_attempts = 0
+            start_reason = _StartReason.NEW
+
+        raise AgentError(AGENT_MAX_ITERATIONS_EXCEEDED, "reach max iterations")
 
     # ------------------------------------------------------------------
     # Stage internal reasoning loop
     # ------------------------------------------------------------------
 
-    def _execute_stage(self, stage: Stage, provider_name: str) -> None:
+    def _execute_stage(
+        self, stage: Stage, provider_name: str
+    ) -> tuple[_StageOutcome, str]:
         """ReAct reasoning loop for a single stage.
+
+        Returns (outcome, guidance_or_feedback) where guidance is non-empty only
+        for NEED_REPLAN outcomes.
 
         Flow per iteration:
           3.   Poll async user commands (cancel / guidance).
           1.   get_context_window — truncation handled inside ContextManager.
           2.   Call LLM → Decision.
           2.0  Publish LLMResponseGenerated event.
-          2.1  FINAL_ANSWER  → complete stage, return.
+          2.1  FINAL_ANSWER  → complete stage, return SUCCESS.
           2.2  CONTINUE      → inject assistant message, loop.
           2.3  TOOL_CALL     → dispatch tools (with events), loop.
           2.4  CLARIFICATION → publish event, block, inject reply, loop.
           2.5  PAUSED        → publish event, block, resume, loop.
         """
-        self._context_manager.begin_stage(self._current_stage_index)
-
         stage_prompt_lines = [
             f"## Stage Goal: {stage.plan_step_goal}",
             "",
@@ -291,35 +332,38 @@ class StageExecutor:
         while stage.iteration_count < self._max_iterations:
 
             # ── 3. Poll async user commands ────────────────────────────────
-            user_cmd = self._driver.loop_user_messages()
+            user_cmd = self._driver.loop_user_messages(0.1)
             if user_cmd is not None:
-                if user_cmd.type == "CANCEL":
-                    # 3.1 cancel
+                if user_cmd.type == UserCommandType.CANCEL:
                     self._cancelled.set()
                     self._driver.publish_event(
                         TaskCancelled(task_id=stage.task_id, content="Task cancelled by user.")
                     )
                     stage.fail("Cancelled by user.")
-                    return
-                if user_cmd.type == "GUIDANCE":
-                    # 3.2 user correction — signal outer loop to replan this step
+                    return _StageOutcome.FATAL, ""
+                if user_cmd.type == UserCommandType.GUIDANCE:
                     stage.interrupt(user_cmd.content or "")
-                    return
+                    return _StageOutcome.NEED_REPLAN, user_cmd.content or ""
 
             if self._cancelled.is_set():
                 stage.fail("Cancelled.")
-                return
+                return _StageOutcome.FATAL, ""
 
-            # ── 1. Get context window (truncation handled inside) ──────────
+            # ── 1. Get context window ──────────────────────────────────────
             try:
                 unified_llm_request = self._context_manager.get_context_window(provider_name)
                 # ── 2. Call LLM ────────────────────────────────────────────
                 decision = self._reasoning_manager.reason_once(unified_llm_request)
-            except LLMError:
-                raise
+            except LLMError as exc:
+                if exc.category in (ErrorCategory.AUTH, ErrorCategory.CONFIG):
+                    stage.fail(f"Fatal LLM error: {exc.message}")
+                    return _StageOutcome.FATAL, ""
+                # TRANSIENT / RATE_LIMIT / CONTEXT / RESPONSE → try next provider
+                stage.fail(f"LLM error: {exc.message}")
+                return _StageOutcome.SWITCH_MODEL, ""
             except AgentError as exc:
                 stage.fail(f"Agent error: {exc.message}")
-                return
+                return _StageOutcome.FATAL, ""
 
             # 2.0 publish "LLM reply generated" event
             self._driver.publish_event(
@@ -337,8 +381,7 @@ class StageExecutor:
             if decision.decision_type == NextDecisionType.FINAL_ANSWER:
                 stage.increment_iteration()
                 stage.complete(decision.answer)
-                self._context_manager.end_stage(self._current_stage_index, success=True)
-                return
+                return _StageOutcome.SUCCESS, ""
 
             # ── 2.2 Continue reasoning ─────────────────────────────────────
             if decision.decision_type == NextDecisionType.CONTINUE:
@@ -379,19 +422,11 @@ class StageExecutor:
                         content=question,
                     )
                 )
-
-                # block until clarification arrives
-                self._clarification_ready.clear()
-                self._clarification_ready.wait()
-                self._clarification_ready.clear()
-
-                if self._cancelled.is_set():
-                    stage.fail("Cancelled while waiting for clarification.")
-                    return
-
-                # 2.4.1 inject clarification and loop back
+                user_cmd = self._driver.loop_user_messages(timeout=0)
+                while user_cmd is None or user_cmd.type != UserCommandType.CLARIFICATION:
+                    user_cmd = self._driver.loop_user_messages(timeout=0)
                 self._context_manager.add_message(
-                    "user", f"Clarification: {self._clarification_text}"
+                    "user", f"Clarification: {user_cmd.content if user_cmd else ''}"
                 )
                 stage.increment_iteration()
                 continue
@@ -407,23 +442,15 @@ class StageExecutor:
                 self._driver.publish_event(
                     TaskPaused(task_id=stage.task_id, reason=reason, content=reason)
                 )
-                stage.pause(reason)
-
-                # block until resumed
-                self._paused.wait()
-                self._paused.clear()
-
-                if self._cancelled.is_set():
-                    stage.fail("Cancelled while paused.")
-                    return
-
-                # 2.5.1 resume — loop back
-                stage.status = StageStatus.RUNNING
-                stage.increment_iteration()
-                continue
+                stage.pause()
+                resume_cmd = self._driver.loop_user_messages(timeout=0)
+                if resume_cmd is not None and resume_cmd.type == UserCommandType.RESUME:
+                    stage.status = StageStatus.RUNNING
+                    stage.increment_iteration()
+                    continue
 
         stage.fail(f"Max iterations ({self._max_iterations}) exceeded")
-        self._context_manager.end_stage(self._current_stage_index, success=False)
+        return _StageOutcome.SWITCH_MODEL, ""
 
     # ------------------------------------------------------------------
     # Public helpers used by Pipeline
@@ -433,20 +460,17 @@ class StageExecutor:
         return self._current_stage
 
     def archive_current_stage_context(self) -> None:
-        """Preserve the completed stage context (no-op: messages stay for next stage)."""
         pass
 
     def reset_for_next_stage(self) -> None:
         self._context_manager.reset()
         self._current_stage = None
-        self._interrupted.clear()
-        self._paused.clear()
 
     def append_user_clarification(self, clarification: str) -> None:
         self._context_manager.add_message("user", f"Clarification: {clarification}")
 
-    def set_llm_gateway(self, llm_gateway: object) -> None:
-        self._reasoning_manager.set_llm_gateway(llm_gateway)  # type: ignore[arg-type]
+    def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:
+        self._reasoning_manager.set_llm_gateway(llm_gateway)
 
     def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
         self._context_manager.replace_conversation_history(messages)
@@ -458,6 +482,19 @@ class StageExecutor:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _switch_provider(self, provider_name: str) -> None:
+        new_gateway = self._llm_gateway.for_provider(provider_name)
+        self._reasoning_manager.set_llm_gateway(new_gateway)
+
+    def _should_use_primary_provider(self) -> bool:
+        """Return True when conditions favour switching back to the primary model."""
+        return False
+
+    def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
+        return self._planner.renew_plan_step(
+            step, feedback, self._reasoning_manager.get_llm_gateway()
+        )
+
     def _load_knowledge(self, query: str) -> None:
         entries = self._knowledge_loader.load(query)
         if entries:
@@ -468,7 +505,6 @@ class StageExecutor:
 
     def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:
-            # 2.3.0 publish "tool call started" event
             self._driver.publish_event(
                 ToolCallStarted(
                     task_id=stage.task_id,
@@ -479,10 +515,8 @@ class StageExecutor:
                 )
             )
 
-            # 2.3.1 pre-flight check
             rejection = self._check_tool_call(tool_call)
             if rejection is not None:
-                # 2.3.1.2 check failed — inject system message so LLM can switch tools
                 observation = self._reasoning_manager.format_tool_observation(
                     tool_call=tool_call,
                     result=rejection,
@@ -502,16 +536,13 @@ class StageExecutor:
                 )
                 continue
 
-            # 2.3.1.1 execute tool
             result: ToolResult = self._tool_registry.execute(tool_call)
 
             if not result.success and tool_call.name == "search":
-                # 2.3.1.1.2.1 search fallback via knowledge base
                 fallback = self._knowledge_search_fallback(tool_call)
                 if fallback is not None:
                     result = fallback
 
-            # 2.3.1.1.1 / 2.3.1.1.2.2 inject result and publish event
             observation = self._reasoning_manager.format_tool_observation(
                 tool_call=tool_call,
                 result=self._tool_result_for_observation(result),
@@ -578,10 +609,18 @@ class StageExecutor:
             return None
         if not entries:
             return None
-        results = [{"rank": i + 1, "content": e.content, "tags": list(e.tags)} for i, e in enumerate(entries)]
+        results = [
+            {"rank": i + 1, "content": e.content, "tags": list(e.tags)}
+            for i, e in enumerate(entries)
+        ]
         return ToolResult(
             output=json.dumps(
-                {"source": "knowledge_base", "query": query, "result_count": len(results), "results": results},
+                {
+                    "source": "knowledge_base",
+                    "query": query,
+                    "result_count": len(results),
+                    "results": results,
+                },
                 ensure_ascii=False,
             ),
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
@@ -598,3 +637,17 @@ class StageExecutor:
             success=False,
             error=result.error,
         )
+
+
+# ── Module-level helper ────────────────────────────────────────────────────────
+
+def _replace_step(plan: Plan, index: int, new_step: PlanStep) -> Plan:
+    """Return a new Plan with step at *index* replaced by *new_step*."""
+    new_steps = list(plan.step_list)
+    new_steps[index] = new_step
+    return Plan(
+        id=plan.id,
+        task_id=plan.task_id,
+        step_list=new_steps,
+        created_at=plan.created_at,
+    )

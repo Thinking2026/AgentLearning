@@ -193,6 +193,8 @@ class AgentFactory:
         provider_name: str,
         quality_evaluator: QualityEvaluator,
         knowledge_loader: KnowledgeLoader,
+        planner: Planner,
+        llm_gateway: LLMGateway,
     ) -> StageExecutor:
         return StageExecutor(
             reasoning_manager=self.build_reasoning_manager(provider_name),
@@ -200,6 +202,8 @@ class AgentFactory:
             tool_registry=self.build_tool_registry(),
             quality_evaluator=quality_evaluator,
             knowledge_loader=knowledge_loader,
+            planner=planner,
+            llm_gateway=llm_gateway,
             max_iterations=int(self._config.get("agent.max_attempt_iterations", 60)),
         )
 
@@ -261,7 +265,7 @@ class AgentFactory:
         knowledge_manager = self.build_knowledge_manager(task_id)
         knowledge_loader = self.build_knowledge_loader(knowledge_manager)
         planner = self.build_planner(task_id, task_description, knowledge_loader)
-        stage_executor = self.build_stage_executor(primary, quality_evaluator, knowledge_loader)
+        stage_executor = self.build_stage_executor(primary, quality_evaluator, knowledge_loader, planner, llm_gateway)
         checkpoint_processor = self.build_checkpoint_processor(task_id)
 
         return Pipeline(

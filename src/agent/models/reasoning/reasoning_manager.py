@@ -41,6 +41,9 @@ class ReasoningManager:
         """Replace the current gateway (called by StageExecutor on provider fallback)."""
         self._llm_gateway = llm_gateway
 
+    def get_llm_gateway(self) -> LLMGateway:
+        return self._llm_gateway
+
     def format_tool_observation(
         self,
         tool_call: ToolCall,

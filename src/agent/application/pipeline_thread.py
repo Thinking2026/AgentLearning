@@ -90,6 +90,7 @@ class PipelineThread(threading.Thread):
                     logger=self._logger,
                 )
                 self._active_driver = driver
+                pipeline.stage_executor.set_driver(driver)
 
                 # Run the pipeline in a sub-thread so this thread can keep
                 # forwarding user messages (cancel / guidance / clarification).

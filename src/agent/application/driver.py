@@ -42,8 +42,8 @@ class PipelineDriver:
             task_id=task_id, cpt_id=checkpoint_id
         )
 
-    def loop_user_messages(self) -> UserCommand | None:
-        UserMessage = self._thread.loop_user_message(timeout=self._loop_user_messages_timeout_seconds)
+    def loop_user_messages(self, timeout: float) -> UserCommand | None:
+        UserMessage = self._thread.loop_user_message(timeout)
         if UserMessage is not None:
             return self.convert_user_message(UserMessage)
         return None
