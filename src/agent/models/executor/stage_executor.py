@@ -278,7 +278,7 @@ class StageExecutor:
             "stage_goal": stage.plan_step_goal,
             "stage_description": stage.plan_step_description,
         })
-        self._load_knowledge(stage.plan_step_goal)
+        #self._load_knowledge(stage.plan_step_goal)
 
         while stage.iteration_count < self._max_iterations:
             # Check for user interrupt (guidance)

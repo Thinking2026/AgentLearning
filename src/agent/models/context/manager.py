@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
+from llm.llm_gateway import LLMGateway
 from schemas import LLMMessage, UnifiedLLMRequest, LLMResponse
 from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
 from schemas.types import LLMRole
@@ -47,11 +48,13 @@ class ContextManager:
         task: Task,
         plan: Plan,
         config: JsonConfig | None = None,
+        llm_gateway: LLMGateway | None = None,
     ) -> None:
         self._config = config
         self._task = task
         self._plan = plan
         self._strategy_name = None #从配置里自己取
+        self._llm_gateway = llm_gateway
 
         self._system_prompt: str = ""
         self._tool_schemas: list[dict[str, Any]] = []
@@ -72,6 +75,15 @@ class ContextManager:
 
         self._lock = threading.RLock()
 
+    # ------------------------------------------------------------------
+    # Basic getters
+    # ------------------------------------------------------------------
+
+    def get_task(self) -> Task:
+        return self._task
+
+    def get_plan(self) -> Plan:
+        return self._plan
     # ------------------------------------------------------------------
     # Configuration setters
     # ------------------------------------------------------------------
