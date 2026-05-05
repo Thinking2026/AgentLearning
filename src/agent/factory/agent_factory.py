@@ -10,7 +10,6 @@ from infra.db.impl.chromadb_storage import ChromaDBStorage
 from infra.db.impl.mysql_storage import MySQLStorage
 from infra.db.impl.sqlite_storage import SQLiteStorage
 from infra.db.registry import StorageRegistry
-from infra.eventbus.event_bus import InMemoryEventBus
 from llm.llm_gateway import LLMGateway
 from llm.registry import LLMProviderRegistry
 from llm.providers.claude_api import ClaudeLLMClient
@@ -22,6 +21,7 @@ from llm.providers.openai_api import OpenAILLMClient
 from llm.providers.qwen_api import QwenLLMClient
 from schemas.errors import LLM_PROVIDER_NOT_FOUND, STORAGE_CONFIG_ERROR, build_error
 from schemas.ids import TaskId
+from schemas.task import LLMProviderCapabilities
 from tools import create_default_tool_registry
 from tools.impl.sql_query_tool import SQLQueryTool, build_sql_query_tool_name, build_sql_query_tool_description
 from tools.impl.sql_schema_tool import SQLSchemaTool, build_sql_schema_tool_name, build_sql_schema_tool_description
@@ -30,6 +30,7 @@ from tools.impl.vector_schema_tool import VectorSchemaTool, build_vector_schema_
 from utils.log.log import Logger
 
 from agent.application.pipeline import Pipeline
+from agent.models.analysis.analyzer import Analyzer
 from agent.models.checkpoint.checkpoint_processor import CheckpointProcessor
 from agent.models.context.manager import ContextManager
 from agent.models.evaluate.quality_evaluator import QualityEvaluator
@@ -37,12 +38,13 @@ from agent.models.executor.stage_executor import StageExecutor
 from agent.models.knowledge.knowledge_loader import KnowledgeLoader
 from agent.models.knowledge.knowledge_manager import KnowledgeManager
 from agent.models.model_routing.provider_router import ModelSelector
-from schemas.task import ProviderCapabilities
+from agent.models.personality.user_preference import PersonalityManager
 from agent.models.plan.planner import Planner
 from agent.models.reasoning.impl.react.react_strategy import ReActStrategy
 from agent.models.reasoning.reasoning_manager import ReasoningManager
 
 if TYPE_CHECKING:
+    from agent.application.driver import PipelineDriver
     from infra.observability.tracing import Tracer
 
 
@@ -65,9 +67,6 @@ class AgentFactory:
     # ------------------------------------------------------------------
     # Infrastructure
     # ------------------------------------------------------------------
-
-    def build_event_bus(self) -> InMemoryEventBus:
-        return InMemoryEventBus()
 
     def build_storage_registry(self) -> StorageRegistry:
         seed_documents = load_seed_documents(
@@ -153,12 +152,12 @@ class AgentFactory:
         if not isinstance(priority_chain, list) or not priority_chain:
             priority_chain = ["deepseek"]
 
-        capabilities: list[ProviderCapabilities] = []
+        capabilities: list[LLMProviderCapabilities] = []
         for name in priority_chain:
             cap_cfg = self._config.get(f"llm.provider_settings.{name}.capabilities", {})
             if not isinstance(cap_cfg, dict):
                 cap_cfg = {}
-            capabilities.append(ProviderCapabilities(
+            capabilities.append(LLMProviderCapabilities(
                 name=name,
                 cognitive_complexity=list(cap_cfg.get("cognitive_complexity", ["simple", "medium", "complex"])),
                 best_scenarios=list(cap_cfg.get("best_scenarios", [])),
@@ -177,11 +176,14 @@ class AgentFactory:
     def build_context_manager(self) -> ContextManager:
         return ContextManager()
 
-    def build_knowledge_loader(
-        self,
-        knowledge_manager: KnowledgeManager | None = None,
-    ) -> KnowledgeLoader:
-        return KnowledgeLoader(knowledge_manager)
+    def build_knowledge_loader(self) -> KnowledgeLoader:
+        return KnowledgeLoader()
+
+    def build_personality_manager(self) -> PersonalityManager:
+        return PersonalityManager()
+
+    def build_analyzer(self) -> Analyzer:
+        return Analyzer()
 
     def build_reasoning_manager(self, provider_name: str) -> ReasoningManager:
         gateway = self.build_llm_gateway(provider_name)
@@ -195,58 +197,30 @@ class AgentFactory:
         knowledge_loader: KnowledgeLoader,
         planner: Planner,
         llm_gateway: LLMGateway,
+        tool_registry=None,
     ) -> StageExecutor:
+        if tool_registry is None:
+            tool_registry = self.build_tool_registry()
         return StageExecutor(
             reasoning_manager=self.build_reasoning_manager(provider_name),
             context_manager=self.build_context_manager(),
-            tool_registry=self.build_tool_registry(),
+            tool_registry=tool_registry,
             quality_evaluator=quality_evaluator,
             knowledge_loader=knowledge_loader,
             planner=planner,
             llm_gateway=llm_gateway,
             max_iterations=int(self._config.get("agent.max_attempt_iterations", 60)),
+            max_stage_eval_retries=int(self._config.get("agent.max_stage_retries", 2)),
         )
 
-    def build_planner(
-        self,
-        task_id: TaskId,
-        task_description: str,
-        knowledge_loader: KnowledgeLoader | None = None,
-    ) -> Planner:
-        primary = self._primary_provider_name()
-        gateway = self.build_llm_gateway(primary)
-        return Planner.create(
-            task_id=task_id,
-            task_description=task_description,
-            llm_gateway=gateway,
-            knowledge_loader=knowledge_loader,
-        )
+    def build_planner(self) -> Planner:
+        return Planner()
 
-    def build_quality_evaluator(
-        self,
-        task_id: TaskId,
-        task_description: str,
-    ) -> QualityEvaluator:
-        primary = self._primary_provider_name()
-        gateway = self.build_llm_gateway(primary)
-        return QualityEvaluator.for_task(
-            task_id=task_id,
-            task_description=task_description,
-            llm_gateway=gateway,
-        )
+    def build_quality_evaluator(self) -> QualityEvaluator:
+        return QualityEvaluator()
 
-    def build_knowledge_manager(self, task_id: TaskId) -> KnowledgeManager:
-        primary = self._primary_provider_name()
-        gateway = self.build_llm_gateway(primary)
-        storage_registry = self.build_storage_registry()
-        vector_storage = None
-        if "chromadb" in storage_registry.list_backends():
-            vector_storage = storage_registry.get("chromadb")
-        return KnowledgeManager.for_task(
-            task_id=task_id,
-            llm_gateway=gateway,
-            vector_storage=vector_storage,
-        )
+    def build_knowledge_manager(self) -> KnowledgeManager:
+        return KnowledgeManager()
 
     def build_checkpoint_processor(self, task_id: TaskId) -> CheckpointProcessor:
         return CheckpointProcessor.create_for_task(task_id)
@@ -255,29 +229,43 @@ class AgentFactory:
     # Top-level entry point
     # ------------------------------------------------------------------
 
-    def build_pipeline(self, task_id: TaskId, task_description: str) -> Pipeline:
+    def build_pipeline(
+        self,
+        task_id: TaskId,
+        pipeline_driver: PipelineDriver | None = None,
+    ) -> Pipeline:
         """Build a fully-wired Pipeline for a single task."""
         primary = self._primary_provider_name()
         llm_registry = self.build_llm_provider_registry()
         llm_gateway = self.build_llm_gateway(primary, registry=llm_registry)
+        storage_registry = self.build_storage_registry()
+        tool_registry = self.build_tool_registry(storage_registry)
         model_selector = self.build_model_selector()
-        quality_evaluator = self.build_quality_evaluator(task_id, task_description)
-        knowledge_manager = self.build_knowledge_manager(task_id)
-        knowledge_loader = self.build_knowledge_loader(knowledge_manager)
-        planner = self.build_planner(task_id, task_description, knowledge_loader)
-        stage_executor = self.build_stage_executor(primary, quality_evaluator, knowledge_loader, planner, llm_gateway)
+        quality_evaluator = self.build_quality_evaluator()
+        knowledge_manager = self.build_knowledge_manager()
+        knowledge_loader = self.build_knowledge_loader()
+        personality_manager = self.build_personality_manager()
+        analyzer = self.build_analyzer()
+        planner = self.build_planner()
+        stage_executor = self.build_stage_executor(
+            primary, quality_evaluator, knowledge_loader, planner, llm_gateway, tool_registry
+        )
         checkpoint_processor = self.build_checkpoint_processor(task_id)
 
         return Pipeline(
+            analyzer=analyzer,
             planner=planner,
+            pipeline_driver=pipeline_driver,
             stage_executor=stage_executor,
             checkpoint_processor=checkpoint_processor,
             knowledge_manager=knowledge_manager,
+            knowledge_loader=knowledge_loader,
+            personality_manager=personality_manager,
             quality_evaluator=quality_evaluator,
             model_selector=model_selector,
+            tool_registry=tool_registry,
             llm_gateway=llm_gateway,
             max_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
-            max_stage_retries=int(self._config.get("agent.max_stage_retries", 2)),
             max_quality_retries=int(self._config.get("agent.max_quality_retries", 2)),
         )
 
