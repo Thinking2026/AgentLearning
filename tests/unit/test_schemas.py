@@ -15,7 +15,7 @@ from schemas.types import (
 )
 from schemas.errors import (
     ErrorCategory,
-    LLMErrorCode,
+    LLMNormalizedErrorCode,
     LLMNormalizedError,
     AgentError,
     ConfigError,
@@ -107,15 +107,15 @@ def test_budget_result():
 
 def test_llm_error_category_mapping():
     cases = [
-        (LLMErrorCode.NETWORK_ERROR, ErrorCategory.TRANSIENT),
-        (LLMErrorCode.TIMEOUT, ErrorCategory.TRANSIENT),
-        (LLMErrorCode.HTTP_5XX, ErrorCategory.TRANSIENT),
-        (LLMErrorCode.RATE_LIMITED, ErrorCategory.RATE_LIMIT),
-        (LLMErrorCode.CONTEXT_TOO_LONG, ErrorCategory.CONTEXT),
-        (LLMErrorCode.AUTH_FAILED, ErrorCategory.AUTH),
-        (LLMErrorCode.RESPONSE_ERROR, ErrorCategory.RESPONSE),
-        (LLMErrorCode.RESPONSE_PARSE_ERROR, ErrorCategory.RESPONSE),
-        (LLMErrorCode.CONFIG_ERROR, ErrorCategory.CONFIG),
+        (LLMNormalizedErrorCode.NETWORK_ERROR, ErrorCategory.TRANSIENT),
+        (LLMNormalizedErrorCode.TIMEOUT, ErrorCategory.TRANSIENT),
+        (LLMNormalizedErrorCode.HTTP_5XX, ErrorCategory.TRANSIENT),
+        (LLMNormalizedErrorCode.RATE_LIMITED, ErrorCategory.RATE_LIMIT),
+        (LLMNormalizedErrorCode.CONTEXT_TOO_LONG, ErrorCategory.CONTEXT),
+        (LLMNormalizedErrorCode.AUTH_FAILED, ErrorCategory.AUTH),
+        (LLMNormalizedErrorCode.RESPONSE_ERROR, ErrorCategory.RESPONSE),
+        (LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR, ErrorCategory.RESPONSE),
+        (LLMNormalizedErrorCode.CONFIG_ERROR, ErrorCategory.CONFIG),
     ]
     for code, expected_category in cases:
         err = LLMNormalizedError(code, "msg")
@@ -123,18 +123,18 @@ def test_llm_error_category_mapping():
 
 
 def test_llm_error_str_contains_category_and_code():
-    err = LLMNormalizedError(LLMErrorCode.RATE_LIMITED, "too many requests")
+    err = LLMNormalizedError(LLMNormalizedErrorCode.RATE_LIMITED, "too many requests")
     assert "RATE_LIMIT" in str(err)
     assert "RATE_LIMITED" in str(err)
 
 
 def test_llm_error_retry_after():
-    err = LLMNormalizedError(LLMErrorCode.RATE_LIMITED, "slow down", retry_after=30.0)
+    err = LLMNormalizedError(LLMNormalizedErrorCode.RATE_LIMITED, "slow down", retry_after=30.0)
     assert err.retry_after == pytest.approx(30.0)
 
 
 def test_llm_error_is_exception():
-    err = LLMNormalizedError(LLMErrorCode.TIMEOUT, "timed out")
+    err = LLMNormalizedError(LLMNormalizedErrorCode.TIMEOUT, "timed out")
     with pytest.raises(LLMNormalizedError):
         raise err
 

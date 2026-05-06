@@ -11,7 +11,7 @@ from schemas.errors import (
     AgentError,
     HttpError,
     LLMNormalizedError,
-    LLMErrorCode,
+    LLMNormalizedErrorCode,
     ErrorCategory,
     LLM_NETWORK_ERROR,
     LLM_TIMEOUT,
@@ -29,7 +29,7 @@ from schemas.types import UnifiedLLMRequest
 def test_classify_429_is_rate_limited():
     exc = HttpError(status=429, body="too many requests", retry_after=10.0)
     err = classify_http_error(exc)
-    assert err.code == LLMErrorCode.RATE_LIMITED
+    assert err.code == LLMNormalizedErrorCode.RATE_LIMITED
     assert err.category == ErrorCategory.RATE_LIMIT
     assert err.retry_after == pytest.approx(10.0)
 
@@ -37,40 +37,40 @@ def test_classify_429_is_rate_limited():
 def test_classify_401_is_auth_failed():
     exc = HttpError(status=401, body="unauthorized")
     err = classify_http_error(exc)
-    assert err.code == LLMErrorCode.AUTH_FAILED
+    assert err.code == LLMNormalizedErrorCode.AUTH_FAILED
     assert err.category == ErrorCategory.AUTH
 
 
 def test_classify_403_is_auth_failed():
     exc = HttpError(status=403, body="forbidden")
     err = classify_http_error(exc)
-    assert err.code == LLMErrorCode.AUTH_FAILED
+    assert err.code == LLMNormalizedErrorCode.AUTH_FAILED
 
 
 def test_classify_400_context_too_long():
     exc = HttpError(status=400, body="context_length_exceeded: too many tokens")
     err = classify_http_error(exc)
-    assert err.code == LLMErrorCode.CONTEXT_TOO_LONG
+    assert err.code == LLMNormalizedErrorCode.CONTEXT_TOO_LONG
     assert err.category == ErrorCategory.CONTEXT
 
 
 def test_classify_400_context_too_long_variant():
     exc = HttpError(status=400, body="maximum context length exceeded")
     err = classify_http_error(exc)
-    assert err.code == LLMErrorCode.CONTEXT_TOO_LONG
+    assert err.code == LLMNormalizedErrorCode.CONTEXT_TOO_LONG
 
 
 def test_classify_500_is_http_5xx():
     exc = HttpError(status=500, body="internal server error")
     err = classify_http_error(exc)
-    assert err.code == LLMErrorCode.HTTP_5XX
+    assert err.code == LLMNormalizedErrorCode.HTTP_5XX
     assert err.category == ErrorCategory.TRANSIENT
 
 
 def test_classify_400_non_context_is_5xx():
     exc = HttpError(status=400, body="bad request unrelated")
     err = classify_http_error(exc)
-    assert err.code == LLMErrorCode.HTTP_5XX
+    assert err.code == LLMNormalizedErrorCode.HTTP_5XX
 
 
 # ---------------------------------------------------------------------------
@@ -80,38 +80,38 @@ def test_classify_400_non_context_is_5xx():
 def test_classify_network_error():
     exc = AgentError(code=LLM_NETWORK_ERROR, message="connection refused")
     err = classify_agent_error(exc)
-    assert err.code == LLMErrorCode.NETWORK_ERROR
+    assert err.code == LLMNormalizedErrorCode.NETWORK_ERROR
     assert err.category == ErrorCategory.TRANSIENT
 
 
 def test_classify_timeout():
     exc = AgentError(code=LLM_TIMEOUT, message="timed out")
     err = classify_agent_error(exc)
-    assert err.code == LLMErrorCode.TIMEOUT
+    assert err.code == LLMNormalizedErrorCode.TIMEOUT
 
 
 def test_classify_response_parse_error():
     exc = AgentError(code=LLM_RESPONSE_PARSE_ERROR, message="parse failed")
     err = classify_agent_error(exc)
-    assert err.code == LLMErrorCode.RESPONSE_PARSE_ERROR
+    assert err.code == LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR
 
 
 def test_classify_response_error():
     exc = AgentError(code=LLM_RESPONSE_ERROR, message="bad response")
     err = classify_agent_error(exc)
-    assert err.code == LLMErrorCode.RESPONSE_ERROR
+    assert err.code == LLMNormalizedErrorCode.RESPONSE_ERROR
 
 
 def test_classify_config_error():
     exc = AgentError(code=LLM_CONFIG_ERROR, message="missing key")
     err = classify_agent_error(exc)
-    assert err.code == LLMErrorCode.CONFIG_ERROR
+    assert err.code == LLMNormalizedErrorCode.CONFIG_ERROR
 
 
 def test_classify_unknown_agent_error_defaults_to_response_error():
     exc = AgentError(code="SOME_UNKNOWN_CODE", message="unknown")
     err = classify_agent_error(exc)
-    assert err.code == LLMErrorCode.RESPONSE_ERROR
+    assert err.code == LLMNormalizedErrorCode.RESPONSE_ERROR
 
 
 # ---------------------------------------------------------------------------

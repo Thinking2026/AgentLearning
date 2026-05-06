@@ -51,7 +51,7 @@ from .errors import (
     ErrorCategory,
     HttpError,
     LLMNormalizedError,
-    LLMErrorCode,
+    LLMNormalizedErrorCode,
     ProviderFailure,
     build_error,
 )
@@ -126,7 +126,7 @@ __all__ = [
     "ErrorCategory",
     "HttpError",
     "LLMNormalizedError",
-    "LLMErrorCode",
+    "LLMNormalizedErrorCode",
     "LLMUsage",
     "ProviderFailure",
     "build_error",

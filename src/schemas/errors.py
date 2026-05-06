@@ -42,7 +42,7 @@ class CallerAction(str, Enum):
     FATAL         = "FATAL"          # abort; no recovery possible
 
 
-class LLMErrorCode(str, Enum):
+class LLMNormalizedErrorCode(str, Enum):
     # ── Transient ────────────────────────────────────────────────────────────
     NETWORK_ERROR          = "NETWORK_ERROR"           # socket / DNS / connection refused
     TIMEOUT                = "TIMEOUT"                 # read or connect timeout
@@ -83,41 +83,41 @@ class LLMErrorCode(str, Enum):
 # Canonical mapping: code → (category, caller_action)
 # ---------------------------------------------------------------------------
 
-_CODE_META: dict[LLMErrorCode, tuple[ErrorCategory, CallerAction]] = {
+_CODE_META: dict[LLMNormalizedErrorCode, tuple[ErrorCategory, CallerAction]] = {
     # Transient
-    LLMErrorCode.NETWORK_ERROR:         (ErrorCategory.TRANSIENT,      CallerAction.RETRY),
-    LLMErrorCode.TIMEOUT:               (ErrorCategory.TRANSIENT,      CallerAction.RETRY),
-    LLMErrorCode.HTTP_5XX:              (ErrorCategory.TRANSIENT,      CallerAction.RETRY_BACKOFF),
-    LLMErrorCode.PROVIDER_OVERLOADED:   (ErrorCategory.TRANSIENT,      CallerAction.RETRY_BACKOFF),
+    LLMNormalizedErrorCode.NETWORK_ERROR:         (ErrorCategory.TRANSIENT,      CallerAction.RETRY),
+    LLMNormalizedErrorCode.TIMEOUT:               (ErrorCategory.TRANSIENT,      CallerAction.RETRY),
+    LLMNormalizedErrorCode.HTTP_5XX:              (ErrorCategory.TRANSIENT,      CallerAction.RETRY_BACKOFF),
+    LLMNormalizedErrorCode.PROVIDER_OVERLOADED:   (ErrorCategory.TRANSIENT,      CallerAction.RETRY_BACKOFF),
 
     # Rate limit / quota
-    LLMErrorCode.RATE_LIMITED:          (ErrorCategory.RATE_LIMIT,     CallerAction.RETRY_BACKOFF),
-    LLMErrorCode.QUOTA_EXCEEDED:        (ErrorCategory.RATE_LIMIT,     CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.RATE_LIMITED:          (ErrorCategory.RATE_LIMIT,     CallerAction.RETRY_BACKOFF),
+    LLMNormalizedErrorCode.QUOTA_EXCEEDED:        (ErrorCategory.RATE_LIMIT,     CallerAction.DEGRADE),
 
     # Context / length
-    LLMErrorCode.CONTEXT_TOO_LONG:      (ErrorCategory.CONTEXT,        CallerAction.DEGRADE),
-    LLMErrorCode.OUTPUT_TOO_LONG:       (ErrorCategory.CONTEXT,        CallerAction.DEGRADE),
-    LLMErrorCode.INVALID_REQUEST:       (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
+    LLMNormalizedErrorCode.CONTEXT_TOO_LONG:      (ErrorCategory.CONTEXT,        CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.OUTPUT_TOO_LONG:       (ErrorCategory.CONTEXT,        CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.INVALID_REQUEST:       (ErrorCategory.CONTEXT,        CallerAction.SWITCH_MODEL),
 
     # Auth / permission
-    LLMErrorCode.AUTH_FAILED:           (ErrorCategory.AUTH,           CallerAction.FATAL),
-    LLMErrorCode.PERMISSION_DENIED:     (ErrorCategory.AUTH,           CallerAction.SWITCH_MODEL),
+    LLMNormalizedErrorCode.AUTH_FAILED:           (ErrorCategory.AUTH,           CallerAction.FATAL),
+    LLMNormalizedErrorCode.PERMISSION_DENIED:     (ErrorCategory.AUTH,           CallerAction.SWITCH_MODEL),
 
     # Content policy
-    LLMErrorCode.CONTENT_FILTERED:      (ErrorCategory.CONTENT_POLICY, CallerAction.DEGRADE),
-    LLMErrorCode.INPUT_CONTENT_POLICY:  (ErrorCategory.CONTENT_POLICY, CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.CONTENT_FILTERED:      (ErrorCategory.CONTENT_POLICY, CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.INPUT_CONTENT_POLICY:  (ErrorCategory.CONTENT_POLICY, CallerAction.DEGRADE),
 
     # Response quality
-    LLMErrorCode.RESPONSE_ERROR:        (ErrorCategory.RESPONSE,       CallerAction.SWITCH_MODEL),
-    LLMErrorCode.RESPONSE_PARSE_ERROR:  (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
-    LLMErrorCode.EMPTY_RESPONSE:        (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
-    LLMErrorCode.EMPTY_CHOICES:         (ErrorCategory.RESPONSE,       CallerAction.IGNORE),
-    LLMErrorCode.TOOL_CALL_PARSE_ERROR: (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
-    LLMErrorCode.JSON_MODE_PARSE_ERROR: (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
-    LLMErrorCode.FINISH_REASON_LENGTH:  (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.RESPONSE_ERROR:        (ErrorCategory.RESPONSE,       CallerAction.SWITCH_MODEL),
+    LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR:  (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.EMPTY_RESPONSE:        (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.EMPTY_CHOICES:         (ErrorCategory.RESPONSE,       CallerAction.IGNORE),
+    LLMNormalizedErrorCode.TOOL_CALL_PARSE_ERROR: (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.JSON_MODE_PARSE_ERROR: (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
+    LLMNormalizedErrorCode.FINISH_REASON_LENGTH:  (ErrorCategory.RESPONSE,       CallerAction.DEGRADE),
 
     # Config
-    LLMErrorCode.CONFIG_ERROR:          (ErrorCategory.CONFIG,         CallerAction.FATAL),
+    LLMNormalizedErrorCode.CONFIG_ERROR:          (ErrorCategory.CONFIG,         CallerAction.FATAL),
 }
 
 
@@ -138,7 +138,7 @@ class LLMNormalizedError(Exception):
 
     def __init__(
         self,
-        code: LLMErrorCode,
+        code: LLMNormalizedErrorCode,
         message: str,
         *,
         retry_after: float | None = None,

@@ -11,7 +11,7 @@ from schemas import (
     ErrorCategory,
     HttpError,
     LLMNormalizedError,
-    LLMErrorCode,
+    LLMNormalizedErrorCode,
     UnifiedLLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
@@ -121,51 +121,51 @@ def classify_http_error(exc: HttpError, provider: str | None = None) -> LLMNorma
     if exc.status == 429:
         retry_after = _extract_retry_after(exc)
         if any(h in body_lower for h in _QUOTA_HINTS):
-            return LLMNormalizedError(LLMErrorCode.QUOTA_EXCEEDED, f"Quota exceeded: {exc.body}", **kw)
+            return LLMNormalizedError(LLMNormalizedErrorCode.QUOTA_EXCEEDED, f"Quota exceeded: {exc.body}", **kw)
         return LLMNormalizedError(
-            LLMErrorCode.RATE_LIMITED,
+            LLMNormalizedErrorCode.RATE_LIMITED,
             f"Rate limited: {exc.body}",
             retry_after=retry_after,
             **kw,
         )
 
     if exc.status == 401:
-        return LLMNormalizedError(LLMErrorCode.AUTH_FAILED, f"Auth failed HTTP 401: {exc.body}", **kw)
+        return LLMNormalizedError(LLMNormalizedErrorCode.AUTH_FAILED, f"Auth failed HTTP 401: {exc.body}", **kw)
 
     if exc.status == 403:
-        return LLMNormalizedError(LLMErrorCode.PERMISSION_DENIED, f"Permission denied HTTP 403: {exc.body}", **kw)
+        return LLMNormalizedError(LLMNormalizedErrorCode.PERMISSION_DENIED, f"Permission denied HTTP 403: {exc.body}", **kw)
 
     if exc.status == 400:
         if any(h in body_lower for h in _CONTEXT_TOO_LONG_HINTS):
-            return LLMNormalizedError(LLMErrorCode.CONTEXT_TOO_LONG, f"Context too long: {exc.body}", **kw)
+            return LLMNormalizedError(LLMNormalizedErrorCode.CONTEXT_TOO_LONG, f"Context too long: {exc.body}", **kw)
         if any(h in body_lower for h in _CONTENT_FILTER_HINTS):
-            return LLMNormalizedError(LLMErrorCode.INPUT_CONTENT_POLICY, f"Input content policy: {exc.body}", **kw)
-        return LLMNormalizedError(LLMErrorCode.INVALID_REQUEST, f"Invalid request HTTP 400: {exc.body}", **kw)
+            return LLMNormalizedError(LLMNormalizedErrorCode.INPUT_CONTENT_POLICY, f"Input content policy: {exc.body}", **kw)
+        return LLMNormalizedError(LLMNormalizedErrorCode.INVALID_REQUEST, f"Invalid request HTTP 400: {exc.body}", **kw)
 
     if exc.status in {503, 529} or any(h in body_lower for h in _OVERLOADED_HINTS):
         retry_after = _extract_retry_after(exc)
         return LLMNormalizedError(
-            LLMErrorCode.PROVIDER_OVERLOADED,
+            LLMNormalizedErrorCode.PROVIDER_OVERLOADED,
             f"Provider overloaded HTTP {exc.status}: {exc.body}",
             retry_after=retry_after,
             **kw,
         )
 
-    return LLMNormalizedError(LLMErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}", **kw)
+    return LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}", **kw)
 
 
-_AGENT_ERROR_CODE_MAP: dict[str, LLMErrorCode] = {
-    LLM_NETWORK_ERROR:        LLMErrorCode.NETWORK_ERROR,
-    LLM_TIMEOUT:              LLMErrorCode.TIMEOUT,
-    LLM_RESPONSE_PARSE_ERROR: LLMErrorCode.RESPONSE_PARSE_ERROR,
-    LLM_RESPONSE_ERROR:       LLMErrorCode.RESPONSE_ERROR,
-    LLM_CONFIG_ERROR:         LLMErrorCode.CONFIG_ERROR,
+_AGENT_ERROR_CODE_MAP: dict[str, LLMNormalizedErrorCode] = {
+    LLM_NETWORK_ERROR:        LLMNormalizedErrorCode.NETWORK_ERROR,
+    LLM_TIMEOUT:              LLMNormalizedErrorCode.TIMEOUT,
+    LLM_RESPONSE_PARSE_ERROR: LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR,
+    LLM_RESPONSE_ERROR:       LLMNormalizedErrorCode.RESPONSE_ERROR,
+    LLM_CONFIG_ERROR:         LLMNormalizedErrorCode.CONFIG_ERROR,
 }
 
 
 def classify_agent_error(exc: AgentError, provider: str | None = None) -> LLMNormalizedError:
     """Map a legacy AgentError (from HttpClient) to a structured LLMError."""
-    code = _AGENT_ERROR_CODE_MAP.get(exc.code, LLMErrorCode.RESPONSE_ERROR)
+    code = _AGENT_ERROR_CODE_MAP.get(exc.code, LLMNormalizedErrorCode.RESPONSE_ERROR)
     return LLMNormalizedError(code, exc.message, provider=provider)
 
 
@@ -266,7 +266,7 @@ class LLMGateway(BaseLLMClient):
         # Should not reach here, but satisfy type checker
         if last_exc is not None:
             raise last_exc
-        raise LLMNormalizedError(LLMErrorCode.HTTP_5XX, "Unknown LLM error")
+        raise LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, "Unknown LLM error")
 
     def _backoff(self, attempt: int) -> float:
         """Exponential backoff with full jitter."""

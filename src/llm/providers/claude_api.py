@@ -7,7 +7,7 @@ from schemas import (
     AgentError,
     HttpError,
     LLMNormalizedError,
-    LLMErrorCode,
+    LLMNormalizedErrorCode,
     LLMMessage,
     UnifiedLLMRequest,
     LLMResponse,
@@ -99,7 +99,7 @@ class ClaudeLLMClient(BaseLLMClient):
             except HttpError as exc:
                 if exc.status == 529:
                     raise LLMNormalizedError(
-                        LLMErrorCode.PROVIDER_OVERLOADED,
+                        LLMNormalizedErrorCode.PROVIDER_OVERLOADED,
                         f"Claude overloaded: {exc.body}",
                         raw_status=529,
                         provider=self.provider_name,
@@ -196,7 +196,7 @@ class ClaudeLLMClient(BaseLLMClient):
         content_blocks = response_data.get("content")
         if not isinstance(content_blocks, list):
             raise LLMNormalizedError(
-                LLMErrorCode.RESPONSE_ERROR,
+                LLMNormalizedErrorCode.RESPONSE_ERROR,
                 f"Claude API returned invalid content blocks: {response_data}",
             )
 
@@ -205,7 +205,7 @@ class ClaudeLLMClient(BaseLLMClient):
             # Truncated — still parse what we have; caller sees finish_reason="length"
             pass
         if raw_finish_reason == "content_filter":
-            raise LLMNormalizedError(LLMErrorCode.CONTENT_FILTERED, f"Claude content filter triggered: {response_data}")
+            raise LLMNormalizedError(LLMNormalizedErrorCode.CONTENT_FILTERED, f"Claude content filter triggered: {response_data}")
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -229,7 +229,7 @@ class ClaudeLLMClient(BaseLLMClient):
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     raise LLMNormalizedError(
-                        LLMErrorCode.TOOL_CALL_PARSE_ERROR,
+                        LLMNormalizedErrorCode.TOOL_CALL_PARSE_ERROR,
                         f"Claude API returned an invalid tool use payload: {exc}",
                     ) from exc
 
