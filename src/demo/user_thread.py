@@ -7,8 +7,10 @@ import textwrap
 import threading
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 from config import ConfigReader
+from schemas.ids import TaskId
 from utils.concurrency.message_queue import AgentMessageQueue, TaskQueue, UserMessageQueue
 from schemas.types import UserMessage, UserMsgType
 from utils.log.log import Logger, zap
@@ -192,6 +194,7 @@ class UserThread(threading.Thread):
         self._agent_poll_timeout = self._config.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds", 0.5
         )
+        self._task_id = ""
         self._task_started = False
         self._task_completed = False
         self._pane: _SplitPane | None = None
@@ -202,6 +205,11 @@ class UserThread(threading.Thread):
 
     def release_resources(self) -> None:
         return None
+
+    def reset(self) -> None:
+        self._task_id = ""
+        self._task_started = False
+        self._task_completed = False
 
     def run(self) -> None:
         try:
@@ -304,9 +312,10 @@ class UserThread(threading.Thread):
         return content or None
 
     def _dispatch_task(self, content: str) -> None:
+        self._task_id = TaskId(f"task_{uuid4().hex}")
         msg = UserMessage(
             msg_type=UserMsgType.NEW_TASK,
-            task_id=None,
+            task_id=self._task_id,
             user_id=0,
             content=content,
         )
@@ -317,7 +326,7 @@ class UserThread(threading.Thread):
     def _dispatch_cancel(self) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.CANCEL,
-            task_id=None,
+            task_id=self._task_id,
             user_id=0,
             content="",
         )
@@ -327,7 +336,7 @@ class UserThread(threading.Thread):
     def _dispatch_guidance(self, content: str) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.GUIDANCE,
-            task_id=None,
+            task_id=self._task_id,
             user_id=0,
             content=content,
         )
@@ -336,7 +345,7 @@ class UserThread(threading.Thread):
     def _dispatch_clarification(self, content: str) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.CLARIFICATION,
-            task_id=None,
+            task_id=self._task_id,
             user_id=0,
             content=content,
         )
@@ -345,7 +354,7 @@ class UserThread(threading.Thread):
     def _dispatch_resume(self) -> None:
         msg = UserMessage(
             msg_type=UserMsgType.RESUME,
-            task_id=None,
+            task_id=self._task_id,
             user_id=0,
             content="",
         )
@@ -407,8 +416,8 @@ class UserThread(threading.Thread):
         return f"Agent: {msg.content}"
 
     def _sync_task_status(self, msg: UserMessage) -> None:
-        if msg.metadata.get("task_completed"):
-            self._task_completed = True
+        if msg.metadata.get("succeeded") == True:
+            self.reset()
 
     @staticmethod
     def _is_control_message(msg: UserMessage) -> bool:

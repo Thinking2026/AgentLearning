@@ -99,7 +99,7 @@ class PipelineThread(threading.Thread):
     def _send_task_completed(self, result: TaskResult) -> None:
         msg = UserMessage(
             content=result.output,
-            metadata={"succeeded": result.succeeded, "error": result.error},
+            metadata={"succeeded": result.succeeded, "error": result.error_reason},
         )
         self.publish_event(msg)
 
