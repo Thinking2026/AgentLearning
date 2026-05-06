@@ -14,10 +14,9 @@ from utils.env_util.runtime_env import (
 from utils.concurrency.thread_event import ThreadEvent
 
 from .user_thread import UserThread
-from .agent_thread import AgentThread
+from agent.application.pipeline_thread import PipelineThread
 
-
-class AgentApplication:
+class Demo:
     def __init__(self, config_path: str | Path) -> None:
         self._config_path = Path(config_path)
         self._logger = Logger.get_instance()
@@ -27,8 +26,6 @@ class AgentApplication:
         self._user_msg_queue: UserMessageQueue | None = None
         self._stop_event = ThreadEvent()
         self._shutdown_lock = threading.Lock()
-        self._agent_thread: AgentThread | None = None
-        self._user_thread: UserThread | None = None
 
         try:
             self._config = ConfigReader(self._config_path)
@@ -45,7 +42,7 @@ class AgentApplication:
         self._user_msg_queue = UserMessageQueue()
 
         try:
-            self._agent_thread = AgentThread(
+            self._agent_thread = PipelineThread(
                 task_queue=self._task_queue,
                 agent_msg_queue=self._agent_msg_queue,
                 user_msg_queue=self._user_msg_queue,
@@ -72,7 +69,7 @@ class AgentApplication:
             raise
 
     @classmethod
-    def from_config_file(cls, config_path: str | Path) -> "AgentApplication":
+    def from_config_file(cls, config_path: str | Path) -> "Demo":
         return cls(config_path)
 
     def run(self) -> None:
