@@ -1,29 +1,178 @@
 from __future__ import annotations
 
+import curses
 import json
-import select
-import sys
+import os
+import textwrap
 import threading
-import time
+from pathlib import Path
 from typing import Callable
 
 from config import ConfigReader
-from utils.concurrency.message_queue import AgentMessageQueue, AgentToUserQueue, TaskQueue, UserMessageQueue, UserToAgentQueue
-from schemas import ClientMessage
+from utils.concurrency.message_queue import AgentMessageQueue, TaskQueue, UserMessageQueue
+from schemas.types import UserMessage, UserMsgType
 from utils.log.log import Logger, zap
-from utils.env_util.runtime_env import (
-    get_project_root,
-    get_task_prompt_file,
-    get_task_runtime_dir,
-    get_task_source_dir,
-)
 from utils.concurrency.thread_event import ThreadEvent
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Constants
+# ──────────────────────────────────────────────────────────────────────────────
+
+_LOGO = (
+    "\033[3m\n"
+    "  ████████╗██╗  ██╗██╗███╗   ██╗██╗  ██╗██╗███╗   ██╗ ██████╗\n"
+    "  ╚══██╔══╝██║  ██║██║████╗  ██║██║ ██╔╝██║████╗  ██║██╔════╝\n"
+    "     ██║   ███████║██║██╔██╗ ██║█████╔╝ ██║██╔██╗ ██║██║  ███╗\n"
+    "     ██║   ██╔══██║██║██║╚██╗██║██╔═██╗ ██║██║╚██╗██║██║   ██║\n"
+    "     ██║   ██║  ██║██║██║ ╚████║██║  ██╗██║██║ ╚████║╚██████╔╝\n"
+    "     ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝\n"
+    "\n"
+    "        ██╗███████╗    ████████╗██╗  ██╗██╗███╗   ██╗██╗  ██╗██╗███╗   ██╗ ██████╗\n"
+    "        ██║██╔════╝    ╚══██╔══╝██║  ██║██║████╗  ██║██║ ██╔╝██║████╗  ██║██╔════╝\n"
+    "        ██║███████╗       ██║   ███████║██║██╔██╗ ██║█████╔╝ ██║██╔██╗ ██║██║  ███╗\n"
+    "        ██║╚════██║       ██║   ██╔══██║██║██║╚██╗██║██╔═██╗ ██║██║╚██╗██║██║   ██║\n"
+    "        ██║███████║       ██║   ██║  ██║██║██║ ╚████║██║  ██╗██║██║ ╚████║╚██████╔╝\n"
+    "        ╚═╝╚══════╝       ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝\n"
+    "\033[0m"
+)
+
+_MENU = (
+    "\n"
+    "  ┌─────────────────────────────────────────┐\n"
+    "  │           COMMAND INTERFACE             │\n"
+    "  ├─────────────────────────────────────────┤\n"
+    "  │  [1]  New Task    — start a new task    │\n"
+    "  │  [2]  Cancel      — cancel current task │\n"
+    "  │  [3]  Suggest     — send a suggestion   │\n"
+    "  │  [4]  Clarify     — send clarification  │\n"
+    "  │  [5]  Resume      — resume paused task  │\n"
+    "  │  [q]  Quit        — exit the program    │\n"
+    "  └─────────────────────────────────────────┘\n"
+)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Split-pane TUI (curses)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _SplitPane:
+    """Left = user input history, Right = agent output stream."""
+
+    def __init__(self, stdscr: "curses.window") -> None:
+        self._scr = stdscr
+        curses.curs_set(1)
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_CYAN, -1)
+        curses.init_pair(2, curses.COLOR_GREEN, -1)
+        curses.init_pair(3, curses.COLOR_YELLOW, -1)
+        curses.init_pair(4, curses.COLOR_WHITE, -1)
+
+        self._left_lines: list[str] = []
+        self._right_lines: list[str] = []
+        self._input_buf = ""
+        self._lock = threading.Lock()
+        self._redraw()
+
+    def add_user_line(self, text: str) -> None:
+        with self._lock:
+            self._left_lines.append(text)
+            self._redraw()
+
+    def add_agent_line(self, text: str) -> None:
+        with self._lock:
+            self._right_lines.append(text)
+            self._redraw()
+
+    def read_input(self) -> str:
+        self._input_buf = ""
+        self._scr.nodelay(False)
+        while True:
+            with self._lock:
+                self._draw_input_bar()
+            ch = self._scr.get_wch()
+            if ch in ("\n", "\r", curses.KEY_ENTER):
+                result = self._input_buf
+                self._input_buf = ""
+                return result
+            elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b"):
+                self._input_buf = self._input_buf[:-1]
+            elif isinstance(ch, str) and ch.isprintable():
+                self._input_buf += ch
+            elif ch == curses.KEY_RESIZE:
+                with self._lock:
+                    self._redraw()
+
+    def _redraw(self) -> None:
+        self._scr.erase()
+        h, w = self._scr.getmaxyx()
+        mid = w // 2
+
+        for row in range(h - 3):
+            try:
+                self._scr.addch(row, mid, "|", curses.color_pair(1))
+            except curses.error:
+                pass
+
+        self._scr.addstr(0, 1, "[ USER INPUT ]", curses.color_pair(1) | curses.A_BOLD)
+        self._scr.addstr(0, mid + 2, "[ AGENT OUTPUT ]", curses.color_pair(1) | curses.A_BOLD)
+
+        left_w = mid - 2
+        left_rows = h - 4
+        left_visible = self._left_lines[-left_rows:]
+        for i, line in enumerate(left_visible):
+            wrapped = textwrap.wrap(line, left_w) or [""]
+            for j, seg in enumerate(wrapped):
+                row = 2 + i + j
+                if row >= h - 2:
+                    break
+                try:
+                    self._scr.addstr(row, 1, seg[:left_w], curses.color_pair(2))
+                except curses.error:
+                    pass
+
+        right_w = w - mid - 3
+        right_rows = h - 4
+        right_visible = self._right_lines[-right_rows:]
+        for i, line in enumerate(right_visible):
+            wrapped = textwrap.wrap(line, right_w) or [""]
+            for j, seg in enumerate(wrapped):
+                row = 2 + i + j
+                if row >= h - 2:
+                    break
+                try:
+                    self._scr.addstr(row, mid + 2, seg[:right_w], curses.color_pair(3))
+                except curses.error:
+                    pass
+
+        try:
+            self._scr.addstr(h - 3, 0, "-" * w, curses.color_pair(1))
+        except curses.error:
+            pass
+
+        self._draw_input_bar()
+        self._scr.refresh()
+
+    def _draw_input_bar(self) -> None:
+        h, w = self._scr.getmaxyx()
+        prompt = "You> "
+        line = (prompt + self._input_buf)[: w - 1]
+        try:
+            self._scr.addstr(h - 2, 0, " " * (w - 1))
+            self._scr.addstr(h - 2, 0, line, curses.color_pair(4) | curses.A_BOLD)
+            self._scr.move(h - 2, min(len(line), w - 2))
+        except curses.error:
+            pass
+        self._scr.refresh()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# UserThread
+# ──────────────────────────────────────────────────────────────────────────────
 
 class UserThread(threading.Thread):
     def __init__(
         self,
-        task_msg_queue: TaskQueue,
+        task_queue: TaskQueue,
         agent_msg_queue: AgentMessageQueue,
         user_msg_queue: UserMessageQueue,
         config: ConfigReader,
@@ -32,7 +181,7 @@ class UserThread(threading.Thread):
         logger: Logger,
     ) -> None:
         super().__init__(name="UserThread", daemon=False)
-        self._task_msg_queue = task_msg_queue
+        self._task_queue = task_queue
         self._agent_msg_queue = agent_msg_queue
         self._user_msg_queue = user_msg_queue
         self._config = config
@@ -40,40 +189,13 @@ class UserThread(threading.Thread):
         self._stop_callback = stop_callback
         self._logger = logger
 
-        self._new_task_user_input_timeout_seconds = self._config.positive_float(
-            "agent.latency.new_task_user_input_timeout_seconds",
-            60.0,
+        self._agent_poll_timeout = self._config.positive_float(
+            "agent.latency.agent_message_poll_timeout_seconds", 0.5
         )
-        self._in_progress_wait_command_timeout_seconds = self._config.positive_float(
-            "agent.latency.in_progress_wait_command_timeout_seconds",
-            5.0,
-        )
-        self._hint_input_timeout_seconds = self._config.positive_float(
-            "agent.latency.hint_input_timeout_seconds",
-            60.0,
-        )
-        self._agent_message_poll_timeout_seconds = self._config.positive_float(
-            "agent.latency.agent_message_poll_timeout_seconds",
-            1.0,
-        )
-        self._progress_notice_interval_seconds = self._config.positive_float(
-            "agent.latency.user_progress_notice_interval_seconds",
-            8.0,
-        )
-        self._task_name = str(self._config.get("task.name", "external_sorting")).strip() or "external_sorting"
-        self._project_root = get_project_root()
-        self._task_source_dir = get_task_source_dir(
-            self._project_root / "tests" / "integration" / "tasks" / self._task_name
-        )
-        self._task_runtime_dir = get_task_runtime_dir(
-            self._project_root / "var" / "tasks" / self._task_name
-        )
-        self._prompt_file_path = get_task_prompt_file(
-            self._task_source_dir / "prompt.txt"
-        )
-        self._last_progress_notice_at = 0.0
         self._task_started = False
         self._task_completed = False
+        self._pane: _SplitPane | None = None
+        self._pane_lock = threading.Lock()
 
     def stop(self) -> None:
         self._stop_callback(self.name)
@@ -81,160 +203,221 @@ class UserThread(threading.Thread):
     def release_resources(self) -> None:
         return None
 
-    def run(self) -> None:#先支持单任务处理，而不是连续任务处理。单任务处理过程中允许用户输入辅助hint
+    def run(self) -> None:
         try:
-            displayed_any_message = False
-            need_quit = False
-            self._last_progress_notice_at = time.monotonic()
-            while self._is_running():
-                self._print_prompt_if_needed(displayed_any_message)#只有转折才会打印提示语
-                user_input = self._wait_for_user_input()
-                need_quit = self._handle_user_input(user_input)
-                if need_quit:#用户主动退出
-                    break
-                displayed_any_message = self._drain_agent_messages()
-                if self._task_completed:
-                    break
-            if not need_quit:
-                # Loop exited via _is_running() (e.g. agent called stop() on error).
-                # Drain any messages that arrived before the queue was closed.
-                self._drain_agent_messages()
-                if self._task_completed:
-                    print("Task finished, bye")
+            self._show_splash()
+            self._run_menu_loop()
+        except KeyboardInterrupt:
+            pass
         except Exception as exc:
-            self._logger.error("User thread crashed", zap.any("error", exc))
+            self._logger.error("UserThread crashed", zap.any("error", exc))
         finally:
             self.release_resources()
             self.stop()
 
-    def _print_prompt_if_needed(self, displayed_any_message: bool) -> None:
-        if not self._task_started:
-            print(f"Assistant: Loading task `{self._task_name}` from {self._prompt_file_path}")
-            return
-        now = time.monotonic()
-        if not displayed_any_message and now - self._last_progress_notice_at >= self._progress_notice_interval_seconds:
-            print("Assistant: Task in progress, you can input supplementary information to assist the AI")
-            self._last_progress_notice_at = now
+    def _show_splash(self) -> None:
+        os.system("clear" if os.name != "nt" else "cls")
+        print(_LOGO)
+        print(_MENU)
 
-    def _drain_agent_messages(self) -> bool:
-        displayed_any_message = False
-        while True:
-            message = self._user_msg_queue.get_agent_message(#agent要去兜底，给CLI端的信息都是解决问题的有效步骤或者结论消息
-                timeout=self._agent_message_poll_timeout_seconds
-            )
-            if message is None:
+    def _run_menu_loop(self) -> None:
+        while self._is_running():
+            try:
+                choice = input("  Enter command number: ").strip()
+            except EOFError:
                 break
-            self._sync_session_status_from_agent_message(message)
-            if self._is_control_message(message):
-                continue
-            print(self._format_agent_message(message))
-            displayed_any_message = True
-        return displayed_any_message
 
-    def _poll_user_input(self, timeout: float) -> str | None:
-        if not self._is_running():
-            return None
-        readable, _, _ = select.select([sys.stdin], [], [], timeout)
-        if readable:
-            return sys.stdin.readline()
-        return None
+            if choice == "q":
+                break
+            elif choice == "1":
+                task_content = self._handle_new_task()
+                if task_content:
+                    self._dispatch_task(task_content)
+                    self._run_split_pane()
+                    if not self._is_running():
+                        break
+                    self._show_splash()
+            elif choice == "2":
+                self._dispatch_cancel()
+            elif choice == "3":
+                content = self._prompt_content("Suggest")
+                if content:
+                    self._dispatch_guidance(content)
+            elif choice == "4":
+                content = self._prompt_content("Clarify")
+                if content:
+                    self._dispatch_clarification(content)
+            elif choice == "5":
+                self._dispatch_resume()
+            else:
+                print(f"  Unknown command: {choice!r}. Enter 1-5 or q.")
 
-    def _wait_for_user_input(self) -> str | None:
-        if self._task_started == False:
-            question = self._load_question_from_file()
-            self._task_started = True
-            return question
-        return self._wait_for_hint_command()
-
-    def _load_question_from_file(self) -> str | None:
+    def _handle_new_task(self) -> str | None:
+        print()
+        print("  ┌─────────────────────────────────┐")
+        print("  │  New Task                       │")
+        print("  │  [1]  Input task manually       │")
+        print("  │  [2]  Upload from file          │")
+        print("  └─────────────────────────────────┘")
         try:
-            content = self._prompt_file_path.read_text(encoding="utf-8").strip()
-        except Exception as exc:
-            raise RuntimeError(
-                f"Failed to read task prompt file: {self._prompt_file_path}"
-            ) from exc
-
-        if not content:
-            raise ValueError(
-                f"Task prompt file is empty: {self._prompt_file_path}"
-            )
-        runtime_dir = self._task_runtime_dir.resolve()
-        result_path = runtime_dir / "result.txt"
-        return (
-            f"{content}\n\n"
-            "Runtime constraints:\n"
-            f"- Writable runtime directory for all generated files: {runtime_dir}\n"
-            f"- Final result file must be written to: {result_path}\n"
-            "- All intermediate files, temporary files, and generated outputs must stay under the writable runtime directory.\n"
-            "- These runtime constraints override any earlier output path mentioned in the task description.\n"
-        )
-
-    def _wait_for_hint_command(self) -> str | None:
-        user_input = self._poll_user_input(
-            timeout=self._in_progress_wait_command_timeout_seconds,
-        )
-        if user_input is None:
+            sub = input("  Choose (1/2): ").strip()
+        except EOFError:
             return None
 
-        stripped = user_input.strip()
-        if stripped.lower() != "wait":
-            return user_input
+        if sub == "1":
+            try:
+                content = input("  Task description: ").strip()
+            except EOFError:
+                return None
+            return content or None
+        elif sub == "2":
+            try:
+                path_str = input("  File path: ").strip()
+            except EOFError:
+                return None
+            return self._load_from_file(path_str)
+        else:
+            print(f"  Unknown option: {sub!r}")
+            return None
 
-        print("Assistant: waiting for hint input......")
-        return self._poll_user_input(timeout=self._hint_input_timeout_seconds)
+    def _load_from_file(self, path_str: str) -> str | None:
+        path = Path(path_str).expanduser()
+        if not path.exists():
+            print(f"  File not found: {path}")
+            return None
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            print(f"  Failed to read file: {exc}")
+            return None
+        if not content:
+            print("  File is empty.")
+            return None
+        print(f"  Loaded {len(content)} characters from {path.name}")
+        return content
 
-    def _handle_user_input(self, user_input: str | None) -> bool:
-        if user_input is None:
-            return False
-        stripped = user_input.strip()
-        if not stripped:
-            return False
-        if stripped.lower() in {"exit", "quit"}:
-            self._logger.error(
-                "User requested exit, stopping user thread",
-                zap.any("input", stripped),
-            )
-            return True
-        message = ClientMessage(role="user", content=stripped)
-        self._agent_msg_queue.send_user_message(message)
-        return False
+    def _prompt_content(self, label: str) -> str | None:
+        try:
+            content = input(f"  {label} content: ").strip()
+        except EOFError:
+            return None
+        return content or None
 
-    def _format_agent_message(self, message: ClientMessage) -> str:
-        message_source = message.metadata.get("source")
-        if message_source == "tool":
-            return self._format_tool_message(message)
-        return f"Assistant: {message.content}"
-
-    def _format_tool_message(self, message: ClientMessage) -> str:
-        tool_name = str(message.metadata.get("tool_name", "unknown"))
-        parameters = message.metadata.get("tool_arguments", {})
-        result = message.metadata.get("tool_result", message.content)
-        serialized_parameters = json.dumps(parameters, ensure_ascii=False)
-        serialized_result = json.dumps(result, ensure_ascii=False)
-        return (
-            "Assistant: invoke a tool call, "
-            f"[tool name]: {tool_name} "
-            f"[input parameters]: {serialized_parameters}, "
-            f"[result]: {serialized_result}"
+    def _dispatch_task(self, content: str) -> None:
+        msg = UserMessage(
+            msg_type=UserMsgType.NEW_TASK,
+            task_id=None,
+            user_id=0,
+            content=content,
         )
+        self._task_queue.send_message(msg)
+        self._task_started = True
+        self._task_completed = False
 
-    @staticmethod
-    def _truncate_words(content: str, word_limit: int) -> str:
-        words = content.split()
-        if len(words) <= word_limit:
-            return content
-        return " ".join(words[:word_limit]) + " ..."
+    def _dispatch_cancel(self) -> None:
+        msg = UserMessage(
+            msg_type=UserMsgType.CANCEL,
+            task_id=None,
+            user_id=0,
+            content="",
+        )
+        self._agent_msg_queue.send_message(msg)
+        print("  Cancel sent.")
 
-    def _sync_session_status_from_agent_message(self, message: ClientMessage) -> None:
-        if message.metadata.get("task_completed"):
+    def _dispatch_guidance(self, content: str) -> None:
+        msg = UserMessage(
+            msg_type=UserMsgType.GUIDANCE,
+            task_id=None,
+            user_id=0,
+            content=content,
+        )
+        self._agent_msg_queue.send_message(msg)
+
+    def _dispatch_clarification(self, content: str) -> None:
+        msg = UserMessage(
+            msg_type=UserMsgType.CLARIFICATION,
+            task_id=None,
+            user_id=0,
+            content=content,
+        )
+        self._agent_msg_queue.send_message(msg)
+
+    def _dispatch_resume(self) -> None:
+        msg = UserMessage(
+            msg_type=UserMsgType.RESUME,
+            task_id=None,
+            user_id=0,
+            content="",
+        )
+        self._agent_msg_queue.send_message(msg)
+        print("  Resume sent.")
+
+    def _run_split_pane(self) -> None:
+        drain = threading.Thread(
+            target=self._agent_drain_loop,
+            name="AgentDrainLoop",
+            daemon=True,
+        )
+        drain.start()
+        try:
+            curses.wrapper(self._curses_main)
+        finally:
+            drain.join(timeout=2.0)
+
+    def _curses_main(self, stdscr: "curses.window") -> None:
+        pane = _SplitPane(stdscr)
+        with self._pane_lock:
+            self._pane = pane
+
+        pane.add_agent_line("Agent is processing your task...")
+
+        while self._is_running() and not self._task_completed:
+            raw = pane.read_input()
+            if not raw:
+                continue
+            stripped = raw.strip()
+            if stripped.lower() in {"exit", "quit", "q"}:
+                break
+            pane.add_user_line(f"You: {stripped}")
+            self._dispatch_guidance(stripped)
+
+        with self._pane_lock:
+            self._pane = None
+
+    def _agent_drain_loop(self) -> None:
+        while self._is_running() and not self._task_completed:
+            msg = self._user_msg_queue.get_message(timeout=self._agent_poll_timeout)
+            if msg is None:
+                continue
+            self._sync_task_status(msg)
+            if self._is_control_message(msg):
+                continue
+            formatted = self._format_message(msg)
+            with self._pane_lock:
+                if self._pane is not None:
+                    self._pane.add_agent_line(formatted)
+
+    def _format_message(self, msg: UserMessage) -> str:
+        if msg.msg_type == UserMsgType.PROGESS_FROM_AGENT:
+            tool_name = str(msg.metadata.get("tool_name", ""))
+            if tool_name:
+                params = json.dumps(msg.metadata.get("tool_arguments", {}), ensure_ascii=False)
+                result = json.dumps(msg.metadata.get("tool_result", msg.content), ensure_ascii=False)
+                return f"[tool:{tool_name}] in={params} out={result}"
+        return f"Agent: {msg.content}"
+
+    def _sync_task_status(self, msg: UserMessage) -> None:
+        if msg.metadata.get("task_completed"):
             self._task_completed = True
 
-    def _is_running(self) -> bool:
-        return not self._stop_event.is_set() and not self._is_any_queue_closed()
-
     @staticmethod
-    def _is_control_message(message: ClientMessage) -> bool:
-        return bool(message.metadata.get("control")) and not message.content.strip()
+    def _is_control_message(msg: UserMessage) -> bool:
+        return bool(msg.metadata.get("control")) and not msg.content.strip()
 
-    def _is_any_queue_closed(self) -> bool:
-        return self._agent_msg_queue.is_closed() or self._user_msg_queue.is_closed()
+    def _is_running(self) -> bool:
+        return (
+            not self._stop_event.is_set()
+            and not self._task_queue.is_closed()
+            and not self._agent_msg_queue.is_closed()
+            and not self._user_msg_queue.is_closed()
+        )

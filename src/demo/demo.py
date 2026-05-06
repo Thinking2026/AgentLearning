@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 from config import ConfigReader
-from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.concurrency.message_queue import AgentMessageQueue, TaskQueue, UserMessageQueue
 from utils.log.log import Logger, zap
 from utils.env_util.runtime_env import (
     get_project_root,
@@ -22,8 +22,9 @@ class AgentApplication:
         self._config_path = Path(config_path)
         self._logger = Logger.get_instance()
         self._config: ConfigReader | None = None
-        self._user_to_agent_queue: UserToAgentQueue | None = None
-        self._agent_to_user_queue: AgentToUserQueue | None = None
+        self._task_queue: TaskQueue | None = None
+        self._agent_msg_queue: AgentMessageQueue | None = None
+        self._user_msg_queue: UserMessageQueue | None = None
         self._stop_event = ThreadEvent()
         self._shutdown_lock = threading.Lock()
         self._agent_thread: AgentThread | None = None
@@ -39,21 +40,24 @@ class AgentApplication:
             )
             raise
         self._prepare_task_environment()
-        self._user_to_agent_queue = UserToAgentQueue()
-        self._agent_to_user_queue = AgentToUserQueue()
+        self._task_queue = TaskQueue()
+        self._agent_msg_queue = AgentMessageQueue()
+        self._user_msg_queue = UserMessageQueue()
 
         try:
             self._agent_thread = AgentThread(
-                user_to_agent_queue=self._user_to_agent_queue,
-                agent_to_user_queue=self._agent_to_user_queue,
+                task_queue=self._task_queue,
+                agent_msg_queue=self._agent_msg_queue,
+                user_msg_queue=self._user_msg_queue,
                 config=self._config,
                 stop_event=self._stop_event,
                 stop_callback=self.request_stop,
                 logger=self._logger,
             )
             self._user_thread = UserThread(
-                agent_msg_queue=self._user_to_agent_queue,
-                agent_to_user_queue=self._agent_to_user_queue,
+                task_queue=self._task_queue,
+                agent_msg_queue=self._agent_msg_queue,
+                user_msg_queue=self._user_msg_queue,
                 config=self._config,
                 stop_event=self._stop_event,
                 stop_callback=self.request_stop,
@@ -98,10 +102,12 @@ class AgentApplication:
         stop_source = source or self.__class__.__name__
         with self._shutdown_lock:
             self._stop_event.set(source=stop_source)
-            if self._user_to_agent_queue is not None:
-                self._user_to_agent_queue.close()
-            if self._agent_to_user_queue is not None:
-                self._agent_to_user_queue.close()
+            if self._task_queue is not None:
+                self._task_queue.close()
+            if self._agent_msg_queue is not None:
+                self._agent_msg_queue.close()
+            if self._user_msg_queue is not None:
+                self._user_msg_queue.close()
 
     def _wait_for_shutdown(self) -> None:
         while not self._stop_event.is_set():
@@ -124,10 +130,12 @@ class AgentApplication:
         thread.join(timeout=timeout)
 
     def release_resources(self) -> None:
-        if self._user_to_agent_queue is not None:
-            self._user_to_agent_queue.release()
-        if self._agent_to_user_queue is not None:
-            self._agent_to_user_queue.release()
+        if self._task_queue is not None:
+            self._task_queue.release()
+        if self._agent_msg_queue is not None:
+            self._agent_msg_queue.release()
+        if self._user_msg_queue is not None:
+            self._user_msg_queue.release()
 
     def _prepare_task_environment(self) -> None:
         if self._config is None:
