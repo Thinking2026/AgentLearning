@@ -21,7 +21,7 @@ from agent.events.events import (
 from schemas.errors import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     AgentError,
-    ErrorCategory,
+    CallerAction,
     LLMNormalizedError,
     TOOL_NOT_FOUND,
     TOOL_ARGUMENT_ERROR,
@@ -355,10 +355,9 @@ class StageExecutor:
                 # ── 2. Call LLM ────────────────────────────────────────────
                 decision = self._reasoning_manager.reason_once(unified_llm_request)
             except LLMNormalizedError as exc:
-                if exc.category in (ErrorCategory.AUTH, ErrorCategory.CONFIG):
+                if exc.caller_action == CallerAction.FATAL:
                     stage.fail(f"Fatal LLM error: {exc.message}")
                     return _StageOutcome.FATAL, ""
-                # TRANSIENT / RATE_LIMIT / CONTEXT / RESPONSE → try next provider
                 stage.fail(f"LLM error: {exc.message}")
                 return _StageOutcome.SWITCH_MODEL, ""
             except AgentError as exc:

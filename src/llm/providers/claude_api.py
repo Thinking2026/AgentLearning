@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 
-from llm.llm_gateway import BaseLLMClient, classify_agent_error, classify_http_error
+from llm.llm_gateway import BaseLLMClient, classify_http_error, classify_config_error, classify_timeout_error, classify_json_error
 from schemas import (
-    AgentError,
+    ConfigError,
     HttpError,
     LLMNormalizedError,
     LLMNormalizedErrorCode,
@@ -13,8 +14,6 @@ from schemas import (
     LLMResponse,
     LLMUsage,
     LLM_CONFIG_ERROR,
-    LLM_RESPONSE_ERROR,
-    LLM_RESPONSE_PARSE_ERROR,
     ToolCall,
     build_error,
 )
@@ -105,8 +104,12 @@ class ClaudeLLMClient(BaseLLMClient):
                         provider=self.provider_name,
                     ) from exc
                 raise classify_http_error(exc, provider=self.provider_name) from exc
-            except AgentError as exc:
-                raise classify_agent_error(exc, provider=self.provider_name) from exc
+            except ConfigError as exc:
+                raise classify_config_error(exc, provider=self.provider_name) from exc
+            except TimeoutError as exc:
+                raise classify_timeout_error(exc, provider=self.provider_name) from exc
+            except json.JSONDecodeError as exc:
+                raise classify_json_error(exc, provider=self.provider_name) from exc
             span.add_attributes(
                 {
                     "finish_reason": response.finish_reason,

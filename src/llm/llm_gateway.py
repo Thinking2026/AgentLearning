@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from config.config import ConfigReader
 from schemas import (
-    AgentError,
+    ConfigError,
     ErrorCategory,
     HttpError,
     LLMNormalizedError,
@@ -15,10 +15,6 @@ from schemas import (
     UnifiedLLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
-    LLM_NETWORK_ERROR,
-    LLM_RESPONSE_ERROR,
-    LLM_RESPONSE_PARSE_ERROR,
-    LLM_TIMEOUT,
     build_error,
 )
 from infra.observability.tracing import Span, Tracer
@@ -154,19 +150,16 @@ def classify_http_error(exc: HttpError, provider: str | None = None) -> LLMNorma
     return LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}", **kw)
 
 
-_AGENT_ERROR_CODE_MAP: dict[str, LLMNormalizedErrorCode] = {
-    LLM_NETWORK_ERROR:        LLMNormalizedErrorCode.NETWORK_ERROR,
-    LLM_TIMEOUT:              LLMNormalizedErrorCode.TIMEOUT,
-    LLM_RESPONSE_PARSE_ERROR: LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR,
-    LLM_RESPONSE_ERROR:       LLMNormalizedErrorCode.RESPONSE_ERROR,
-    LLM_CONFIG_ERROR:         LLMNormalizedErrorCode.CONFIG_ERROR,
-}
+def classify_config_error(exc: ConfigError, provider: str | None = None) -> LLMNormalizedError:
+    return LLMNormalizedError(LLMNormalizedErrorCode.CONFIG_ERROR, exc.message, provider=provider)
 
 
-def classify_agent_error(exc: AgentError, provider: str | None = None) -> LLMNormalizedError:
-    """Map a legacy AgentError (from HttpClient) to a structured LLMError."""
-    code = _AGENT_ERROR_CODE_MAP.get(exc.code, LLMNormalizedErrorCode.RESPONSE_ERROR)
-    return LLMNormalizedError(code, exc.message, provider=provider)
+def classify_timeout_error(exc: TimeoutError, provider: str | None = None) -> LLMNormalizedError:
+    return LLMNormalizedError(LLMNormalizedErrorCode.TIMEOUT, str(exc), provider=provider)
+
+
+def classify_json_error(exc: json.JSONDecodeError, provider: str | None = None) -> LLMNormalizedError:
+    return LLMNormalizedError(LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR, f"Invalid JSON: {exc}", provider=provider)
 
 
 # ---------------------------------------------------------------------------

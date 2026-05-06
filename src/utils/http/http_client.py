@@ -6,13 +6,7 @@ import time
 import urllib.error
 import urllib.request
 
-from schemas import (
-    HttpError,
-    LLM_NETWORK_ERROR,
-    LLM_RESPONSE_PARSE_ERROR,
-    LLM_TIMEOUT,
-    build_error,
-)
+from schemas import ConfigError, HttpError
 
 
 def _parse_retry_after(raw: str) -> float | None:
@@ -96,11 +90,6 @@ class HttpClient:
                 retry_after = _parse_retry_after(raw)
             raise HttpError(status=exc.code, body=body, retry_after=retry_after) from exc
         except urllib.error.URLError as exc:
-            raise build_error(LLM_NETWORK_ERROR, f"Network error {method} {url}: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise build_error(LLM_TIMEOUT, f"Request timed out {method} {url}: {exc}") from exc
+            raise ConfigError(f"Network error {method} {url}: {exc.reason}") from exc
 
-        try:
-            return json.loads(body)
-        except json.JSONDecodeError as exc:
-            raise build_error(LLM_RESPONSE_PARSE_ERROR, f"Invalid JSON from {url}: {exc}") from exc
+        return json.loads(body)
