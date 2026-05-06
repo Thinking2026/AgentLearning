@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import curses
 import json
-import os
+import sys
 import textwrap
 import threading
 from pathlib import Path
@@ -224,9 +224,13 @@ class UserThread(threading.Thread):
             self.stop()
 
     def _show_splash(self) -> None:
-        os.system("clear" if os.name != "nt" else "cls")
+        # ANSI: clear screen + move cursor to top-left, then flush immediately.
+        # Avoids os.system("clear") subprocess overhead and race with other threads.
+        sys.stdout.write("\033[2J\033[H")
+        sys.stdout.flush()
         print(_LOGO)
         print(_MENU)
+        sys.stdout.flush()
 
     def _run_menu_loop(self) -> None:
         while self._is_running():

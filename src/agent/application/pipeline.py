@@ -11,7 +11,6 @@ from agent.events.events import (
     TaskExecutionFailed,
     TaskExecutionStarted,
     TaskResultProduced,
-    UserSuggestionRequested,
 )
 from schemas.ids import CheckpointId, TaskId
 from schemas.errors import AgentError
