@@ -40,9 +40,9 @@ from agent.models.personality.user_preference import PersonalityManager
 from agent.models.plan.planner import Planner
 from agent.models.reasoning.impl.react.react_strategy import ReActStrategy
 from agent.models.reasoning.reasoning_manager import ReasoningManager
+from agent.application.driver import PipelineDriver
 
 if TYPE_CHECKING:
-    from agent.application.driver import PipelineDriver
     from infra.observability.tracing import Tracer
 
 

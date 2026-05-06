@@ -59,9 +59,6 @@ class PipelineThread(threading.Thread):
     def run(self) -> None:
         try:
             self._active_driver = self._factory.build_pipeline_driver()
-            pipeline = self._factory.build_pipeline(task_id, self._active_driver)
-            pipeline.stage_executor.set_driver(self._active_driver)
-            self._active_driver.set_pipeline(pipeline)
             self._active_driver.set_thread(self)
 
             while self._is_running():
@@ -78,6 +75,9 @@ class PipelineThread(threading.Thread):
                 self._start_session_trace(user_message)
 
                 task_id = TaskId(f"task_{uuid4().hex}")
+                pipeline = self._factory.build_pipeline(task_id, self._active_driver)
+                pipeline.stage_executor.set_driver(self._active_driver)
+                self._active_driver.set_pipeline(pipeline)
                 task_description = user_message.content.strip()
 
                 # Build a fresh Pipeline + Driver for each task
