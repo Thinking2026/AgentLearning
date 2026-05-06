@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from config.config import JsonConfig
+from config import ConfigReader
 from schemas.types import BudgetResult, RoleBudget
 from schemas.errors import ConfigError
 
@@ -22,7 +22,7 @@ class BaseTokenBudgetManager(ABC):
 
 
 class ReActTokenBudgetManager(BaseTokenBudgetManager):
-    def __init__(self, config: JsonConfig) -> None:
+    def __init__(self, config: ConfigReader) -> None:
         self._strategy_name = "react"
 
         self._reserve_ratio: float = config.get(
@@ -86,7 +86,7 @@ class TokenBudgetManagerFactory:
     """
 
     @classmethod
-    def create(cls, strategy_name: str, config: JsonConfig) -> BaseTokenBudgetManager:
+    def create(cls, strategy_name: str, config: ConfigReader) -> BaseTokenBudgetManager:
         if strategy_name == "react":
             return ReActTokenBudgetManager(config)
         raise ConfigError(f"Unsupported strategy for token budget manager: {strategy_name}") 

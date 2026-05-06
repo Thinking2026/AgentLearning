@@ -4,7 +4,7 @@ import threading
 from typing import Callable
 from uuid import uuid4
 
-from config import ConfigValueReader, JsonConfig
+from config import ConfigReader
 from agent.factory.agent_factory import AgentFactory
 from agent.application.driver import PipelineDriver
 from schemas.ids import TaskId
@@ -23,27 +23,24 @@ class PipelineThread(threading.Thread):
         agent_msg_queue: AgentMessageQueue,
         task_queue: TaskQueue,
         user_msg_queue: UserMessageQueue,
-        config: JsonConfig,
+        config: ConfigReader,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
-        logger: Logger,
     ) -> None:
         super().__init__(name="PipelineThread", daemon=False)
-        # PipelineThread owns its inbound queue
         self._task_queue = task_queue
         self._agent_msg_queue = agent_msg_queue
         self._user_msg_queue = user_msg_queue
         self._config = config
-        self._config_value_reader = ConfigValueReader(config)
         self._stop_event = stop_event
         self._stop_callback = stop_callback
-        self._logger = logger
         self._tracer: Tracer | None = None
         self._session_span: Span | None = None
         self._factory: AgentFactory | None = None
         self._active_driver: PipelineDriver | None = None
         self._load_tracing_config()
         try:
+            self._logger = Logger.get_instance()
             self._tracer = self._build_tracer()
             self._factory = AgentFactory.from_config(config, self._tracer)
         except Exception as exc:
@@ -119,7 +116,7 @@ class PipelineThread(threading.Thread):
                 not bool(self._config.get("tracing.capture_payloads", False)),
             )
         )
-        self._tracing_max_content_length = self._config_value_reader.positive_int(
+        self._tracing_max_content_length = self._config.positive_int(
             "tracing.max_content_length", default=1000
         )
 

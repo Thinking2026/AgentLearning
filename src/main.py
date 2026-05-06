@@ -8,7 +8,7 @@ _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root / "src"))
 
 from driver import AgentApplication
-from config import load_config
+from config import ConfigReader
 from utils.env_util.env_loader import load_dotenv
 from utils.log.log import Logger, zap
 from utils.env_util.runtime_env import set_project_root
@@ -19,7 +19,7 @@ def main() -> None:
     os.chdir(project_root)
     load_dotenv(project_root / ".env")
     config_path = project_root / "config" / "config.json"
-    config = load_config(config_path)
+    config = ConfigReader(config_path)
     log_dir = config.get("log.dir", "var/logs")
     logger = Logger.get_instance(log_dir)
     try:

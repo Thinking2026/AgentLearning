@@ -3,8 +3,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from config.config import JsonConfig
-from config.reader import ConfigValueReader
+from config import ConfigReader
 from infra.db.bootstrap_documents import load_seed_documents
 from infra.db.impl.chromadb_storage import ChromaDBStorage
 from infra.db.impl.mysql_storage import MySQLStorage
@@ -54,14 +53,13 @@ class AgentFactory:
     Single assembly point: domain objects do not know about config format.
     """
 
-    def __init__(self, config: JsonConfig, tracer: Tracer | None = None) -> None:
+    def __init__(self, config: ConfigReader, tracer: Tracer | None = None) -> None:
         self._config = config
-        self._reader = ConfigValueReader(config)
         self._tracer = tracer
         self._logger = Logger.get_instance()
 
     @classmethod
-    def from_config(cls, config: JsonConfig, tracer: Tracer | None = None) -> AgentFactory:
+    def from_config(cls, config: ConfigReader, tracer: Tracer | None = None) -> AgentFactory:
         return cls(config, tracer)
 
     # ------------------------------------------------------------------
@@ -120,7 +118,7 @@ class AgentFactory:
             module_names=module_names,
             package_name=package_name,
             timeout_retry_max_attempts=int(self._config.get("tools.retry.max_attempts", 4)),
-            timeout_retry_delays=self._reader.retry_delays("tools.retry.backoff_seconds"),
+            timeout_retry_delays=self._config.retry_delays("tools.retry.backoff_seconds"),
             tracer=self._tracer,
             logger=self._logger,
         )
@@ -139,7 +137,7 @@ class AgentFactory:
             registry=registry,
             provider_name=provider_name,
             max_retries=int(self._config.get("llm.retry.max_attempts", 3)),
-            retry_delays=self._reader.retry_delays("llm.retry.backoff_seconds") or (1.0, 2.0, 4.0),
+            retry_delays=self._config.retry_delays("llm.retry.backoff_seconds") or (1.0, 2.0, 4.0),
             timeout=float(self._config.get(f"llm.provider_settings.{provider_name}.timeout", 60.0)),
         )
 

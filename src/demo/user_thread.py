@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Callable
 
-from config import ConfigValueReader, JsonConfig
+from config import ConfigReader
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from schemas import ClientMessage
 from utils.log.log import Logger, zap
@@ -25,7 +25,7 @@ class UserThread(threading.Thread):
         self,
         user_to_agent_queue: UserToAgentQueue,
         agent_to_user_queue: AgentToUserQueue,
-        config: JsonConfig,
+        config: ConfigReader,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
         logger: Logger,
@@ -34,27 +34,26 @@ class UserThread(threading.Thread):
         self._user_to_agent_queue = user_to_agent_queue
         self._agent_to_user_queue = agent_to_user_queue
         self._config = config
-        self._config_value_reader = ConfigValueReader(config)
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
-        self._new_task_user_input_timeout_seconds = self._config_value_reader.positive_float(
+        self._config
             "agent.latency.new_task_user_input_timeout_seconds",
             60.0,
         )
-        self._in_progress_wait_command_timeout_seconds = self._config_value_reader.positive_float(
+        self._in_progress_wait_command_timeout_seconds = self._config.positive_float(
             "agent.latency.in_progress_wait_command_timeout_seconds",
             5.0,
         )
-        self._hint_input_timeout_seconds = self._config_value_reader.positive_float(
+        self._hint_input_timeout_seconds = self._config.positive_float(
             "agent.latency.hint_input_timeout_seconds",
             60.0,
         )
-        self._agent_message_poll_timeout_seconds = self._config_value_reader.positive_float(
+        self._agent_message_poll_timeout_seconds = self._config.positive_float(
             "agent.latency.agent_message_poll_timeout_seconds",
             1.0,
         )
-        self._progress_notice_interval_seconds = self._config_value_reader.positive_float(
+        self._progress_notice_interval_seconds = self._config.positive_float(
             "agent.latency.user_progress_notice_interval_seconds",
             8.0,
         )

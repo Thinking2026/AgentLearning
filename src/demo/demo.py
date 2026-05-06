@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from config import ConfigValueReader, JsonConfig, load_config
+from config import ConfigReader
 from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
 from utils.log.log import Logger, zap
 from utils.env_util.runtime_env import (
@@ -21,8 +21,7 @@ class AgentApplication:
     def __init__(self, config_path: str | Path) -> None:
         self._config_path = Path(config_path)
         self._logger = Logger.get_instance()
-        self._config: JsonConfig | None = None
-        self._config_value_reader: ConfigValueReader | None = None
+        self._config: ConfigReader | None = None
         self._user_to_agent_queue: UserToAgentQueue | None = None
         self._agent_to_user_queue: AgentToUserQueue | None = None
         self._stop_event = ThreadEvent()
@@ -31,8 +30,7 @@ class AgentApplication:
         self._user_thread: UserThread | None = None
 
         try:
-            self._config = load_config(self._config_path)
-            self._config_value_reader = ConfigValueReader(self._config)
+            self._config = ConfigReader(self._config_path)
         except Exception as exc:
             self._logger.error(
                 "Failed to load config",
@@ -154,9 +152,9 @@ class AgentApplication:
 
     @property
     def _thread_join_timeout_seconds(self) -> float:
-        if self._config_value_reader is None:
+        if self._config is None:
             return 1.0
-        return self._config_value_reader.positive_float(
+        return self._config.positive_float(
             "agent.latency.thread_join_timeout_seconds",
             1.0,
         )

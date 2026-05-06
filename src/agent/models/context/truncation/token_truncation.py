@@ -13,7 +13,7 @@ from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
-    from config.config import JsonConfig
+    from config import ConfigReader
 
 # ===========================================================================
 # Base class
@@ -112,7 +112,7 @@ class ReActContextTruncator(ContextTruncator):
         budget_manager: BaseTokenBudgetManager,
         logger: Logger,
         config: ReActTruncationConfig | None = None,
-        json_config: JsonConfig | None = None,
+        json_config: ConfigReader | None = None,
     ) -> None:
         self._budget_manager = budget_manager
         self._logger = logger
@@ -459,7 +459,7 @@ class TruncatorFactory:
         strategy: str,
         budget_manager: BaseTokenBudgetManager,
         logger: Logger,
-        config: JsonConfig | None = None,
+        config: ConfigReader | None = None,
     ) -> ContextTruncator:
         if strategy == "react":
             trunc_cfg = ReActTruncationConfig(

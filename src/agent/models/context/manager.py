@@ -14,7 +14,7 @@ from schemas.types import LLMRole
 if TYPE_CHECKING:
     from agent.models.context.estimator.token_estimator import BaseTokenEstimator
     from agent.models.context.truncation.token_truncation import ContextTruncator
-    from config.config import JsonConfig
+    from config import ConfigReader
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class ContextManager:
         self,
         task: Task,
         plan: Plan,
-        config: JsonConfig | None = None,
+        config: ConfigReader | None = None,
         llm_gateway: LLMGateway | None = None,
     ) -> None:
         self._config = config
