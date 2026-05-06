@@ -10,7 +10,7 @@ from schemas import (
     AgentError,
     ErrorCategory,
     HttpError,
-    LLMError,
+    LLMNormalizedError,
     LLMErrorCode,
     UnifiedLLMRequest,
     LLMResponse,
@@ -113,7 +113,7 @@ def _extract_retry_after(exc: HttpError) -> float | None:
     return None
 
 
-def classify_http_error(exc: HttpError, provider: str | None = None) -> LLMError:
+def classify_http_error(exc: HttpError, provider: str | None = None) -> LLMNormalizedError:
     """Map an HttpError to a structured LLMError. Called by concrete providers."""
     body_lower = exc.body.lower()
     kw = dict(raw_status=exc.status, provider=provider)
@@ -121,8 +121,8 @@ def classify_http_error(exc: HttpError, provider: str | None = None) -> LLMError
     if exc.status == 429:
         retry_after = _extract_retry_after(exc)
         if any(h in body_lower for h in _QUOTA_HINTS):
-            return LLMError(LLMErrorCode.QUOTA_EXCEEDED, f"Quota exceeded: {exc.body}", **kw)
-        return LLMError(
+            return LLMNormalizedError(LLMErrorCode.QUOTA_EXCEEDED, f"Quota exceeded: {exc.body}", **kw)
+        return LLMNormalizedError(
             LLMErrorCode.RATE_LIMITED,
             f"Rate limited: {exc.body}",
             retry_after=retry_after,
@@ -130,28 +130,28 @@ def classify_http_error(exc: HttpError, provider: str | None = None) -> LLMError
         )
 
     if exc.status == 401:
-        return LLMError(LLMErrorCode.AUTH_FAILED, f"Auth failed HTTP 401: {exc.body}", **kw)
+        return LLMNormalizedError(LLMErrorCode.AUTH_FAILED, f"Auth failed HTTP 401: {exc.body}", **kw)
 
     if exc.status == 403:
-        return LLMError(LLMErrorCode.PERMISSION_DENIED, f"Permission denied HTTP 403: {exc.body}", **kw)
+        return LLMNormalizedError(LLMErrorCode.PERMISSION_DENIED, f"Permission denied HTTP 403: {exc.body}", **kw)
 
     if exc.status == 400:
         if any(h in body_lower for h in _CONTEXT_TOO_LONG_HINTS):
-            return LLMError(LLMErrorCode.CONTEXT_TOO_LONG, f"Context too long: {exc.body}", **kw)
+            return LLMNormalizedError(LLMErrorCode.CONTEXT_TOO_LONG, f"Context too long: {exc.body}", **kw)
         if any(h in body_lower for h in _CONTENT_FILTER_HINTS):
-            return LLMError(LLMErrorCode.INPUT_CONTENT_POLICY, f"Input content policy: {exc.body}", **kw)
-        return LLMError(LLMErrorCode.INVALID_REQUEST, f"Invalid request HTTP 400: {exc.body}", **kw)
+            return LLMNormalizedError(LLMErrorCode.INPUT_CONTENT_POLICY, f"Input content policy: {exc.body}", **kw)
+        return LLMNormalizedError(LLMErrorCode.INVALID_REQUEST, f"Invalid request HTTP 400: {exc.body}", **kw)
 
     if exc.status in {503, 529} or any(h in body_lower for h in _OVERLOADED_HINTS):
         retry_after = _extract_retry_after(exc)
-        return LLMError(
+        return LLMNormalizedError(
             LLMErrorCode.PROVIDER_OVERLOADED,
             f"Provider overloaded HTTP {exc.status}: {exc.body}",
             retry_after=retry_after,
             **kw,
         )
 
-    return LLMError(LLMErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}", **kw)
+    return LLMNormalizedError(LLMErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}", **kw)
 
 
 _AGENT_ERROR_CODE_MAP: dict[str, LLMErrorCode] = {
@@ -163,10 +163,10 @@ _AGENT_ERROR_CODE_MAP: dict[str, LLMErrorCode] = {
 }
 
 
-def classify_agent_error(exc: AgentError, provider: str | None = None) -> LLMError:
+def classify_agent_error(exc: AgentError, provider: str | None = None) -> LLMNormalizedError:
     """Map a legacy AgentError (from HttpClient) to a structured LLMError."""
     code = _AGENT_ERROR_CODE_MAP.get(exc.code, LLMErrorCode.RESPONSE_ERROR)
-    return LLMError(code, exc.message, provider=provider)
+    return LLMNormalizedError(code, exc.message, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -240,11 +240,11 @@ class LLMGateway(BaseLLMClient):
             zap.any("provider", provider_name),
             zap.any("messages", len(request.messages)),
         )
-        last_exc: LLMError | None = None
+        last_exc: LLMNormalizedError | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 return provider.generate(request)
-            except LLMError as exc:
+            except LLMNormalizedError as exc:
                 last_exc = exc
                 # AUTH/CONFIG: fatal for this provider, don't retry
                 if exc.category in (ErrorCategory.AUTH, ErrorCategory.CONFIG):
@@ -266,7 +266,7 @@ class LLMGateway(BaseLLMClient):
         # Should not reach here, but satisfy type checker
         if last_exc is not None:
             raise last_exc
-        raise LLMError(LLMErrorCode.HTTP_5XX, "Unknown LLM error")
+        raise LLMNormalizedError(LLMErrorCode.HTTP_5XX, "Unknown LLM error")
 
     def _backoff(self, attempt: int) -> float:
         """Exponential backoff with full jitter."""

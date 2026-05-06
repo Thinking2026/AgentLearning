@@ -22,7 +22,7 @@ from schemas.errors import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     AgentError,
     ErrorCategory,
-    LLMError,
+    LLMNormalizedError,
     TOOL_NOT_FOUND,
     TOOL_ARGUMENT_ERROR,
     build_error,
@@ -354,7 +354,7 @@ class StageExecutor:
                 unified_llm_request = self._context_manager.get_context_window(provider_name)
                 # ── 2. Call LLM ────────────────────────────────────────────
                 decision = self._reasoning_manager.reason_once(unified_llm_request)
-            except LLMError as exc:
+            except LLMNormalizedError as exc:
                 if exc.category in (ErrorCategory.AUTH, ErrorCategory.CONFIG):
                     stage.fail(f"Fatal LLM error: {exc.message}")
                     return _StageOutcome.FATAL, ""

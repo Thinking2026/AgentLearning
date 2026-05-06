@@ -16,7 +16,7 @@ from schemas.types import (
 from schemas.errors import (
     ErrorCategory,
     LLMErrorCode,
-    LLMError,
+    LLMNormalizedError,
     AgentError,
     ConfigError,
     HttpError,
@@ -118,24 +118,24 @@ def test_llm_error_category_mapping():
         (LLMErrorCode.CONFIG_ERROR, ErrorCategory.CONFIG),
     ]
     for code, expected_category in cases:
-        err = LLMError(code, "msg")
+        err = LLMNormalizedError(code, "msg")
         assert err.category == expected_category, f"Failed for {code}"
 
 
 def test_llm_error_str_contains_category_and_code():
-    err = LLMError(LLMErrorCode.RATE_LIMITED, "too many requests")
+    err = LLMNormalizedError(LLMErrorCode.RATE_LIMITED, "too many requests")
     assert "RATE_LIMIT" in str(err)
     assert "RATE_LIMITED" in str(err)
 
 
 def test_llm_error_retry_after():
-    err = LLMError(LLMErrorCode.RATE_LIMITED, "slow down", retry_after=30.0)
+    err = LLMNormalizedError(LLMErrorCode.RATE_LIMITED, "slow down", retry_after=30.0)
     assert err.retry_after == pytest.approx(30.0)
 
 
 def test_llm_error_is_exception():
-    err = LLMError(LLMErrorCode.TIMEOUT, "timed out")
-    with pytest.raises(LLMError):
+    err = LLMNormalizedError(LLMErrorCode.TIMEOUT, "timed out")
+    with pytest.raises(LLMNormalizedError):
         raise err
 
 

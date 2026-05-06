@@ -7,7 +7,7 @@ from llm.llm_gateway import BaseLLMClient, classify_agent_error, classify_http_e
 from schemas import (
     AgentError,
     HttpError,
-    LLMError,
+    LLMNormalizedError,
     LLMErrorCode,
     LLMMessage,
     UnifiedLLMRequest,
@@ -169,7 +169,7 @@ class OpenAILLMClient(BaseLLMClient):
     def _parse_chat_completion(cls, response_data: dict) -> LLMResponse:
         choices = response_data.get("choices") or []
         if not choices:
-            raise LLMError(LLMErrorCode.EMPTY_CHOICES, f"OpenAI API returned no choices: {response_data}")
+            raise LLMNormalizedError(LLMErrorCode.EMPTY_CHOICES, f"OpenAI API returned no choices: {response_data}")
         first_choice = choices[0]
         message = first_choice.get("message") or {}
         usage_data = response_data.get("usage") or {}
@@ -177,7 +177,7 @@ class OpenAILLMClient(BaseLLMClient):
         if finish_reason == "tool_calls":
             finish_reason = "tool_use"
         if finish_reason == "content_filter":
-            raise LLMError(LLMErrorCode.CONTENT_FILTERED, f"OpenAI content filter triggered: {response_data}")
+            raise LLMNormalizedError(LLMErrorCode.CONTENT_FILTERED, f"OpenAI content filter triggered: {response_data}")
         if finish_reason == "length":
             finish_reason = "length"  # preserved; caller checks FINISH_REASON_LENGTH via response
         try:
@@ -190,12 +190,12 @@ class OpenAILLMClient(BaseLLMClient):
                 for tool_call in (message.get("tool_calls") or [])
             ]
         except (KeyError, TypeError) as exc:
-            raise LLMError(
+            raise LLMNormalizedError(
                 LLMErrorCode.TOOL_CALL_PARSE_ERROR,
                 f"OpenAI API returned an invalid tool call payload: {exc}",
             ) from exc
         except json.JSONDecodeError as exc:
-            raise LLMError(
+            raise LLMNormalizedError(
                 LLMErrorCode.TOOL_CALL_PARSE_ERROR,
                 f"OpenAI tool call arguments are not valid JSON: {exc}",
             ) from exc

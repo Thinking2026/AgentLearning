@@ -6,7 +6,7 @@ from llm.llm_gateway import BaseLLMClient, classify_agent_error, classify_http_e
 from schemas import (
     AgentError,
     HttpError,
-    LLMError,
+    LLMNormalizedError,
     LLMErrorCode,
     LLMMessage,
     UnifiedLLMRequest,
@@ -98,7 +98,7 @@ class ClaudeLLMClient(BaseLLMClient):
                 response = self._parse_message_response(response_data)
             except HttpError as exc:
                 if exc.status == 529:
-                    raise LLMError(
+                    raise LLMNormalizedError(
                         LLMErrorCode.PROVIDER_OVERLOADED,
                         f"Claude overloaded: {exc.body}",
                         raw_status=529,
@@ -195,7 +195,7 @@ class ClaudeLLMClient(BaseLLMClient):
     def _parse_message_response(response_data: dict) -> LLMResponse:
         content_blocks = response_data.get("content")
         if not isinstance(content_blocks, list):
-            raise LLMError(
+            raise LLMNormalizedError(
                 LLMErrorCode.RESPONSE_ERROR,
                 f"Claude API returned invalid content blocks: {response_data}",
             )
@@ -205,7 +205,7 @@ class ClaudeLLMClient(BaseLLMClient):
             # Truncated — still parse what we have; caller sees finish_reason="length"
             pass
         if raw_finish_reason == "content_filter":
-            raise LLMError(LLMErrorCode.CONTENT_FILTERED, f"Claude content filter triggered: {response_data}")
+            raise LLMNormalizedError(LLMErrorCode.CONTENT_FILTERED, f"Claude content filter triggered: {response_data}")
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -228,7 +228,7 @@ class ClaudeLLMClient(BaseLLMClient):
                         )
                     )
                 except (KeyError, TypeError, ValueError) as exc:
-                    raise LLMError(
+                    raise LLMNormalizedError(
                         LLMErrorCode.TOOL_CALL_PARSE_ERROR,
                         f"Claude API returned an invalid tool use payload: {exc}",
                     ) from exc

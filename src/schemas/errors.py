@@ -121,7 +121,7 @@ _CODE_META: dict[LLMErrorCode, tuple[ErrorCategory, CallerAction]] = {
 }
 
 
-class LLMError(Exception):
+class LLMNormalizedError(Exception):
     """Structured LLM error carrying three layers of information.
 
     Attributes

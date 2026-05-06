@@ -10,7 +10,7 @@ from agent.models.model_routing.provider_router import ModelSelector, ModelRouti
 from schemas.errors import (
     AgentError,
     HttpError,
-    LLMError,
+    LLMNormalizedError,
     LLMErrorCode,
     ErrorCategory,
     LLM_NETWORK_ERROR,
