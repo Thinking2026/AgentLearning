@@ -164,5 +164,6 @@ class PipelineThread(threading.Thread):
     def _is_any_queue_closed(self) -> bool:
         return (
             self._task_queue.is_closed()
-            or self._agent_to_user_queue.is_closed()
+            or self._agent_msg_queue.is_closed()
+            or self._user_msg_queue.is_closed()
         )
