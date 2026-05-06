@@ -249,14 +249,12 @@ class AgentFactory:
         stage_executor = self.build_stage_executor(
             primary, quality_evaluator, knowledge_loader, planner, llm_gateway, tool_registry
         )
-        checkpoint_processor = self.build_checkpoint_processor(task_id)
 
         return Pipeline(
             analyzer=analyzer,
             planner=planner,
             pipeline_driver=pipeline_driver,
             stage_executor=stage_executor,
-            checkpoint_processor=checkpoint_processor,
             knowledge_manager=knowledge_manager,
             knowledge_loader=knowledge_loader,
             personality_manager=personality_manager,
