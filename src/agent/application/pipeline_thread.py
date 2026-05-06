@@ -8,7 +8,7 @@ from config import ConfigReader
 from agent.factory.agent_factory import AgentFactory
 from agent.application.driver import PipelineDriver
 from schemas.ids import TaskId
-from schemas.errors import AgentError, build_error, AGENT_THREAD_ERROR, LLM_ALL_PROVIDERS_FAILED
+from schemas.errors import AgentError, build_error, AGENT_THREAD_ERROR
 from schemas.task import TaskResult
 from schemas.types import UserMessage
 from infra.observability.tracing import Span, Tracer
@@ -34,12 +34,11 @@ class PipelineThread(threading.Thread):
         self._config = config
         self._stop_event = stop_event
         self._stop_callback = stop_callback
-        self._tracer: Tracer | None = None
         self._session_span: Span | None = None
         self._factory: AgentFactory | None = None
         self._active_driver: PipelineDriver | None = None
-        self._load_tracing_config()
         try:
+            self._load_tracing_config()
             self._logger = Logger.get_instance()
             self._tracer = self._build_tracer()
             self._factory = AgentFactory.from_config(config, self._tracer)
@@ -59,20 +58,21 @@ class PipelineThread(threading.Thread):
 
     def run(self) -> None:
         try:
-            driver = PipelineDriver()
-            self._active_driver = driver
+            self._active_driver = self._factory.build_pipeline_driver()
             pipeline = self._factory.build_pipeline(task_id, self._active_driver)
-            pipeline.stage_executor.set_driver(driver)
-            driver.set_pipeline(pipeline)
-            driver.set_thread(self)
+            pipeline.stage_executor.set_driver(self._active_driver)
+            self._active_driver.set_pipeline(pipeline)
+            self._active_driver.set_thread(self)
 
             while self._is_running():
                 # Wait for the next task from the user
                 user_message = self._task_queue.get(timeout=None)
                 if not self._is_running():
+                    self._logger.info("PipelineThread stopping, exiting loop")
                     break
                 if user_message is None:
-                    continue
+                    self._logger.info("PipelineThread received shutdown signal, exiting loop")
+                    break
 
                 self._record_user_input_trace(user_message)
                 self._start_session_trace(user_message)
@@ -81,7 +81,7 @@ class PipelineThread(threading.Thread):
                 task_description = user_message.content.strip()
 
                 # Build a fresh Pipeline + Driver for each task
-                result = driver.submit_task(task_id, task_description)
+                result = self._active_driver.submit_task(task_id, task_description)
                 if not result.succeeded:
                     self._logger.error(
                         "Task execution failed",
@@ -89,6 +89,7 @@ class PipelineThread(threading.Thread):
                         zap.any("error", result.error),
                     )
                 self._send_task_completed(result)
+                self._finish_session_trace(error=build_error(AGENT_THREAD_ERROR, str(result.error)) if result.error else None)
 
         except Exception as exc:
             self._logger.error("PipelineThread crashed", zap.any("error", exc))
@@ -97,7 +98,8 @@ class PipelineThread(threading.Thread):
 
     def _send_task_completed(self, result: TaskResult) -> None:
         msg = UserMessage(
-            content={"success": result.succeeded, "error": result.error, "output": result.output},
+            content=result.output,
+            metadata={"succeeded": result.succeeded, "error": result.error},
         )
         self.publish_event(msg)
 
@@ -128,7 +130,7 @@ class PipelineThread(threading.Thread):
             max_content_length=self._tracing_max_content_length,
         )
 
-    def _start_session_trace(self, user_message: ClientMessage) -> None:
+    def _start_session_trace(self, user_message: UserMessage) -> None:
         if self._tracer is None or self._session_span is not None:
             return
         self._session_span = self._tracer.start_trace(
@@ -143,7 +145,7 @@ class PipelineThread(threading.Thread):
         self._session_span.finish(status=status, error=error)
         self._session_span = None
 
-    def _record_user_input_trace(self, user_message: ClientMessage) -> None:
+    def _record_user_input_trace(self, user_message: UserMessage) -> None:
         if self._tracer is None:
             return
         with self._tracer.start_span(
@@ -155,12 +157,6 @@ class PipelineThread(threading.Thread):
 
     def _stop(self) -> None:
         self._stop_callback(self.name)
-
-    @staticmethod
-    def _normalize_error(exc: Exception | AgentError) -> AgentError:
-        if isinstance(exc, AgentError):
-            return exc
-        return build_error(AGENT_THREAD_ERROR, str(exc))
 
     def _is_running(self) -> bool:
         return not self._stop_event.is_set() and not self._is_any_queue_closed()

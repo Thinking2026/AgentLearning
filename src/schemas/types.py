@@ -129,8 +129,8 @@ class UserMessage:
     msg_type: UserMsgType
     task_id: TaskId | None
     user_id: int
-    checkpoint_id: CheckpointId | None
     content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 class UserCommandType(str, Enum):
     NEW_TASK        = "NEW_TASK"         # Submit a new task

@@ -227,6 +227,11 @@ class AgentFactory:
     # Top-level entry point
     # ------------------------------------------------------------------
 
+    def build_pipeline_driver(self) -> PipelineDriver:
+        return PipelineDriver(
+            loop_user_messages_timeout_seconds=float(self._config.get("agent.loop_user_messages_timeout_seconds", 0.5)),
+        )
+
     def build_pipeline(
         self,
         task_id: TaskId,

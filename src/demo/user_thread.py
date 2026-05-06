@@ -37,7 +37,9 @@ class UserThread(threading.Thread):
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
-        self._config
+        self._config = config
+
+        self._new_task_user_input_timeout_seconds = self._config.positive_float(
             "agent.latency.new_task_user_input_timeout_seconds",
             60.0,
         )
