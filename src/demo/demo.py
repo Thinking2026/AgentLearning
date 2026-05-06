@@ -49,7 +49,6 @@ class Demo:
                 config=self._config,
                 stop_event=self._stop_event,
                 stop_callback=self.request_stop,
-                logger=self._logger,
             )
             self._user_thread = UserThread(
                 task_queue=self._task_queue,

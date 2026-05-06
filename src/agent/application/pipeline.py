@@ -20,7 +20,6 @@ from schemas.types import ClientMessage
 
 if TYPE_CHECKING:
     from agent.models.analysis.analyzer import Analyzer
-    from agent.models.checkpoint.checkpoint_processor import CheckpointProcessor
     from agent.models.evaluate.quality_evaluator import QualityEvaluator
     from agent.models.executor.stage_executor import StageExecutor
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader
@@ -50,7 +49,6 @@ class Pipeline:
         planner: Planner,
         pipeline_driver: PipelineDriver,
         stage_executor: StageExecutor,
-        checkpoint_processor: CheckpointProcessor,
         knowledge_manager: KnowledgeManager,
         knowledge_loader: KnowledgeLoader,
         personality_manager: PersonalityManager,
@@ -66,7 +64,6 @@ class Pipeline:
         self._planner = planner
         self._pipeline_driver = pipeline_driver
         self._stage_executor = stage_executor
-        self._checkpoint_processor = checkpoint_processor
         self._knowledge_manager = knowledge_manager
         self._knowledge_loader = knowledge_loader
         self._personality_manager = personality_manager
@@ -184,18 +181,6 @@ class Pipeline:
             plan = self._planner.renew_plan(
                 task=task, feedback=review.feedback, llm_api=self._llm_gateway
             )
-
-    def continue_from_checkpoint(self, task_id: TaskId, cpt_id: CheckpointId) -> TaskResult:
-        """Restore from the latest checkpoint and resume execution."""
-        checkpoint = self._checkpoint_processor.restore_latest()
-        if checkpoint is None:
-            return self._failed_result(task_id, "No checkpoint found")
-
-        self._stage_executor.replace_conversation_history(
-            checkpoint.conversation_checkpoint
-        )
-        task_description = self._task.description if self._task else ""
-        return self.run(task_description)
 
     # ------------------------------------------------------------------
     # Async side-effects
