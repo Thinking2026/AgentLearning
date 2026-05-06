@@ -52,7 +52,7 @@ class AgentApplication:
                 logger=self._logger,
             )
             self._user_thread = UserThread(
-                user_to_agent_queue=self._user_to_agent_queue,
+                agent_msg_queue=self._user_to_agent_queue,
                 agent_to_user_queue=self._agent_to_user_queue,
                 config=self._config,
                 stop_event=self._stop_event,

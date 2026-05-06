@@ -8,7 +8,7 @@ import time
 from typing import Callable
 
 from config import ConfigReader
-from utils.concurrency.message_queue import AgentToUserQueue, UserToAgentQueue
+from utils.concurrency.message_queue import AgentMessageQueue, AgentToUserQueue, TaskQueue, UserMessageQueue, UserToAgentQueue
 from schemas import ClientMessage
 from utils.log.log import Logger, zap
 from utils.env_util.runtime_env import (
@@ -23,21 +23,22 @@ from utils.concurrency.thread_event import ThreadEvent
 class UserThread(threading.Thread):
     def __init__(
         self,
-        user_to_agent_queue: UserToAgentQueue,
-        agent_to_user_queue: AgentToUserQueue,
+        task_msg_queue: TaskQueue,
+        agent_msg_queue: AgentMessageQueue,
+        user_msg_queue: UserMessageQueue,
         config: ConfigReader,
         stop_event: ThreadEvent,
         stop_callback: Callable[[str | None], None],
         logger: Logger,
     ) -> None:
         super().__init__(name="UserThread", daemon=False)
-        self._user_to_agent_queue = user_to_agent_queue
-        self._agent_to_user_queue = agent_to_user_queue
+        self._task_msg_queue = task_msg_queue
+        self._agent_msg_queue = agent_msg_queue
+        self._user_msg_queue = user_msg_queue
         self._config = config
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._logger = logger
-        self._config = config
 
         self._new_task_user_input_timeout_seconds = self._config.positive_float(
             "agent.latency.new_task_user_input_timeout_seconds",
@@ -118,7 +119,7 @@ class UserThread(threading.Thread):
     def _drain_agent_messages(self) -> bool:
         displayed_any_message = False
         while True:
-            message = self._agent_to_user_queue.get_agent_message(#agent要去兜底，给CLI端的信息都是解决问题的有效步骤或者结论消息
+            message = self._user_msg_queue.get_agent_message(#agent要去兜底，给CLI端的信息都是解决问题的有效步骤或者结论消息
                 timeout=self._agent_message_poll_timeout_seconds
             )
             if message is None:
@@ -195,7 +196,7 @@ class UserThread(threading.Thread):
             )
             return True
         message = ClientMessage(role="user", content=stripped)
-        self._user_to_agent_queue.send_user_message(message)
+        self._agent_msg_queue.send_user_message(message)
         return False
 
     def _format_agent_message(self, message: ClientMessage) -> str:
@@ -236,4 +237,4 @@ class UserThread(threading.Thread):
         return bool(message.metadata.get("control")) and not message.content.strip()
 
     def _is_any_queue_closed(self) -> bool:
-        return self._user_to_agent_queue.is_closed() or self._agent_to_user_queue.is_closed()
+        return self._agent_msg_queue.is_closed() or self._user_msg_queue.is_closed()
