@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
 
 from config import ConfigReader
 from infra.db.bootstrap_documents import load_seed_documents
@@ -42,8 +41,7 @@ from agent.models.reasoning.impl.react.react_strategy import ReActStrategy
 from agent.models.reasoning.reasoning_manager import ReasoningManager
 from agent.application.driver import PipelineDriver
 
-if TYPE_CHECKING:
-    from infra.observability.tracing import Tracer
+from infra.observability.tracing import Tracer
 
 
 class AgentFactory:
@@ -52,14 +50,13 @@ class AgentFactory:
     Single assembly point: domain objects do not know about config format.
     """
 
-    def __init__(self, config: ConfigReader, tracer: Tracer | None = None) -> None:
+    def __init__(self, config: ConfigReader) -> None:
         self._config = config
-        self._tracer = tracer
         self._logger = Logger.get_instance()
 
     @classmethod
-    def from_config(cls, config: ConfigReader, tracer: Tracer | None = None) -> AgentFactory:
-        return cls(config, tracer)
+    def from_config(cls, config: ConfigReader) -> AgentFactory:
+        return cls(config)
 
     # ------------------------------------------------------------------
     # Infrastructure
@@ -129,15 +126,12 @@ class AgentFactory:
     # LLM gateway
     # ------------------------------------------------------------------
 
-    def build_llm_gateway(self, provider_name: str, registry: LLMProviderRegistry | None = None) -> LLMGateway:
-        if registry is None:
-            registry = LLMProviderRegistry([self._build_provider(provider_name)])
+    def build_llm_gateway(self) -> LLMGateway:
+        registry = self.build_llm_provider_registry()
         return LLMGateway(
             registry=registry,
-            provider_name=provider_name,
-            max_retries=int(self._config.get("llm.retry.max_attempts", 3)),
-            retry_delays=self._config.retry_delays("llm.retry.backoff_seconds") or (1.0, 2.0, 4.0),
-            timeout=float(self._config.get(f"llm.provider_settings.{provider_name}.timeout", 60.0)),
+            config=self._config,
+            tracer=self.build_tracer()
         )
 
     # ------------------------------------------------------------------
@@ -182,8 +176,8 @@ class AgentFactory:
     def build_analyzer(self) -> Analyzer:
         return Analyzer()
 
-    def build_reasoning_manager(self, provider_name: str) -> ReasoningManager:
-        gateway = self.build_llm_gateway(provider_name)
+    def build_reasoning_manager(self) -> ReasoningManager:
+        gateway = self.build_llm_gateway()
         strategy = ReActStrategy()
         return ReasoningManager(llm_gateway=gateway, strategy=strategy)
 
@@ -223,6 +217,23 @@ class AgentFactory:
     # Top-level entry point
     # ------------------------------------------------------------------
 
+    def build_tracer(self) -> Tracer:
+        tracing_enabled = bool(self._config.get("tracing.enabled", True))
+        tracing_output_path = self._config.get("tracing.output_path", "var/tracing/traces.jsonl")
+        payload_redaction_enabled = bool(
+            self._config.get(
+                "tracing.payload_redaction_enabled",
+                not bool(self._config.get("tracing.capture_payloads", False)),
+            )
+        )
+        max_content_length = self._config.positive_int("tracing.max_content_length", default=1000)
+        return Tracer(
+            enabled=tracing_enabled,
+            output_path=tracing_output_path,
+            payload_redaction_enabled=payload_redaction_enabled,
+            max_content_length=max_content_length,
+        )
+
     def build_pipeline_driver(self) -> PipelineDriver:
         return PipelineDriver(
             loop_user_messages_timeout_seconds=float(self._config.get("agent.loop_user_messages_timeout_seconds", 0.5)),
@@ -230,13 +241,11 @@ class AgentFactory:
 
     def build_pipeline(
         self,
-        task_id: TaskId,
         pipeline_driver: PipelineDriver | None = None,
     ) -> Pipeline:
         """Build a fully-wired Pipeline for a single task."""
         primary = self._primary_provider_name()
-        llm_registry = self.build_llm_provider_registry()
-        llm_gateway = self.build_llm_gateway(primary, registry=llm_registry)
+        llm_gateway = self.build_llm_gateway()
         storage_registry = self.build_storage_registry()
         tool_registry = self.build_tool_registry(storage_registry)
         model_selector = self.build_model_selector()
@@ -249,6 +258,7 @@ class AgentFactory:
         stage_executor = self.build_stage_executor(
             primary, quality_evaluator, knowledge_loader, planner, llm_gateway, tool_registry
         )
+        stage_executor.set_driver(pipeline_driver)
 
         return Pipeline(
             analyzer=analyzer,

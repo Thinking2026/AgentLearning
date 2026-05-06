@@ -7,6 +7,8 @@ from llm.llm_gateway import BaseLLMClient, classify_agent_error, classify_http_e
 from schemas import (
     AgentError,
     HttpError,
+    LLMError,
+    LLMErrorCode,
     LLMMessage,
     UnifiedLLMRequest,
     LLMResponse,
@@ -83,9 +85,9 @@ class OpenAILLMClient(BaseLLMClient):
                 response_data = self._post_json("/chat/completions", payload)
                 response = self._parse_chat_completion(response_data)
             except HttpError as exc:
-                raise classify_http_error(exc) from exc
+                raise classify_http_error(exc, provider=self.provider_name) from exc
             except AgentError as exc:
-                raise classify_agent_error(exc) from exc
+                raise classify_agent_error(exc, provider=self.provider_name) from exc
             span.add_attributes(
                 {
                     "finish_reason": response.finish_reason,
@@ -167,13 +169,17 @@ class OpenAILLMClient(BaseLLMClient):
     def _parse_chat_completion(cls, response_data: dict) -> LLMResponse:
         choices = response_data.get("choices") or []
         if not choices:
-            raise build_error(LLM_RESPONSE_ERROR, f"OpenAI API returned no choices: {response_data}")
+            raise LLMError(LLMErrorCode.EMPTY_CHOICES, f"OpenAI API returned no choices: {response_data}")
         first_choice = choices[0]
         message = first_choice.get("message") or {}
         usage_data = response_data.get("usage") or {}
         finish_reason = first_choice.get("finish_reason", "stop")
         if finish_reason == "tool_calls":
             finish_reason = "tool_use"
+        if finish_reason == "content_filter":
+            raise LLMError(LLMErrorCode.CONTENT_FILTERED, f"OpenAI content filter triggered: {response_data}")
+        if finish_reason == "length":
+            finish_reason = "length"  # preserved; caller checks FINISH_REASON_LENGTH via response
         try:
             tool_calls = [
                 ToolCall(
@@ -183,10 +189,15 @@ class OpenAILLMClient(BaseLLMClient):
                 )
                 for tool_call in (message.get("tool_calls") or [])
             ]
-        except (KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise build_error(
-                LLM_RESPONSE_PARSE_ERROR,
+        except (KeyError, TypeError) as exc:
+            raise LLMError(
+                LLMErrorCode.TOOL_CALL_PARSE_ERROR,
                 f"OpenAI API returned an invalid tool call payload: {exc}",
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise LLMError(
+                LLMErrorCode.TOOL_CALL_PARSE_ERROR,
+                f"OpenAI tool call arguments are not valid JSON: {exc}",
             ) from exc
         return LLMResponse(
             assistant_message=LLMMessage(

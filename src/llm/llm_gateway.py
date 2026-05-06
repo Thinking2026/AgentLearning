@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from config.config import ConfigReader
 from schemas import (
     AgentError,
     ErrorCategory,
@@ -37,34 +39,134 @@ _CONTEXT_TOO_LONG_HINTS = (
     "maximum context length",
     "reduce the length",
     "too many tokens",
+    "prompt is too long",
+    "input is too long",
+    "exceeds the model's context",
+)
+
+_CONTENT_FILTER_HINTS = (
+    "content_filter",
+    "content filter",
+    "safety",
+    "moderation",
+    "policy violation",
+    "harmful",
+    "violates",
+)
+
+_QUOTA_HINTS = (
+    "quota",
+    "billing",
+    "insufficient_quota",
+    "exceeded your current quota",
+    "account has been deactivated",
+)
+
+_OVERLOADED_HINTS = (
+    "overloaded",
+    "capacity",
+    "server is busy",
+    "try again later",
 )
 
 
-def classify_http_error(exc: HttpError) -> LLMError:
+def _extract_retry_after(exc: HttpError) -> float | None:
+    """Resolve retry delay in seconds from header or response body.
+
+    Priority:
+      1. Retry-After header (already parsed by HttpClient into seconds)
+      2. Body JSON fields used by various providers:
+         - OpenAI:    {"error": {"retry_after": <seconds float>}}
+         - Anthropic: {"retry_after_ms": <milliseconds int>}  (rare, but documented)
+         - Generic:   {"retry_after": <seconds float>}
+    """
+    if exc.retry_after is not None:
+        return exc.retry_after
+    try:
+        body_json = json.loads(exc.body)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    # OpenAI nested form
+    nested = body_json.get("error") if isinstance(body_json, dict) else None
+    if isinstance(nested, dict):
+        v = nested.get("retry_after")
+        if v is not None:
+            try:
+                return max(0.0, float(v))
+            except (TypeError, ValueError):
+                pass
+    if isinstance(body_json, dict):
+        # Milliseconds variant (Anthropic documented field)
+        v_ms = body_json.get("retry_after_ms")
+        if v_ms is not None:
+            try:
+                return max(0.0, float(v_ms) / 1000.0)
+            except (TypeError, ValueError):
+                pass
+        # Generic seconds variant
+        v_s = body_json.get("retry_after")
+        if v_s is not None:
+            try:
+                return max(0.0, float(v_s))
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def classify_http_error(exc: HttpError, provider: str | None = None) -> LLMError:
     """Map an HttpError to a structured LLMError. Called by concrete providers."""
     body_lower = exc.body.lower()
+    kw = dict(raw_status=exc.status, provider=provider)
+
     if exc.status == 429:
-        return LLMError(LLMErrorCode.RATE_LIMITED, f"Rate limited: {exc.body}", retry_after=exc.retry_after)
-    if exc.status in {401, 403}:
-        return LLMError(LLMErrorCode.AUTH_FAILED, f"Auth failed HTTP {exc.status}: {exc.body}")
-    if exc.status == 400 and any(h in body_lower for h in _CONTEXT_TOO_LONG_HINTS):
-        return LLMError(LLMErrorCode.CONTEXT_TOO_LONG, f"Context too long: {exc.body}")
-    return LLMError(LLMErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}")
+        retry_after = _extract_retry_after(exc)
+        if any(h in body_lower for h in _QUOTA_HINTS):
+            return LLMError(LLMErrorCode.QUOTA_EXCEEDED, f"Quota exceeded: {exc.body}", **kw)
+        return LLMError(
+            LLMErrorCode.RATE_LIMITED,
+            f"Rate limited: {exc.body}",
+            retry_after=retry_after,
+            **kw,
+        )
+
+    if exc.status == 401:
+        return LLMError(LLMErrorCode.AUTH_FAILED, f"Auth failed HTTP 401: {exc.body}", **kw)
+
+    if exc.status == 403:
+        return LLMError(LLMErrorCode.PERMISSION_DENIED, f"Permission denied HTTP 403: {exc.body}", **kw)
+
+    if exc.status == 400:
+        if any(h in body_lower for h in _CONTEXT_TOO_LONG_HINTS):
+            return LLMError(LLMErrorCode.CONTEXT_TOO_LONG, f"Context too long: {exc.body}", **kw)
+        if any(h in body_lower for h in _CONTENT_FILTER_HINTS):
+            return LLMError(LLMErrorCode.INPUT_CONTENT_POLICY, f"Input content policy: {exc.body}", **kw)
+        return LLMError(LLMErrorCode.INVALID_REQUEST, f"Invalid request HTTP 400: {exc.body}", **kw)
+
+    if exc.status in {503, 529} or any(h in body_lower for h in _OVERLOADED_HINTS):
+        retry_after = _extract_retry_after(exc)
+        return LLMError(
+            LLMErrorCode.PROVIDER_OVERLOADED,
+            f"Provider overloaded HTTP {exc.status}: {exc.body}",
+            retry_after=retry_after,
+            **kw,
+        )
+
+    return LLMError(LLMErrorCode.HTTP_5XX, f"HTTP {exc.status}: {exc.body}", **kw)
 
 
 _AGENT_ERROR_CODE_MAP: dict[str, LLMErrorCode] = {
-    LLM_NETWORK_ERROR:       LLMErrorCode.NETWORK_ERROR,
-    LLM_TIMEOUT:             LLMErrorCode.TIMEOUT,
+    LLM_NETWORK_ERROR:        LLMErrorCode.NETWORK_ERROR,
+    LLM_TIMEOUT:              LLMErrorCode.TIMEOUT,
     LLM_RESPONSE_PARSE_ERROR: LLMErrorCode.RESPONSE_PARSE_ERROR,
-    LLM_RESPONSE_ERROR:      LLMErrorCode.RESPONSE_ERROR,
-    LLM_CONFIG_ERROR:        LLMErrorCode.CONFIG_ERROR,
+    LLM_RESPONSE_ERROR:       LLMErrorCode.RESPONSE_ERROR,
+    LLM_CONFIG_ERROR:         LLMErrorCode.CONFIG_ERROR,
 }
 
 
-def classify_agent_error(exc: AgentError) -> LLMError:
+def classify_agent_error(exc: AgentError, provider: str | None = None) -> LLMError:
     """Map a legacy AgentError (from HttpClient) to a structured LLMError."""
     code = _AGENT_ERROR_CODE_MAP.get(exc.code, LLMErrorCode.RESPONSE_ERROR)
-    return LLMError(code, exc.message)
+    return LLMError(code, exc.message, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -118,46 +220,30 @@ class LLMGateway(BaseLLMClient):
     def __init__(
         self,
         registry: LLMProviderRegistry,
-        provider_name: str,
-        max_retries: int = 3,
-        retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
-        timeout: float = 60.0,
+        config: ConfigReader,
+        tracer: Tracer
     ) -> None:
-        import random as _random
         self._registry = registry
-        self._provider = registry.get(provider_name)
-        self._provider_name = provider_name
-        self._max_retries = max_retries
-        self._retry_delays = retry_delays
-        self._timeout = timeout
+        self._config = config
+        self._tracer = tracer
+        self._max_retries = int(self._config.get("llm.retry.max_attempts", 3))
+        self._retry_delays = self._config.retry_delays("llm.retry.backoff_seconds") or (1.0, 2.0, 4.0)
+        import random as _random
         self._random = _random
 
-    def for_provider(self, provider_name: str) -> LLMGateway:
-        """Return a new LLMGateway for a different provider, reusing retry config."""
-        return LLMGateway(
-            registry=self._registry,
-            provider_name=provider_name,
-            max_retries=self._max_retries,
-            retry_delays=self._retry_delays,
-            timeout=self._timeout,
-        )
-
-    @property
-    def provider_name(self) -> str:  # type: ignore[override]
-        return self._provider_name
-
-    def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
+    def generate(self, request: UnifiedLLMRequest, provider_name: str) -> LLMResponse:
         import time as _time
         logger = Logger.get_instance()
+        provider = self._registry.get(provider_name)
         logger.info(
             "LLM generate start",
-            zap.any("provider", self._provider.provider_name),
+            zap.any("provider", provider_name),
             zap.any("messages", len(request.messages)),
         )
         last_exc: LLMError | None = None
         for attempt in range(self._max_retries + 1):
             try:
-                return self._provider.generate(request)
+                return provider.generate(request)
             except LLMError as exc:
                 last_exc = exc
                 # AUTH/CONFIG: fatal for this provider, don't retry
@@ -169,7 +255,7 @@ class LLMGateway(BaseLLMClient):
                         delay = exc.retry_after if exc.retry_after is not None else self._backoff(attempt)
                         logger.info(
                             "LLM retry backoff",
-                            zap.any("provider", self._provider.provider_name),
+                            zap.any("provider", provider_name),
                             zap.any("attempt", attempt + 1),
                             zap.any("delay_seconds", round(delay, 2)),
                         )

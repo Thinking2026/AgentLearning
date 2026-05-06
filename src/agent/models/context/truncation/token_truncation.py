@@ -400,7 +400,7 @@ class ReActContextTruncator(ContextTruncator):
                 return None
             summary_provider = self._json_config.get("llm.summary_provider", self._cfg.summary_provider)
             from agent.factory.agent_factory import AgentFactory
-            client = AgentFactory(self._json_config).build_llm_gateway(summary_provider)
+            client = AgentFactory(self._json_config).build_llm_gateway()
             history_text = "\n".join(
                 f"[{m.role}] {m.content}" for m in msgs_to_summarize
             )

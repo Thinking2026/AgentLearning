@@ -12,6 +12,7 @@ from agent.events.events import (
     TaskExecutionStarted,
     TaskResultProduced,
 )
+from agent.factory.agent_factory import AgentFactory
 from schemas.ids import CheckpointId, TaskId
 from schemas.errors import AgentError
 from schemas.task import Plan, Task, TaskResult
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     from agent.models.model_routing.provider_router import ModelSelector
     from agent.models.personality.user_preference import PersonalityManager
     from agent.models.plan.planner import Planner
+    from infra.observability.tracing import Span, Tracer
     from llm.llm_gateway import LLMGateway
     from tools.tool_registry import ToolRegistry
 
@@ -44,43 +46,33 @@ class Pipeline:
 
     def __init__(
         self,
-        analyzer: Analyzer,
-        planner: Planner,
+        agent_factory: AgentFactory,
         pipeline_driver: PipelineDriver,
-        stage_executor: StageExecutor,
-        knowledge_manager: KnowledgeManager,
-        knowledge_loader: KnowledgeLoader,
-        personality_manager: PersonalityManager,
-        quality_evaluator: QualityEvaluator,
-        model_selector: ModelSelector,
-        tool_registry: ToolRegistry,
-        llm_gateway: LLMGateway,
         max_plan_retries: int = 3,
         max_quality_retries: int = 2,
     ) -> None:
-
-        self._analyzer = analyzer
-        self._planner = planner
+        self._agent_factory = agent_factory
+        self._analyzer = self._agent_factory.build_analyzer()
+        self._planner = self._agent_factory.build_planner()
         self._pipeline_driver = pipeline_driver
-        self._stage_executor = stage_executor
-        self._knowledge_manager = knowledge_manager
-        self._knowledge_loader = knowledge_loader
-        self._personality_manager = personality_manager
-        self._quality_evaluator = quality_evaluator
-        self._model_selector = model_selector
-        self._tool_registry = tool_registry
-        self._llm_gateway = llm_gateway
+        self._stage_executor = self._agent_factory.build_stage_executor()
+        self._knowledge_manager = self._agent_factory.build_knowledge_manager()
+        self._knowledge_loader = self._agent_factory.build_knowledge_loader()
+        self._personality_manager = self._agent_factory.build_personality_manager()
+        self._quality_evaluator = self._agent_factory.build_quality_evaluator()
+        self._model_selector = self._agent_factory.build_model_selector()
+        self._tool_registry = self._agent_factory.build_tool_registry()
+        self._llm_gateway = self._agent_factory.build_llm_gateway()
+        self._tracer = self._agent_factory.build_tracer()
 
         self._max_make_plan_retries = max_plan_retries
         self._max_task_retries = max_quality_retries
 
         self._task: Task | None = None
+        self._session_span: Span | None = None
 
         # Cross-thread control signals
         self._cancelled = threading.Event()
-        # Optional callback to push progress messages to the user
-        self._send_to_user: Callable[[ClientMessage], None] | None = None
-
     # ------------------------------------------------------------------
     # Public control API (thread-safe, called from PipelineThread)
     # ------------------------------------------------------------------
@@ -89,15 +81,13 @@ class Pipeline:
     def stage_executor(self) -> StageExecutor:
         return self._stage_executor
 
-    def set_send_to_user(self, callback: Callable[[ClientMessage], None]) -> None:
-        self._send_to_user = callback
-
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
     def run(self, task_description: str) -> TaskResult:
         self._cancelled.clear()
+        self._start_session_trace(task_description)
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
         task = self._analyzer.analyze(
@@ -122,7 +112,9 @@ class Pipeline:
         if plan is None:
             event = TaskExecutionFailed(task_id=task.id, content="Failed to produce a valid plan")
             self._pipeline_driver.publish_event(event)
-            return self._failed_result(task.id, "Failed to produce a valid plan after retries")
+            result = self._failed_result(task.id, "Failed to produce a valid plan after retries")
+            self._finish_session_trace(error=result.error_reason or None)
+            return result
 
         # 1.3.2.1.1 发布"执行计划已确定"事件
         self._pipeline_driver.publish_event(
@@ -143,7 +135,9 @@ class Pipeline:
             if raw_result is None:
                 event = TaskExecutionFailed(task_id=task.id, content="Stage execution failed")
                 self._pipeline_driver.publish_event(event)
-                return self._failed_result(task.id, "Stage execution failed")
+                result = self._failed_result(task.id, "Stage execution failed")
+                self._finish_session_trace(error=result.error_reason or None)
+                return result
 
             # 1.5.1 执行成功 → 评审任务结果
             review = self._quality_evaluator.evaluate_task_result(
@@ -159,13 +153,15 @@ class Pipeline:
                 self._pipeline_driver.publish_event(
                     TaskResultProduced(task_id=task.id, content=raw_result)
                 )
-                return TaskResult(
+                result = TaskResult(
                     task_id=task.id,
                     succeeded=True,
                     result=raw_result,
                     error_reason="",
                     delivered_at=datetime.now(timezone.utc),
                 )
+                self._finish_session_trace()
+                return result
 
             # 1.5.1.2 评审不通过 → 清空上下文，结合评审意见重新制定计划
             current_task_retries += 1
@@ -174,12 +170,33 @@ class Pipeline:
                     task_id=task.id, content="Quality check failed after retries"
                 )
                 self._pipeline_driver.publish_event(event)
-                return self._failed_result(task.id, "Quality check failed after retries")
+                result = self._failed_result(task.id, "Quality check failed after retries")
+                self._finish_session_trace(error=result.error_reason or None)
+                return result
 
             self._stage_executor.archive_current_stage_context()
             plan = self._planner.renew_plan(
                 task=task, feedback=review.feedback, llm_api=self._llm_gateway
             )
+
+    # ------------------------------------------------------------------
+    # Tracing
+    # ------------------------------------------------------------------
+
+    def _start_session_trace(self, task_description: str) -> None:
+        if self._tracer is None or self._session_span is not None:
+            return
+        self._session_span = self._tracer.start_trace(
+            "session",
+            attributes={"task": task_description},
+        )
+
+    def _finish_session_trace(self, error: str | None = None) -> None:
+        if self._session_span is None:
+            return
+        status = "error" if error else "ok"
+        self._session_span.finish(status=status, error=error)
+        self._session_span = None
 
     # ------------------------------------------------------------------
     # Async side-effects
@@ -238,8 +255,7 @@ class Pipeline:
         return "\n".join(lines)
 
     def _update_reasoning_gateway(self, provider_name: str) -> None:
-        gateway = self._llm_gateway.for_provider(provider_name)
-        self._stage_executor.set_llm_gateway(gateway)
+        self._llm_gateway.switch_provider(provider_name)
 
     @staticmethod
     def _next_provider_index(provider_chain: list[str], current_index: int) -> int | None:

@@ -6,7 +6,6 @@ from agent.models.reasoning.decision import NextDecision
 from schemas.types import UnifiedLLMRequest
 
 if TYPE_CHECKING:
-    from agent.models.context.manager import ContextManager
     from agent.models.reasoning.strategy import Strategy
     from llm.llm_gateway import LLMGateway
     from schemas import LLMMessage, ToolCall, ToolResult

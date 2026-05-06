@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import email.utils
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -11,6 +13,25 @@ from schemas import (
     LLM_TIMEOUT,
     build_error,
 )
+
+
+def _parse_retry_after(raw: str) -> float | None:
+    """Parse a Retry-After header value into seconds.
+
+    Handles both integer-seconds ("30") and HTTP-date formats
+    ("Wed, 07 May 2026 12:00:00 GMT").  Returns None if unparseable.
+    """
+    raw = raw.strip()
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        dt = email.utils.parsedate_to_datetime(raw)
+        delta = dt.timestamp() - time.time()
+        return max(0.0, delta)
+    except Exception:
+        return None
 
 
 class HttpClient:
@@ -72,10 +93,7 @@ class HttpClient:
             retry_after: float | None = None
             raw = exc.headers.get("Retry-After")
             if raw is not None:
-                try:
-                    retry_after = float(raw)
-                except ValueError:
-                    pass
+                retry_after = _parse_retry_after(raw)
             raise HttpError(status=exc.code, body=body, retry_after=retry_after) from exc
         except urllib.error.URLError as exc:
             raise build_error(LLM_NETWORK_ERROR, f"Network error {method} {url}: {exc.reason}") from exc

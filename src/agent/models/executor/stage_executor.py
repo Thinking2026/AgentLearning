@@ -483,8 +483,7 @@ class StageExecutor:
     # ------------------------------------------------------------------
 
     def _switch_provider(self, provider_name: str) -> None:
-        new_gateway = self._llm_gateway.for_provider(provider_name)
-        self._reasoning_manager.set_llm_gateway(new_gateway)
+        self._llm_gateway.switch_provider(provider_name)
 
     def _should_use_primary_provider(self) -> bool:
         """Return True when conditions favour switching back to the primary model."""

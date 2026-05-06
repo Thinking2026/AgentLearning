@@ -98,10 +98,15 @@ class ClaudeLLMClient(BaseLLMClient):
                 response = self._parse_message_response(response_data)
             except HttpError as exc:
                 if exc.status == 529:
-                    raise LLMError(LLMErrorCode.HTTP_5XX, f"Claude overloaded: {exc.body}") from exc
-                raise classify_http_error(exc) from exc
+                    raise LLMError(
+                        LLMErrorCode.PROVIDER_OVERLOADED,
+                        f"Claude overloaded: {exc.body}",
+                        raw_status=529,
+                        provider=self.provider_name,
+                    ) from exc
+                raise classify_http_error(exc, provider=self.provider_name) from exc
             except AgentError as exc:
-                raise classify_agent_error(exc) from exc
+                raise classify_agent_error(exc, provider=self.provider_name) from exc
             span.add_attributes(
                 {
                     "finish_reason": response.finish_reason,
@@ -190,10 +195,17 @@ class ClaudeLLMClient(BaseLLMClient):
     def _parse_message_response(response_data: dict) -> LLMResponse:
         content_blocks = response_data.get("content")
         if not isinstance(content_blocks, list):
-            raise build_error(
-                LLM_RESPONSE_ERROR,
+            raise LLMError(
+                LLMErrorCode.RESPONSE_ERROR,
                 f"Claude API returned invalid content blocks: {response_data}",
             )
+
+        raw_finish_reason = str(response_data.get("stop_reason", "stop"))
+        if raw_finish_reason == "max_tokens":
+            # Truncated — still parse what we have; caller sees finish_reason="length"
+            pass
+        if raw_finish_reason == "content_filter":
+            raise LLMError(LLMErrorCode.CONTENT_FILTERED, f"Claude content filter triggered: {response_data}")
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
@@ -216,8 +228,8 @@ class ClaudeLLMClient(BaseLLMClient):
                         )
                     )
                 except (KeyError, TypeError, ValueError) as exc:
-                    raise build_error(
-                        LLM_RESPONSE_PARSE_ERROR,
+                    raise LLMError(
+                        LLMErrorCode.TOOL_CALL_PARSE_ERROR,
                         f"Claude API returned an invalid tool use payload: {exc}",
                     ) from exc
 

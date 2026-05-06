@@ -356,7 +356,6 @@ class ContextManager:
                 self._config.get("llm.summary_provider", "deepseek")
                 if self._config else "deepseek"
             )
-            gateway = self._llm_gateway.for_provider(summary_provider)
             history_text = "\n".join(
                 f"[{m.role}] {m.content}" for m in stage_messages
             )
@@ -371,7 +370,7 @@ class ContextManager:
                 messages=[LLMMessage(role="user", content=history_text)],
                 tool_schemas=[],
             )
-            response = gateway.generate(request)
+            response = self._llm_gateway.generate(request, summary_provider)
             self.summarize_stage(stage_index, response.assistant_message.content)
         except Exception:
             # Summary is best-effort; a failure must not affect stage completion
