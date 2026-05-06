@@ -13,7 +13,7 @@ from schemas import (
     ToolResult,
     build_error,
 )
-from tools.models import BaseTool, build_tool_output
+from tools.tool_base import BaseTool, build_tool_output
 from utils.env_util.runtime_env import get_task_runtime_dir
 
 

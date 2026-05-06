@@ -1,5 +1,4 @@
-from .application import AgentApplication
+from .demo import Demo
 from .user_thread import UserThread
-from .agent_thread import AgentThread
 
-__all__ = ["AgentApplication", "AgentThread", "UserThread"]
+__all__ = ["Demo", "UserThread"]

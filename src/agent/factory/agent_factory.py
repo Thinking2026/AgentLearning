@@ -30,7 +30,6 @@ from utils.log.log import Logger
 
 from agent.application.pipeline import Pipeline
 from agent.models.analysis.analyzer import Analyzer
-from agent.models.checkpoint.checkpoint_processor import CheckpointProcessor
 from agent.models.context.manager import ContextManager
 from agent.models.evaluate.quality_evaluator import QualityEvaluator
 from agent.models.executor.stage_executor import StageExecutor
@@ -219,9 +218,6 @@ class AgentFactory:
 
     def build_knowledge_manager(self) -> KnowledgeManager:
         return KnowledgeManager()
-
-    def build_checkpoint_processor(self, task_id: TaskId) -> CheckpointProcessor:
-        return CheckpointProcessor.create_for_task(task_id)
 
     # ------------------------------------------------------------------
     # Top-level entry point

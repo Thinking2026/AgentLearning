@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from schemas import ToolResult
-from tools.models import BaseTool, build_tool_output
+from tools.tool_base import BaseTool, build_tool_output
 from utils.time.timezone import isoformat
 
 

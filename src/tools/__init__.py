@@ -16,7 +16,7 @@ from .impl.vector_schema_tool import (
     build_vector_schema_tool_name,
 )
 from .tool_registry import ToolRegistry, create_default_tool_registry, discover_tools
-from .models import BaseTool
+from .tool_base import BaseTool
 
 __all__ = [
     "BaseTool",

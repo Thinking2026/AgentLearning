@@ -119,7 +119,6 @@ class ToolCallFailed(DomainEvent):
     tool_name: str = ""
     error: str = ""
     
-@dataclass(frozen=True)
 class UserCommand(DomainEvent):
     type: UserCommandType
     task_id: str = ""

@@ -7,7 +7,7 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root / "src"))
 
-from driver import AgentApplication
+from demo.demo import Demo
 from config import ConfigReader
 from utils.env_util.env_loader import load_dotenv
 from utils.log.log import Logger, zap
@@ -23,7 +23,7 @@ def main() -> None:
     log_dir = config.get("log.dir", "var/logs")
     logger = Logger.get_instance(log_dir)
     try:
-        application = AgentApplication(config_path)
+        application = Demo(config_path)
         application.run()
     except Exception as exc:
         logger.error(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
-from agent.events.events import CancelRequested, DomainEvent, ExecutionProgressProvided, TaskCancelled, TaskPaused, UserClarificationRequested, UserCommand
+from agent.events.events import DomainEvent, ExecutionProgressProvided, TaskCancelled, TaskPaused, UserClarificationRequested, UserCommand
 from schemas.ids import TaskId, CheckpointId
 from schemas.types import UserCommandType, UserMessage, UserMsgType
 from schemas.task import TaskResult
