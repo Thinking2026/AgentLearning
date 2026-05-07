@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import threading
 from typing import Callable
-from uuid import uuid4
 
 from config import ConfigReader
 from agent.factory.agent_factory import AgentFactory
-from schemas.ids import TaskId
+from agent.application.driver import PipelineDriver
+from infra.eventbus.event_bus import InMemoryEventBus
+from schemas.event_bus import EventBus
 from schemas.types import UserMessage
 from utils.log.log import Logger, zap
 from utils.concurrency.message_queue import UserMessageQueue, TaskQueue, AgentMessageQueue
@@ -30,6 +31,8 @@ class PipelineThread(threading.Thread):
         self._config = config
         self._stop_event = stop_event
         self._stop_callback = stop_callback
+        self._active_driver: PipelineDriver = None
+        self._event_bus: EventBus = InMemoryEventBus()
         try:
             self._logger = Logger.get_instance()
             self._factory = AgentFactory.from_config(config)
@@ -49,7 +52,7 @@ class PipelineThread(threading.Thread):
 
     def run(self) -> None:
         try:
-            self._active_driver = self._factory.build_pipeline_driver(self)
+            self._active_driver = self._factory.build_pipeline_driver(thread=self, event_bus=self._event_bus)
             pipeline = self._factory.build_pipeline()
             self._active_driver.use_pipeline(pipeline)
 
@@ -63,19 +66,18 @@ class PipelineThread(threading.Thread):
                     self._logger.info("PipelineThread received shutdown signal, exiting loop")
                     break
 
-                task_id = TaskId(f"task_{uuid4().hex}")
                 task_description = new_task.content.strip()
-                result = self._active_driver.submit_task(task_id, task_description)
+                result = self._active_driver.submit_task(task_description)
                 if not result.succeeded:
                     self._logger.error(
                         "Task execution failed",
-                        zap.any("task_id", task_id),
+                        zap.any("task_id", result.task_id),
                         zap.any("error", result.error),
                     )
                 else:
                     self._logger.info(
                         "Task execution succeed",
-                        zap.any("task_id", task_id),
+                        zap.any("task_id", result.task_id),
                     )
 
         except Exception as exc:

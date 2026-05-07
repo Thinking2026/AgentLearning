@@ -13,10 +13,12 @@ from agent.events.events import (
     TaskResultProduced,
 )
 from agent.factory.agent_factory import AgentFactory
+from config.config import ConfigReader
 from schemas.event_bus import EventBus
 from schemas.ids import CheckpointId, TaskId
 from schemas.task import Plan, Task, TaskResult
 from schemas.types import ClientMessage
+from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from agent.models.analysis.analyzer import Analyzer
@@ -46,31 +48,35 @@ class Pipeline:
 
     def __init__(
         self,
+        config: ConfigReader,
+        logger: Logger,
         agent_factory: AgentFactory,
-        max_plan_retries: int = 3,
-        max_quality_retries: int = 2,
     ) -> None:
+        self._config = config
         self._agent_factory = agent_factory
-        self._analyzer = self._agent_factory.build_analyzer()
-        self._planner = self._agent_factory.build_planner()
-        self._stage_executor = self._agent_factory.build_stage_executor()
-        self._knowledge_manager = self._agent_factory.build_knowledge_manager()
-        self._knowledge_loader = self._agent_factory.build_knowledge_loader()
-        self._personality_manager = self._agent_factory.build_personality_manager()
-        self._quality_evaluator = self._agent_factory.build_quality_evaluator()
-        self._model_selector = self._agent_factory.build_model_selector()
-        self._tool_registry = self._agent_factory.build_tool_registry()
-        self._llm_gateway = self._agent_factory.build_llm_gateway()
+        self._logger = logger
         self._tracer = self._agent_factory.build_tracer()
 
-        self._max_make_plan_retries = max_plan_retries
-        self._max_task_retries = max_quality_retries
+        self._analyzer = self._agent_factory.build_analyzer()
+        self._context_manager = self._agent_factory.build_context_manager()
+        self._quality_evaluator = self._agent_factory.build_quality_evaluator()
+        self._knowledge_manager = self._agent_factory.build_knowledge_manager()
+        self._knowledge_loader = self._agent_factory.build_knowledge_loader()
+        self._model_selector = self._agent_factory.build_model_selector()
+        self._personality_manager = self._agent_factory.build_personality_manager()
+        self._planner = self._agent_factory.build_planner()
+
+        self._reasoning_manager = self._agent_factory.build_reasoning_manager()
+        self._stage_executor = self._agent_factory.build_stage_executor()
+
+        self._tool_registry = self._agent_factory.build_tool_registry()
+        self._llm_gateway = self._agent_factory.build_llm_gateway()
+
+        self._max_make_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
+        self._max_task_retries=int(self._config.get("agent.max_quality_retries", 2)),
 
         self._task: Task | None = None
         self._session_span: Span | None = None
-
-        # Cross-thread control signals
-        self._cancelled = threading.Event()
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
@@ -79,20 +85,12 @@ class Pipeline:
     def set_event_bus(self, event_bus: EventBus) -> None:
         self._event_bus = event_bus
         self._stage_executor.set_event_bus(event_bus)
-    # ------------------------------------------------------------------
-    # Public control API (thread-safe, called from PipelineThread)
-    # ------------------------------------------------------------------
-
-    @property
-    def stage_executor(self) -> StageExecutor:
-        return self._stage_executor
 
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
     def run(self, task_description: str) -> TaskResult:
-        self._cancelled.clear()
         self._start_session_trace(task_description)
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
@@ -102,6 +100,7 @@ class Pipeline:
             knowledge_loader=self._knowledge_loader,
             personality_manager=self._personality_manager,
             tool_registry=self._tool_registry,
+            config=self._config
         )
         self._task = task
 

@@ -213,6 +213,7 @@ SEARCH_TOOL_TIMEOUT = "SEARCH_TOOL_TIMEOUT"
 SEARCH_TOOL_PROVIDER_ERROR = "SEARCH_TOOL_PROVIDER_ERROR"
 VECTOR_SCHEMA_TOOL_ERROR = "VECTOR_SCHEMA_TOOL_ERROR"
 VECTOR_SEARCH_TOOL_ERROR = "VECTOR_SEARCH_TOOL_ERROR"
+PARAMETER_FORGET_SET = "PARAMETER_FORGET_SET"
 
 class PipelineError(Exception):
     def __init__(self, code: str, message: str) -> None:
@@ -253,6 +254,19 @@ class ToolError(Exception):
 
 def build_tool_error(code: str, message: str) -> ToolError:
     return ToolError(code=code, message=message)
+
+class LogicError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.message}"
+
+
+def build_logic_error(code: str, message: str) -> LogicError:
+    return LogicError(code=code, message=message)
 
 class HttpError(Exception):
     """Raised for HTTP error responses; carries status code and Retry-After."""

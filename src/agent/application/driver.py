@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agent.events.events import DomainEvent, TaskCancelled, TaskPaused, UserClarificationRequested, UserCommand, ALL_EVENTS
+from schemas.errors import PARAMETER_FORGET_SET, build_logic_error
 from schemas.ids import TaskId, CheckpointId
 from schemas.types import UserCommandType, UserMessage, UserMsgType
 from schemas.task import TaskResult
@@ -19,34 +20,31 @@ class PipelineDriver:
 
     def __init__(
         self,
-        loop_user_messages_timeout_seconds: float,
         event_bus: EventBus,
         thread: PipelineThread,
     ) -> None:
-        self._loop_user_messages_timeout_seconds = loop_user_messages_timeout_seconds if loop_user_messages_timeout_seconds > 0 else 0.5
         self._thread = thread
+        self._pipeline: Pipeline = None
         for event_type in ALL_EVENTS:
             event_bus.subscribe(event_type, self.publish_event)
 
     def use_pipeline(self, pipeline: Pipeline) -> None:
         pipeline.set_driver(self)
+        self._pipeline = pipeline
 
     # ------------------------------------------------------------------
     # Task lifecycle entry points
     # ------------------------------------------------------------------
 
-    def submit_task(self, task_description: str, pipeline: Pipeline) -> TaskResult:
+    def submit_task(self, task_description: str) -> TaskResult:
+        if self._pipeline is None:
+            raise build_logic_error(code=PARAMETER_FORGET_SET, message="pipeline is none")
         """Run a task synchronously and return the result."""
-        return pipeline.run(task_description=task_description)
-
-    def submit_task_from_checkpoint(
-        self, task_id: TaskId, checkpoint_id: CheckpointId, pipeline: Pipeline)-> TaskResult:
-        """Restore from the latest checkpoint and resume execution."""
-        return pipeline.continue_from_checkpoint(
-            task_id=task_id, cpt_id=checkpoint_id
-        )
+        return self._pipeline.run(task_description=task_description)
 
     def loop_user_messages(self, timeout: float) -> UserCommand | None:
+        if self._thread is None:
+            raise build_logic_error(code=PARAMETER_FORGET_SET, message="thread is none")
         UserMessage = self._thread.loop_user_message(timeout)
         if UserMessage is not None:
             return self.convert_user_message(UserMessage)

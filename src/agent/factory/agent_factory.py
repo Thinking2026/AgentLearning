@@ -218,42 +218,14 @@ class AgentFactory:
             max_content_length=max_content_length,
         )
 
-    def build_pipeline_driver(self) -> PipelineDriver:
+    def build_pipeline_driver(self, thread: PipelineThread, event_bus: EventBus) -> PipelineDriver:
         return PipelineDriver(
-            loop_user_messages_timeout_seconds=float(self._config.get("agent.loop_user_messages_timeout_seconds", 0.5)),
+            event_bus=event_bus,
+            thread=thread,
         )
 
-    def build_pipeline(
-        self,
-    ) -> Pipeline:
-        """Build a fully-wired Pipeline for a single task."""
-        llm_gateway = self.build_llm_gateway()
-        storage_registry = self.build_storage_registry()
-        tool_registry = self.build_tool_registry(storage_registry)
-        model_selector = self.build_model_selector()
-        quality_evaluator = self.build_quality_evaluator()
-        knowledge_manager = self.build_knowledge_manager()
-        knowledge_loader = self.build_knowledge_loader()
-        personality_manager = self.build_personality_manager()
-        analyzer = self.build_analyzer()
-        planner = self.build_planner()
-        stage_executor = self.build_stage_executor(
-            quality_evaluator, knowledge_loader, planner, llm_gateway, tool_registry
-        )
-        return Pipeline(
-            analyzer=analyzer,
-            planner=planner,
-            stage_executor=stage_executor,
-            knowledge_manager=knowledge_manager,
-            knowledge_loader=knowledge_loader,
-            personality_manager=personality_manager,
-            quality_evaluator=quality_evaluator,
-            model_selector=model_selector,
-            tool_registry=tool_registry,
-            llm_gateway=llm_gateway,
-            max_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
-            max_quality_retries=int(self._config.get("agent.max_quality_retries", 2)),
-        )
+    def build_pipeline(self) -> Pipeline:
+        return Pipeline(config=self._config, agent_factory=self, logger=self._logger)
 
     # ------------------------------------------------------------------
     # Private helpers
