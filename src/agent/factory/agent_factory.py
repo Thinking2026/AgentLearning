@@ -120,15 +120,15 @@ class AgentFactory:
     # ------------------------------------------------------------------
     # Domain objects
     # ------------------------------------------------------------------
-
-    def build_model_selector(self) -> ModelSelector:
-        priority_chain = self._config.get("llm.priority_chain", ["deepseek"])
+    @classmethod
+    def build_model_selector(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> ModelSelector:
+        priority_chain = config.get("llm.priority_chain", ["deepseek"])
         if not isinstance(priority_chain, list) or not priority_chain:
             priority_chain = ["deepseek"]
 
         capabilities: list[LLMProviderCapabilities] = []
         for name in priority_chain:
-            cap_cfg = self._config.get(f"llm.provider_settings.{name}.capabilities", {})
+            cap_cfg = config.get(f"llm.provider_settings.{name}.capabilities", {})
             if not isinstance(cap_cfg, dict):
                 cap_cfg = {}
             capabilities.append(LLMProviderCapabilities(
@@ -139,24 +139,30 @@ class AgentFactory:
                 cost_tier=str(cap_cfg.get("cost_tier", "medium")),
                 latency_tier=str(cap_cfg.get("latency_tier", "medium")),
                 context_size=int(cap_cfg.get("context_size",
-                    self._config.get(f"llm.provider_settings.{name}.context_window", 32000))),
+                    config.get(f"llm.provider_settings.{name}.context_window", 32000))),
             ))
 
         return ModelSelector(
+            config=config,
+            logger=logger,
+            tracer=tracer,
             provider_capabilities=capabilities,
-            enable_fallback=bool(self._config.get("llm.enable_provider_fallback", False)),
+            enable_fallback=bool(config.get("llm.enable_provider_fallback", False)),
         )
 
     def build_context_manager(self) -> ContextManager:
         return ContextManager()
 
-    def build_knowledge_loader(self, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeLoader:
+    @classmethod
+    def build_knowledge_loader(cls, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeLoader:
         return KnowledgeLoader(config=config, logger=logger, tracer=tracer)
 
-    def build_personality_manager(self, config: ConfigReader, logger: Logger, tracer: Tracer) -> PersonalityManager:
+    @classmethod
+    def build_personality_manager(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> PersonalityManager:
         return PersonalityManager(config=config, logger=logger, tracer=tracer)
 
-    def build_analyzer(self, config: ConfigReader, logger: Logger, tracer: Tracer) -> Analyzer:
+    @classmethod
+    def build_analyzer(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> Analyzer:
         return Analyzer(config=config, logger=logger, tracer=tracer)
 
     def build_reasoning_manager(self) -> ReasoningManager:
@@ -191,10 +197,12 @@ class AgentFactory:
     def build_planner(self) -> Planner:
         return Planner()
 
-    def build_quality_evaluator(self, config: ConfigReader, logger: Logger, tracer: Tracer) -> QualityEvaluator:
+    @classmethod
+    def build_quality_evaluator(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> QualityEvaluator:
         return QualityEvaluator(config=config, logger=logger, tracer=tracer)
 
-    def build_knowledge_manager(self, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeManager:
+    @classmethod
+    def build_knowledge_manager(cls, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeManager:
         return KnowledgeManager(config=config, logger=logger, tracer=tracer)
 
     # ------------------------------------------------------------------

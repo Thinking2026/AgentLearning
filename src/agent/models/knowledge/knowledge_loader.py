@@ -26,7 +26,7 @@ Respond with only valid JSON. No markdown fences."""
 
 
 class KnowledgeLoader:
-    def __init__(self, config:ConfigReader, logger:Logger, tracer: Tracer):
+    def __init__(self, config: ConfigReader, logger: Logger, tracer: Tracer):
         self._config = config
         self._logger = logger
         self._tracer = tracer

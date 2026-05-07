@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from config.config import ConfigReader
+from infra.observability.tracing.tracer import Tracer
+from schemas.errors import CONFIG_ERROR, UNKNOWN_LOGIC_ERROR, build_config_error
 from schemas.task import (
     LLMProviderCapabilities,
     ModelRoutingDecision,
@@ -10,6 +13,7 @@ from schemas.task import (
     L1, L2, L3, L4,
 )
 from schemas import LLM_CONFIG_ERROR, build_pipeline_error
+from utils.log.log import Logger
 
 # Ordered from simplest to most complex; used to derive accepted tiers by level.
 _COMPLEXITY_LEVELS = [L1, L2, L3, L4]
@@ -202,12 +206,18 @@ class ModelSelector:
 
     def __init__(
         self,
+        config: ConfigReader, 
+        logger: Logger, 
+        tracer: Tracer,
         provider_capabilities: list[LLMProviderCapabilities],
         strategy: RoutingStrategy | None = None,
         enable_fallback: bool = False,
     ) -> None:
         if not provider_capabilities:
             raise build_pipeline_error(LLM_CONFIG_ERROR, "provider_capabilities cannot be empty")
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
         self._capabilities = provider_capabilities
         self._strategy: RoutingStrategy = strategy or CapabilityMatchStrategy()
         self._enable_fallback = enable_fallback
@@ -227,11 +237,11 @@ class ModelSelector:
         excluded = excluded_providers or set()
         candidates = [c for c in self._capabilities if c.name not in excluded]
         if not candidates:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "no available providers after applying exclusions")
+            raise build_config_error(CONFIG_ERROR, "no available providers after applying exclusions")
 
         ordered = self._strategy.select(task, candidates)
         if not ordered:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "routing strategy returned an empty provider list")
+            raise build_pipeline_error(UNKNOWN_LOGIC_ERROR, "routing strategy returned an empty provider list")
 
         primary = ordered[0]
         fallbacks = ordered[1:] if use_fallback else []
