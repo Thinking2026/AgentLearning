@@ -15,7 +15,7 @@ from agent.events.events import (
 from agent.factory.agent_factory import AgentFactory
 from config.config import ConfigReader
 from schemas.event_bus import EventBus
-from schemas.ids import CheckpointId, TaskId
+from schemas.ids import CheckpointId, TaskId, UserId
 from schemas.task import Plan, Task, TaskResult
 from schemas.types import ClientMessage
 from utils.log.log import Logger
@@ -57,20 +57,20 @@ class Pipeline:
         self._logger = logger
         self._tracer = self._agent_factory.build_tracer()
 
-        self._analyzer = self._agent_factory.build_analyzer()
-        self._context_manager = self._agent_factory.build_context_manager()
-        self._quality_evaluator = self._agent_factory.build_quality_evaluator()
-        self._knowledge_manager = self._agent_factory.build_knowledge_manager()
-        self._knowledge_loader = self._agent_factory.build_knowledge_loader()
-        self._model_selector = self._agent_factory.build_model_selector()
-        self._personality_manager = self._agent_factory.build_personality_manager()
-        self._planner = self._agent_factory.build_planner()
+        self._analyzer = self._agent_factory.build_analyzer(self._config, self._logger, self._tracer)
+        self._context_manager = self._agent_factory.build_context_manager(self._config, self._logger, self._tracer)#TODO
+        self._quality_evaluator = self._agent_factory.build_quality_evaluator(self._config, self._logger, self._tracer)
+        self._knowledge_manager = self._agent_factory.build_knowledge_manager(self._config, self._logger, self._tracer)
+        self._knowledge_loader = self._agent_factory.build_knowledge_loader(self._config, self._logger, self._tracer)
+        self._model_selector = self._agent_factory.build_model_selector(self._config, self._logger, self._tracer)
+        self._personality_manager = self._agent_factory.build_personality_manager(self._config, self._logger, self._tracer)
+        self._planner = self._agent_factory.build_planner(self._config, self._logger, self._tracer)
 
-        self._reasoning_manager = self._agent_factory.build_reasoning_manager()
-        self._stage_executor = self._agent_factory.build_stage_executor()
+        self._reasoning_manager = self._agent_factory.build_reasoning_manager(self._config, self._logger, self._tracer)
+        self._stage_executor = self._agent_factory.build_stage_executor(self._config, self._logger, self._tracer)
 
-        self._tool_registry = self._agent_factory.build_tool_registry()
-        self._llm_gateway = self._agent_factory.build_llm_gateway()
+        self._tool_registry = self._agent_factory.build_tool_registry(self._config, self._logger, self._tracer)
+        self._llm_gateway = self._agent_factory.build_llm_gateway(self._config, self._logger, self._tracer)
 
         self._max_make_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
         self._max_task_retries=int(self._config.get("agent.max_quality_retries", 2)),
@@ -90,22 +90,22 @@ class Pipeline:
     # Main entry point
     # ------------------------------------------------------------------
 
-    def run(self, task_description: str) -> TaskResult:
+    def run(self, user_id: UserId, task_description: str) -> TaskResult:
         self._start_session_trace(task_description)
 
         # ── 1.1 分析Task特征 ──────────────────────────────────────────
         task = self._analyzer.analyze(
+            user_id=user_id,
             task_description=task_description,
             llm_gateway=self._llm_gateway,
             knowledge_loader=self._knowledge_loader,
             personality_manager=self._personality_manager,
             tool_registry=self._tool_registry,
-            config=self._config
         )
         self._task = task
 
         # 1.1.4 发布"分析报告已出"事件
-        self._pipeline_driver.publish_event(
+        self._event_bus.publish(
             TaskAnalysisCompleted(task_id=task.id, content=task.intent)
         )
         # ── 1.2 根据Task特征匹配处理模型 ──────────────────────────────
@@ -116,18 +116,18 @@ class Pipeline:
         plan = self._planner.make_plan(task, self._llm_gateway, self._quality_evaluator, self._pipeline_driver)
         if plan is None:
             event = TaskExecutionFailed(task_id=task.id, content="Failed to produce a valid plan")
-            self._pipeline_driver.publish_event(event)
+            self._event_bus.publish(event)
             result = self._failed_result(task.id, "Failed to produce a valid plan after retries")
             self._finish_session_trace(error=result.error_reason or None)
             return result
 
         # 1.3.2.1.1 发布"执行计划已确定"事件
-        self._pipeline_driver.publish_event(
+        self._event_bus.publish(
             ExecutionPlanFinalized(task_id=task.id, plan_id=plan.id, content="")
         )
 
         # ── 1.4 发布"Task已开始执行"事件 ─────────────────────────────
-        self._pipeline_driver.publish_event(
+        self._event_bus.publish(
             TaskExecutionStarted(task_id=task.id, content="")
         )
 
@@ -139,7 +139,7 @@ class Pipeline:
             # 1.5.2 执行失败
             if raw_result is None:
                 event = TaskExecutionFailed(task_id=task.id, content="Stage execution failed")
-                self._pipeline_driver.publish_event(event)
+                self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Stage execution failed")
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
@@ -155,7 +155,7 @@ class Pipeline:
                 # 1.5.1.1.2 从用户建议里总结用户偏好并落地
                 self._extract_preferences_async(task_description)
                 # 1.5.1.1.3 发布"Task执行结果信息"事件
-                self._pipeline_driver.publish_event(
+                self._event_bus.publish(
                     TaskResultProduced(task_id=task.id, content=raw_result)
                 )
                 result = TaskResult(
@@ -174,7 +174,7 @@ class Pipeline:
                 event = TaskExecutionFailed(
                     task_id=task.id, content="Quality check failed after retries"
                 )
-                self._pipeline_driver.publish_event(event)
+                self._event_bus.publish(event)
                 result = self._failed_result(task.id, "Quality check failed after retries")
                 self._finish_session_trace(error=result.error_reason or None)
                 return result

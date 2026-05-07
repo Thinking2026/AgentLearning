@@ -66,8 +66,8 @@ class PipelineThread(threading.Thread):
                     self._logger.info("PipelineThread received shutdown signal, exiting loop")
                     break
 
-                task_description = new_task.content.strip()
-                result = self._active_driver.submit_task(task_description)
+                result = self._active_driver.submit_task(user_id=new_task.user_id, 
+                                task_description=new_task.content.strip())
                 if not result.succeeded:
                     self._logger.error(
                         "Task execution failed",

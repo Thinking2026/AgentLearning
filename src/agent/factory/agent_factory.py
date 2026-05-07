@@ -150,14 +150,14 @@ class AgentFactory:
     def build_context_manager(self) -> ContextManager:
         return ContextManager()
 
-    def build_knowledge_loader(self) -> KnowledgeLoader:
-        return KnowledgeLoader()
+    def build_knowledge_loader(self, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeLoader:
+        return KnowledgeLoader(config=config, logger=logger, tracer=tracer)
 
-    def build_personality_manager(self) -> PersonalityManager:
-        return PersonalityManager()
+    def build_personality_manager(self, config: ConfigReader, logger: Logger, tracer: Tracer) -> PersonalityManager:
+        return PersonalityManager(config=config, logger=logger, tracer=tracer)
 
-    def build_analyzer(self) -> Analyzer:
-        return Analyzer()
+    def build_analyzer(self, config: ConfigReader, logger: Logger, tracer: Tracer) -> Analyzer:
+        return Analyzer(config=config, logger=logger, tracer=tracer)
 
     def build_reasoning_manager(self) -> ReasoningManager:
         gateway = self.build_llm_gateway()
@@ -191,11 +191,11 @@ class AgentFactory:
     def build_planner(self) -> Planner:
         return Planner()
 
-    def build_quality_evaluator(self) -> QualityEvaluator:
-        return QualityEvaluator()
+    def build_quality_evaluator(self, config: ConfigReader, logger: Logger, tracer: Tracer) -> QualityEvaluator:
+        return QualityEvaluator(config=config, logger=logger, tracer=tracer)
 
-    def build_knowledge_manager(self) -> KnowledgeManager:
-        return KnowledgeManager()
+    def build_knowledge_manager(self, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeManager:
+        return KnowledgeManager(config=config, logger=logger, tracer=tracer)
 
     # ------------------------------------------------------------------
     # Top-level entry point

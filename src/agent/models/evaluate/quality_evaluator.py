@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from infra.observability.tracing.tracer import Tracer
 from schemas.task import EvaluationReport, EvaluationTarget, Plan, PlanStep, Task
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.time.timezone import now
@@ -16,13 +17,16 @@ if TYPE_CHECKING:
 
 class QualityEvaluator:
     """Evaluates task results, stage results, and execution plans via LLM."""
+    def __init__(self, config:ConfigReader, logger:Logger, tracer: Tracer):
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
 
     def evaluate_plan(
         self,
         task: Task,
         plan: Plan,
         llmgateway: LLMGateway,
-        config: ConfigReader | None = None,
     ) -> EvaluationReport:
         steps_text = "\n".join(
             f"  Step {s.order}: goal={s.goal}, description={s.description}"
@@ -39,14 +43,14 @@ class QualityEvaluator:
             f"- clarification_question: string (the specific question to ask; empty string if not needed)\n\n"
             f"Respond with only valid JSON."
         )
-        provider = config.get("llm.quality_provider", ["deepseek"])[0] if config else "deepseek"
+        provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
             response = llmgateway.generate(
                 UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
                 provider,
             )
         except Exception as exc:
-            Logger.get_instance().error("Error occurred while evaluating plan",zap.any("error", exc))
+            self._logger.error("Error occurred while evaluating plan", zap.any("error", exc))
             raise
 
         passed, feedback, need_clarification, clarification_question = _parse_plan_review(
@@ -67,7 +71,6 @@ class QualityEvaluator:
         task: Task,
         result: str,
         llmgateway: LLMGateway,
-        config: ConfigReader | None = None,
     ) -> EvaluationReport:
         prompt = (
             f"Evaluate whether the following result satisfies the task requirements.\n"
@@ -78,14 +81,14 @@ class QualityEvaluator:
             f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
             f"Respond with only valid JSON."
         )
-        provider = config.get("llm.quality_provider", ["deepseek"])[0] if config else "deepseek"
+        provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
             response = llmgateway.generate(
                 UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
                 provider,
             )
         except Exception as exc:
-            Logger.get_instance().error("Error occurred while evaluating task result", zap.any("error", exc))
+            self._logger.error("Error occurred while evaluating task result", zap.any("error", exc))
             raise
 
         passed, feedback = _parse_evaluation(response.assistant_message.content)
@@ -102,7 +105,6 @@ class QualityEvaluator:
         step: PlanStep,
         result: str,
         llmgateway: LLMGateway,
-        config: ConfigReader | None = None,
     ) -> EvaluationReport:
         prompt = (
             f"Evaluate whether the following result achieves the step goal.\n"
@@ -114,14 +116,14 @@ class QualityEvaluator:
             f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
             f"Respond with only valid JSON."
         )
-        provider = config.get("llm.quality_provider", ["deepseek"])[0] if config else "deepseek"
+        provider = self._config.get("llm.quality_provider", ["deepseek"])[0] if self._config else "deepseek"
         try:
             response = llmgateway.generate(
                 UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
                 provider,
             )
         except Exception as exc:
-            Logger.get_instance().error("Error occurred while evaluating stage result", zap.any("error", exc))
+            self._logger.error("Error occurred while evaluating stage result", zap.any("error", exc))
             raise
 
         passed, feedback = _parse_evaluation(response.assistant_message.content)

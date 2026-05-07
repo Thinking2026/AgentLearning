@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from agent.events.events import DomainEvent, TaskCancelled, TaskPaused, UserClarificationRequested, UserCommand, ALL_EVENTS
 from schemas.errors import PARAMETER_FORGET_SET, build_logic_error
-from schemas.ids import TaskId, CheckpointId
+from schemas.ids import TaskId, CheckpointId, UserId
 from schemas.types import UserCommandType, UserMessage, UserMsgType
 from schemas.task import TaskResult
 from schemas.event_bus import EventBus
@@ -36,11 +36,11 @@ class PipelineDriver:
     # Task lifecycle entry points
     # ------------------------------------------------------------------
 
-    def submit_task(self, task_description: str) -> TaskResult:
+    def submit_task(self, user_id: UserId, task_description: str) -> TaskResult:
         if self._pipeline is None:
             raise build_logic_error(code=PARAMETER_FORGET_SET, message="pipeline is none")
         """Run a task synchronously and return the result."""
-        return self._pipeline.run(task_description=task_description)
+        return self._pipeline.run(user_id=user_id, task_description=task_description)
 
     def loop_user_messages(self, timeout: float) -> UserCommand | None:
         if self._thread is None:

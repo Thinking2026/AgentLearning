@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from infra.observability.tracing.tracer import Tracer
 from schemas.task import KnowledgeEntry, Task
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
+from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from config.config import ConfigReader
@@ -24,15 +26,17 @@ Respond with only valid JSON. No markdown fences."""
 
 
 class KnowledgeLoader:
-    def __init__(self) -> None:
+    def __init__(self, config:ConfigReader, logger:Logger, tracer: Tracer):
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
         self._file_handler = file_handler
 
     def _knowledge_path(self) -> Path:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
 
     def query_related_knowledge(
-        self, task: Task, llm_gateway: LLMGateway, config: ConfigReader | None = None
-    ) -> list[KnowledgeEntry] | None:
+        self, task: Task, llm_gateway: LLMGateway) -> list[KnowledgeEntry] | None:
         path = self._knowledge_path()
         if not self._file_handler.exists(path):
             return None
@@ -61,7 +65,7 @@ class KnowledgeLoader:
             f"Stored knowledge entries (index: JSON):\n{entries_block}"
         )
         try:
-            provider = config.get("llm.summary_providers", ["deepseek"])[0] if config else "deepseek"
+            provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=prompt)],

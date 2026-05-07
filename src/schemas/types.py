@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Literal
 
 from schemas.errors import PipelineError
-from schemas.ids import CheckpointId, TaskId
+from schemas.ids import CheckpointId, TaskId, UserId
 
 #本文件引入的类型只能依赖内置类型或者文件中已经引入的类型，不能依赖其他文件中定义的类型，否则会导致循环依赖问题
 
@@ -129,7 +129,7 @@ class UserMessage:
     """Normalised command produced by PipelineDriver from a raw UIMessage."""
     msg_type: UserMsgType
     task_id: TaskId | None
-    user_id: int
+    user_id: UserId | None
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
 

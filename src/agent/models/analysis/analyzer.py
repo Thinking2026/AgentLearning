@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from infra.observability.tracing.tracer import Tracer
+from schemas.errors import JSON_LOAD_ERROR, build_json_error
 from schemas.ids import TaskId, UserId
 from schemas.task import (
     RelatedKnowledgeEntry,
@@ -16,6 +17,7 @@ from schemas.task import (
 )
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger, zap
+from utils.time.timezone import now
 
 if TYPE_CHECKING:
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader
@@ -42,32 +44,31 @@ Return a JSON object with the following keys:
 Respond with only valid JSON. No markdown fences."""
 
 
-class AnalysisError(Exception):
-    """Raised when task analysis fails."""
-
-
 class Analyzer:
     """Extracts task features via LLM and enriches the Task with knowledge and preferences."""
 
+    def __init__(self, config:ConfigReader, logger:Logger, tracer: Tracer):
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
+
     def analyze(
         self,
+        user_id: UserId,
         task_description: str,
         llm_gateway: LLMGateway,
         knowledge_loader: KnowledgeLoader,
         personality_manager: PersonalityManager,
         tool_registry: ToolRegistry,
-        config: ConfigReader | None = None,
     ) -> Task:
-        logger = Logger.get_instance()
-
         tool_names = [schema["function"]["name"] for schema in tool_registry.get_tool_schemas()]
-        features = self._extract_features(task_description, tool_names, llm_gateway, config)
+        features = self._extract_features(task_description, tool_names, llm_gateway)
 
         task = Task(
             id=TaskId(str(uuid4())),
-            user_id=UserId("unknown"),
+            user_id=user_id,
             description=task_description,
-            created_at=datetime.now(timezone.utc),
+            created_at=now(),
             status=TaskStatus.CREATED,
             task_type=features.get("task_type", ""),
             intent=features.get("intent", ""),
@@ -82,8 +83,8 @@ class Analyzer:
             notes=features.get("notes", ""),
         )
 
-        preference_entries = personality_manager.query_related_user_preference(task, llm_gateway, config)
-        knowledge_entries = knowledge_loader.query_related_knowledge(task, llm_gateway, config)
+        preference_entries = personality_manager.query_related_user_preference(task, llm_gateway)
+        knowledge_entries = knowledge_loader.query_related_knowledge(task, llm_gateway)
 
         related_preferences = [
             RelatedUserPreferenceEntry(entry=e, confidence=1.0)
@@ -111,7 +112,7 @@ class Analyzer:
             related_knowledge_entries=related_knowledge,
         )
 
-        logger.info(
+        self._logger.info(
             "Task analysis complete",
             zap.any("task_id", enriched_task.id),
             zap.any("task_type", enriched_task.task_type),
@@ -127,14 +128,13 @@ class Analyzer:
         task_description: str,
         tool_names: list[str],
         llm_gateway: LLMGateway,
-        config: ConfigReader | None = None,
     ) -> dict:
         tools_block = ", ".join(tool_names) if tool_names else "(none)"
         prompt = (
             f"Task description:\n{task_description}\n\n"
             f"Available tools: {tools_block}"
         )
-        provider = config.get("llm.analyzer_provider", ["deepseek"])[0] if config else "deepseek"
+        provider = self._config.get("llm.analyzer_provider", ["deepseek"])[0] if self._config else "deepseek"
         response = llm_gateway.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
@@ -151,8 +151,8 @@ class Analyzer:
             content = "\n".join(inner)
         try:
             return json.loads(content)
-        except Exception as exc:
-            raise AnalysisError(f"Failed to parse LLM analysis response: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise build_json_error(code=JSON_LOAD_ERROR, message=f"Failed to parse LLM analysis response: {exc}")
 
 
 def _parse_reasoning_depth(value: str) -> ReasoningType:

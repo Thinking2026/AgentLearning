@@ -5,10 +5,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from infra.observability.tracing.tracer import Tracer
 from schemas.task import KnowledgeEntry, Task
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
+from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from config.config import ConfigReader
@@ -33,16 +35,18 @@ Respond with only valid JSON. No markdown fences."""
 
 
 class KnowledgeManager:
-    def __init__(self) -> None:
+    def __init__(self, config:ConfigReader, logger:Logger, tracer: Tracer):
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
         self._file_handler = file_handler
 
     def _knowledge_path(self) -> Path:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
 
     def extract_and_save(
-        self, task_summary: str, llm_gateway: LLMGateway, config: ConfigReader | None = None
-    ) -> list[KnowledgeEntry] | None:
-        provider = config.get("llm.summary_providers", ["deepseek"])[0] if config else "deepseek"
+        self, task_summary: str, llm_gateway: LLMGateway) -> list[KnowledgeEntry] | None:
+        provider = self._config.get("llm.summary_providers", ["deepseek"])[0] if self._config else "deepseek"
         response = llm_gateway.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=task_summary)],

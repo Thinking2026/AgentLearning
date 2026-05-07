@@ -121,7 +121,7 @@ class Planner:
             prompt = self._build_make_plan_prompt(context, extra_context)
             plan = self._call_llm_for_plan(task.id, prompt, llm_api, config=config)
 
-            report = evaluator.evaluate_plan(task, plan, llm_api, config)
+            report = evaluator.evaluate_plan(task, plan, llm_api)
 
             if report.need_user_clarification:
                 # Publish clarification event then mock the user's reply.
