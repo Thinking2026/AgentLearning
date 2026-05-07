@@ -10,6 +10,7 @@ from utils.time.timezone import now
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
+    from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
 
@@ -21,6 +22,7 @@ class QualityEvaluator:
         task: Task,
         plan: Plan,
         llmgateway: LLMGateway,
+        config: ConfigReader | None = None,
     ) -> EvaluationReport:
         steps_text = "\n".join(
             f"  Step {s.order}: goal={s.goal}, description={s.description}"
@@ -37,9 +39,11 @@ class QualityEvaluator:
             f"- clarification_question: string (the specific question to ask; empty string if not needed)\n\n"
             f"Respond with only valid JSON."
         )
+        provider = config.get("llm.quality_provider", ["deepseek"])[0] if config else "deepseek"
         try:
             response = llmgateway.generate(
-                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                provider,
             )
         except Exception as exc:
             Logger.get_instance().error("Error occurred while evaluating plan",zap.any("error", exc))
@@ -63,6 +67,7 @@ class QualityEvaluator:
         task: Task,
         result: str,
         llmgateway: LLMGateway,
+        config: ConfigReader | None = None,
     ) -> EvaluationReport:
         prompt = (
             f"Evaluate whether the following result satisfies the task requirements.\n"
@@ -73,9 +78,11 @@ class QualityEvaluator:
             f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
             f"Respond with only valid JSON."
         )
+        provider = config.get("llm.quality_provider", ["deepseek"])[0] if config else "deepseek"
         try:
             response = llmgateway.generate(
-                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                provider,
             )
         except Exception as exc:
             Logger.get_instance().error("Error occurred while evaluating task result", zap.any("error", exc))
@@ -95,6 +102,7 @@ class QualityEvaluator:
         step: PlanStep,
         result: str,
         llmgateway: LLMGateway,
+        config: ConfigReader | None = None,
     ) -> EvaluationReport:
         prompt = (
             f"Evaluate whether the following result achieves the step goal.\n"
@@ -106,9 +114,11 @@ class QualityEvaluator:
             f"- feedback: string (improvement suggestions if not passed, empty string if passed)\n\n"
             f"Respond with only valid JSON."
         )
+        provider = config.get("llm.quality_provider", ["deepseek"])[0] if config else "deepseek"
         try:
             response = llmgateway.generate(
-                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)])
+                UnifiedLLMRequest(messages=[LLMMessage(role="user", content=prompt)]),
+                provider,
             )
         except Exception as exc:
             Logger.get_instance().error("Error occurred while evaluating stage result", zap.any("error", exc))

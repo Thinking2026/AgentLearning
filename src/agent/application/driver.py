@@ -23,9 +23,6 @@ class PipelineDriver:
     ) -> None:
         self._loop_user_messages_timeout_seconds = loop_user_messages_timeout_seconds
 
-    def set_pipeline(self, pipeline: Pipeline) -> None:
-        self._pipeline = pipeline
-
     def set_thread(self, thread: PipelineThread) -> None:
         self._thread = thread   
 
@@ -33,14 +30,14 @@ class PipelineDriver:
     # Task lifecycle entry points
     # ------------------------------------------------------------------
 
-    def submit_task(self, task_description: str) -> TaskResult:
+    def submit_task(self, task_description: str, pipeline: Pipeline) -> TaskResult:
         """Run a task synchronously and return the result."""
-        return self._pipeline.run(task_description=task_description)
+        return pipeline.run(task_description=task_description)
 
     def submit_task_from_checkpoint(
-        self, task_id: TaskId, checkpoint_id: CheckpointId)-> TaskResult:
+        self, task_id: TaskId, checkpoint_id: CheckpointId, pipeline: Pipeline)-> TaskResult:
         """Restore from the latest checkpoint and resume execution."""
-        return self._pipeline.continue_from_checkpoint(
+        return pipeline.continue_from_checkpoint(
             task_id=task_id, cpt_id=checkpoint_id
         )
 

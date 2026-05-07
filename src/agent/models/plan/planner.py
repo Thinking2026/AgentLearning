@@ -18,6 +18,7 @@ from agent.events.events import UserClarificationRequested
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
+    from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
 _MAX_PLAN_RETRIES = 3
@@ -105,6 +106,7 @@ class Planner:
         llm_api: LLMGateway,
         evaluator: QualityEvaluator,
         driver: PipelineDriver,
+        config: ConfigReader | None = None,
     ) -> Plan:
         """Generate a plan for *task*, evaluate it, and retry on failure.
 
@@ -117,9 +119,9 @@ class Planner:
 
         for attempt in range(1, _MAX_PLAN_RETRIES + 1):
             prompt = self._build_make_plan_prompt(context, extra_context)
-            plan = self._call_llm_for_plan(task.id, prompt, llm_api)
+            plan = self._call_llm_for_plan(task.id, prompt, llm_api, config=config)
 
-            report = evaluator.evaluate_plan(task, plan, llm_api)
+            report = evaluator.evaluate_plan(task, plan, llm_api, config)
 
             if report.need_user_clarification:
                 # Publish clarification event then mock the user's reply.
@@ -166,6 +168,7 @@ class Planner:
         task: Task,
         feedback: str,
         llm_api: LLMGateway,
+        config: ConfigReader | None = None,
     ) -> Plan:
         """Regenerate the full plan for *task* incorporating *feedback*."""
         context = _task_context(task)
@@ -174,7 +177,7 @@ class Planner:
             f"The previous plan was unsatisfactory. Feedback:\n{feedback}\n\n"
             f"Produce a revised execution plan."
         )
-        plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=_RENEW_PLAN_SYSTEM_PROMPT)
+        plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=_RENEW_PLAN_SYSTEM_PROMPT, config=config)
         Logger.get_instance().info(
             "Plan renewed",
             zap.any("task_id", task.id),
@@ -187,6 +190,7 @@ class Planner:
         step: PlanStep,
         feedback: str,
         llm_api: LLMGateway,
+        config: ConfigReader | None = None,
     ) -> PlanStep:
         """Regenerate a single *step* incorporating *feedback*."""
         prompt = (
@@ -197,11 +201,13 @@ class Planner:
             f"Feedback: {feedback}\n\n"
             f"Produce a revised step."
         )
+        provider = config.get("llm.plan_provider", ["deepseek"])[0] if config else "deepseek"
         response = llm_api.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=_RENEW_STEP_SYSTEM_PROMPT,
-            )
+            ),
+            provider,
         )
         try:
             raw = json.loads(response.assistant_message.content.strip())
@@ -234,12 +240,15 @@ class Planner:
         prompt: str,
         llm_api: LLMGateway,
         system: str = _MAKE_PLAN_SYSTEM_PROMPT,
+        config: ConfigReader | None = None,
     ) -> Plan:
+        provider = config.get("llm.plan_provider", ["deepseek"])[0] if config else "deepseek"
         response = llm_api.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=system,
-            )
+            ),
+            provider,
         )
         try:
             raw_steps = _parse_steps(response.assistant_message.content)

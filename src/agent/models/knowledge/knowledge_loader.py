@@ -10,6 +10,7 @@ from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
 
 if TYPE_CHECKING:
+    from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
 _KNOWLEDGE_FILE_SUBPATH = Path("var") / "knowledge" / "knowledge.json"
@@ -30,7 +31,7 @@ class KnowledgeLoader:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
 
     def query_related_knowledge(
-        self, task: Task, llm_gateway: LLMGateway
+        self, task: Task, llm_gateway: LLMGateway, config: ConfigReader | None = None
     ) -> list[KnowledgeEntry] | None:
         path = self._knowledge_path()
         if not self._file_handler.exists(path):
@@ -60,13 +61,15 @@ class KnowledgeLoader:
             f"Stored knowledge entries (index: JSON):\n{entries_block}"
         )
         try:
+            provider = config.get("llm.summary_providers", ["deepseek"])[0] if config else "deepseek"
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=prompt)],
                     system_prompt=_QUERY_SYSTEM_PROMPT,
                     max_tokens=256,
                     temperature=0.0,
-                )
+                ),
+                provider,
             )
             indices = _parse_index_list(response.assistant_message.content)
             matched = [all_entries[i] for i in indices if 0 <= i < len(all_entries)]

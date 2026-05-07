@@ -222,7 +222,7 @@ class AgentFactory:
 
     def build_pipeline(
         self,
-        pipeline_driver: PipelineDriver | None = None,
+        driver: PipelineDriver | None = None,
     ) -> Pipeline:
         """Build a fully-wired Pipeline for a single task."""
         primary = self._primary_provider_name()
@@ -239,12 +239,12 @@ class AgentFactory:
         stage_executor = self.build_stage_executor(
             primary, quality_evaluator, knowledge_loader, planner, llm_gateway, tool_registry
         )
-        stage_executor.set_driver(pipeline_driver)
+        stage_executor.set_driver(driver)
 
         return Pipeline(
             analyzer=analyzer,
             planner=planner,
-            pipeline_driver=pipeline_driver,
+            pipeline_driver=driver,
             stage_executor=stage_executor,
             knowledge_manager=knowledge_manager,
             knowledge_loader=knowledge_loader,

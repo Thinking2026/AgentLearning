@@ -353,7 +353,7 @@ class StageExecutor:
             try:
                 unified_llm_request = self._context_manager.get_context_window(provider_name)
                 # ── 2. Call LLM ────────────────────────────────────────────
-                decision = self._reasoning_manager.reason_once(unified_llm_request)
+                decision = self._reasoning_manager.reason_once(unified_llm_request, provider_name)
             except LLMNormalizedError as exc:
                 if exc.caller_action == CallerAction.FATAL:
                     stage.fail(f"Fatal LLM error: {exc.message}")

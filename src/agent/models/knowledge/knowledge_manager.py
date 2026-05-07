@@ -11,6 +11,7 @@ from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
 
 if TYPE_CHECKING:
+    from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
 _COMPACT_THRESHOLD_BYTES = 128 * 1024  # 128 KB
@@ -39,15 +40,17 @@ class KnowledgeManager:
         return get_project_root() / _KNOWLEDGE_FILE_SUBPATH
 
     def extract_and_save(
-        self, task_summary: str, llm_gateway: LLMGateway
+        self, task_summary: str, llm_gateway: LLMGateway, config: ConfigReader | None = None
     ) -> list[KnowledgeEntry] | None:
+        provider = config.get("llm.summary_providers", ["deepseek"])[0] if config else "deepseek"
         response = llm_gateway.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=task_summary)],
                 system_prompt=_EXTRACT_SYSTEM_PROMPT,
                 max_tokens=1024,
                 temperature=0.0,
-            )
+            ),
+            provider,
         )
         entries = _parse_knowledge_list(response.assistant_message.content)
         if not entries:

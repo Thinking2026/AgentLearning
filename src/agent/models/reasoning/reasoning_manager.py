@@ -31,9 +31,10 @@ class ReasoningManager:
     def reason_once(
         self,
         raw_request: UnifiedLLMRequest,
+        provider_name: str,
     ) -> NextDecision:
         request = self._strategy.build_llm_request(raw_request)
-        response = self._llm_gateway.generate(request)
+        response = self._llm_gateway.generate(request, provider_name)
         return self._strategy.parse_llm_response(response)
 
     def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:

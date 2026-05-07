@@ -20,6 +20,7 @@ from utils.log.log import Logger, zap
 if TYPE_CHECKING:
     from agent.models.knowledge.knowledge_loader import KnowledgeLoader
     from agent.models.personality.user_preference import PersonalityManager
+    from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
     from tools.tool_registry import ToolRegistry
 
@@ -55,11 +56,12 @@ class Analyzer:
         knowledge_loader: KnowledgeLoader,
         personality_manager: PersonalityManager,
         tool_registry: ToolRegistry,
+        config: ConfigReader | None = None,
     ) -> Task:
         logger = Logger.get_instance()
 
         tool_names = [schema["function"]["name"] for schema in tool_registry.get_tool_schemas()]
-        features = self._extract_features(task_description, tool_names, llm_gateway)
+        features = self._extract_features(task_description, tool_names, llm_gateway, config)
 
         task = Task(
             id=TaskId(str(uuid4())),
@@ -80,8 +82,8 @@ class Analyzer:
             notes=features.get("notes", ""),
         )
 
-        preference_entries = personality_manager.query_related_user_preference(task, llm_gateway)
-        knowledge_entries = knowledge_loader.query_related_knowledge(task, llm_gateway)
+        preference_entries = personality_manager.query_related_user_preference(task, llm_gateway, config)
+        knowledge_entries = knowledge_loader.query_related_knowledge(task, llm_gateway, config)
 
         related_preferences = [
             RelatedUserPreferenceEntry(entry=e, confidence=1.0)
@@ -125,19 +127,22 @@ class Analyzer:
         task_description: str,
         tool_names: list[str],
         llm_gateway: LLMGateway,
+        config: ConfigReader | None = None,
     ) -> dict:
         tools_block = ", ".join(tool_names) if tool_names else "(none)"
         prompt = (
             f"Task description:\n{task_description}\n\n"
             f"Available tools: {tools_block}"
         )
+        provider = config.get("llm.analyzer_provider", ["deepseek"])[0] if config else "deepseek"
         response = llm_gateway.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 system_prompt=_ANALYZE_SYSTEM_PROMPT,
                 max_tokens=512,
                 temperature=0.0,
-            )
+            ),
+            provider,
         )
         content = response.assistant_message.content.strip()
         if content.startswith("```"):

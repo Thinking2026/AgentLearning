@@ -10,6 +10,7 @@ from utils.env_util.runtime_env import get_project_root
 import utils.file.file as file_handler
 
 if TYPE_CHECKING:
+    from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
 _COMPACT_THRESHOLD_BYTES = 64 * 1024  # 64 KB
@@ -44,15 +45,17 @@ class PersonalityManager:
         return get_project_root() / _PREFERENCE_FILE_SUBPATH
 
     def extract_and_save_user_preference(
-        self, input: str, llm_gateway: LLMGateway
+        self, input: str, llm_gateway: LLMGateway, config: ConfigReader | None = None
     ) -> list[UserPreferenceEntry] | None:
+        provider = config.get("llm.summary_providers", ["deepseek"])[0] if config else "deepseek"
         response = llm_gateway.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=input)],
                 system_prompt=_EXTRACT_SYSTEM_PROMPT,
                 max_tokens=512,
                 temperature=0.0,
-            )
+            ),
+            provider,
         )
         entries = _parse_preference_list(response.assistant_message.content)
         if not entries:
@@ -65,7 +68,7 @@ class PersonalityManager:
         return entries
 
     def query_related_user_preference(
-        self, task: Task, llm_gateway: LLMGateway
+        self, task: Task, llm_gateway: LLMGateway, config: ConfigReader | None = None
     ) -> list[UserPreferenceEntry] | None:
         path = self._preference_path()
         if not self._file_handler.exists(path):
@@ -95,13 +98,15 @@ class PersonalityManager:
             f"Stored preferences (index: JSON):\n{preferences_block}"
         )
         try:
+            provider = config.get("llm.summary_providers", ["deepseek"])[0] if config else "deepseek"
             response = llm_gateway.generate(
                 UnifiedLLMRequest(
                     messages=[LLMMessage(role="user", content=prompt)],
                     system_prompt=_QUERY_SYSTEM_PROMPT,
                     max_tokens=256,
                     temperature=0.0,
-                )
+                ),
+                provider,
             )
             indices = _parse_index_list(response.assistant_message.content)
             matched = [all_entries[i] for i in indices if 0 <= i < len(all_entries)]

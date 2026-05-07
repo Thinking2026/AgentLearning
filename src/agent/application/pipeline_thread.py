@@ -70,9 +70,8 @@ class PipelineThread(threading.Thread):
                 task_description = user_message.content.strip()
 
                 pipeline = self._factory.build_pipeline(self._active_driver)
-                self._active_driver.set_pipeline(pipeline)
                 # Build a fresh Pipeline + Driver for each task
-                result = self._active_driver.submit_task(task_id, task_description)
+                result = self._active_driver.submit_task(task_id, task_description, self._active_driver)
                 if not result.succeeded:
                     self._logger.error(
                         "Task execution failed",

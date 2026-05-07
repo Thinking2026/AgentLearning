@@ -18,9 +18,10 @@
   "llm": {
     "enable_provider_fallback": true,
     "priority_chain": ["deepseek", "claude", "openai"],
-    "summary_providers": ["deepseek", "claude", "openai"],
-    "analyzer_provider": "deepseek",
-    "planner_provider": "deepseek",
+    "summary_providers": ["deepseek"],
+    "analyzer_provider": ["deepseek"],
+    "plan_provider": ["deepseek"],
+    "quality_provider": ["deepseek"],
     "context_trimming": {
     },
     "retry": {
