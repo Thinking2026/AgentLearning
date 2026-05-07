@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
-from agent.events.events import DomainEvent, ExecutionProgressProvided, TaskCancelled, TaskPaused, UserClarificationRequested, UserCommand
+from agent.events.events import DomainEvent, TaskCancelled, TaskPaused, UserClarificationRequested, UserCommand, ALL_EVENTS
 from schemas.ids import TaskId, CheckpointId
 from schemas.types import UserCommandType, UserMessage, UserMsgType
 from schemas.task import TaskResult
-from utils.log.log import Logger, zap
+from schemas.event_bus import EventBus
 
 if TYPE_CHECKING:
     from agent.application.pipeline import Pipeline
@@ -19,9 +19,12 @@ class PipelineDriver:
 
     def __init__(
         self,
-        loop_user_messages_timeout_seconds: float = 0.5,
+        loop_user_messages_timeout_seconds: float,
+        event_bus: EventBus,
     ) -> None:
-        self._loop_user_messages_timeout_seconds = loop_user_messages_timeout_seconds
+        self._loop_user_messages_timeout_seconds = loop_user_messages_timeout_seconds if loop_user_messages_timeout_seconds > 0 else 0.5
+        for event_type in ALL_EVENTS:
+            event_bus.subscribe(event_type, self.publish_event)
 
     def set_thread(self, thread: PipelineThread) -> None:
         self._thread = thread   
@@ -66,10 +69,8 @@ class PipelineDriver:
             return UserMessage(type=UserMsgType.PAUSE_FROM_AGENT, task_id=event.task_id, user_id=event.user_id, content=event.reason)
         elif isinstance(event, UserClarificationRequested):
             return UserMessage(type=UserMsgType.CLARIFICATION, task_id=event.task_id, user_id=event.user_id, content=event.question)
-        elif isinstance(event, ExecutionProgressProvided):
-            return UserMessage(type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=event.user_id, content=event.content)
 
-        return None
+        return UserMessage(type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=event.user_id, content=event.content)
     
     def publish_event(self, event: DomainEvent) -> None:
         msg = self.convert_pipeline_event(event)

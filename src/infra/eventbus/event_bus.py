@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Type, Union
 
-from schemas.domain import DomainEvent
-from schemas.event_bus import EventBus, EventHandler, EventTypeRef
+from agent.events.events import DomainEvent, UserCommand
+from schemas.event_bus import EventBus,EventHandler,TypeEvent
 
 logger = logging.getLogger(__name__)
 
-
-def _resolve_key(event_type: EventTypeRef) -> str:
+def _resolve_key(event_type: TypeEvent) -> str:
     """Normalise an event type reference to its string key."""
     if isinstance(event_type, str):
         return event_type
@@ -42,11 +40,12 @@ class InMemoryEventBus(EventBus):
                         "handler": getattr(handler, "__qualname__", repr(handler)),
                     },
                 )
+                raise
 
-    def subscribe(self, event_type: EventTypeRef, handler: EventHandler) -> None:
+    def subscribe(self, event_type: TypeEvent, handler: EventHandler) -> None:
         self._handlers.setdefault(_resolve_key(event_type), []).append(handler)
 
-    def unsubscribe(self, event_type: EventTypeRef, handler: EventHandler) -> None:
+    def unsubscribe(self, event_type: TypeEvent, handler: EventHandler) -> None:
         key = _resolve_key(event_type)
         handlers = self._handlers.get(key, [])
         if handler in handlers:

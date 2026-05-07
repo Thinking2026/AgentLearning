@@ -27,6 +27,7 @@ from schemas.errors import (
     TOOL_ARGUMENT_ERROR,
     build_pipeline_error,
 )
+from schemas.event_bus import EventBus
 from schemas.ids import PlanStepId, StageId, TaskId
 from schemas.task import (
     NextDecisionType,
@@ -129,6 +130,7 @@ class StageExecutor:
         self._knowledge_loader = knowledge_loader
         self._planner = planner
         self._llm_gateway = llm_gateway
+        self._event_bus = event_bus
         self._context_manager.set_tool_schemas(tool_registry.get_tool_schemas())
 
         self._max_iterations = max_iterations
@@ -189,7 +191,7 @@ class StageExecutor:
                 plan_step_description=step.description,
                 plan_step_key_results=step.key_results,
             )
-            self._driver.publish_event(
+            self._event_bus.publish(
                 StageExecutionStarted(
                     task_id=plan.task_id,
                     order=str(step_index),
@@ -266,7 +268,7 @@ class StageExecutor:
             self._context_manager.end_stage(step_index, success=True)
 
             if not is_last:
-                self._driver.publish_event(
+                self._event_bus.publish(
                     StageResultProduced(
                         task_id=plan.task_id,
                         order=str(step_index),
@@ -336,7 +338,7 @@ class StageExecutor:
             if user_cmd is not None:
                 if user_cmd.type == UserCommandType.CANCEL:
                     self._cancelled.set()
-                    self._driver.publish_event(
+                    self._event_bus.publish(
                         TaskCancelled(task_id=stage.task_id, content="Task cancelled by user.")
                     )
                     stage.fail("Cancelled by user.")
@@ -365,7 +367,7 @@ class StageExecutor:
                 return _StageOutcome.FATAL, ""
 
             # 2.0 publish "LLM reply generated" event
-            self._driver.publish_event(
+            self._event_bus.publish(
                 LLMResponseGenerated(
                     task_id=stage.task_id,
                     order=str(stage.iteration_count),
@@ -413,7 +415,7 @@ class StageExecutor:
                 else:
                     self._context_manager.add_message("assistant", question)
 
-                self._driver.publish_event(
+                self._event_bus.publish(
                     UserClarificationRequested(
                         task_id=stage.task_id,
                         order=str(stage.iteration_count),
@@ -438,7 +440,7 @@ class StageExecutor:
                         "assistant", decision.assistant_message.content
                     )
 
-                self._driver.publish_event(
+                self._event_bus.publish(
                     TaskPaused(task_id=stage.task_id, reason=reason, content=reason)
                 )
                 stage.pause()
@@ -503,7 +505,7 @@ class StageExecutor:
 
     def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:
-            self._driver.publish_event(
+            self._event_bus.publish(
                 ToolCallStarted(
                     task_id=stage.task_id,
                     order=str(stage.iteration_count),
@@ -524,7 +526,7 @@ class StageExecutor:
                     observation.content,
                     observation.metadata,
                 )
-                self._driver.publish_event(
+                self._event_bus.publish(
                     ToolCallResultProduced(
                         task_id=stage.task_id,
                         order=str(stage.iteration_count),
@@ -550,7 +552,7 @@ class StageExecutor:
                 observation.content,
                 observation.metadata,
             )
-            self._driver.publish_event(
+            self._event_bus.publish(
                 ToolCallResultProduced(
                     task_id=stage.task_id,
                     order=str(stage.iteration_count),

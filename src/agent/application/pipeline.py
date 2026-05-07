@@ -13,6 +13,7 @@ from agent.events.events import (
     TaskResultProduced,
 )
 from agent.factory.agent_factory import AgentFactory
+from schemas.event_bus import EventBus
 from schemas.ids import CheckpointId, TaskId
 from schemas.task import Plan, Task, TaskResult
 from schemas.types import ClientMessage
@@ -47,6 +48,7 @@ class Pipeline:
         self,
         agent_factory: AgentFactory,
         pipeline_driver: PipelineDriver,
+        event_bus: EventBus,
         max_plan_retries: int = 3,
         max_quality_retries: int = 2,
     ) -> None:
@@ -54,7 +56,8 @@ class Pipeline:
         self._analyzer = self._agent_factory.build_analyzer()
         self._planner = self._agent_factory.build_planner()
         self._pipeline_driver = pipeline_driver
-        self._stage_executor = self._agent_factory.build_stage_executor()
+        self._event_bus = event_bus
+        self._stage_executor = self._agent_factory.build_stage_executor(event_bus)
         self._knowledge_manager = self._agent_factory.build_knowledge_manager()
         self._knowledge_loader = self._agent_factory.build_knowledge_loader()
         self._personality_manager = self._agent_factory.build_personality_manager()

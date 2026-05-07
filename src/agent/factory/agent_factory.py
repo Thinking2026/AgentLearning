@@ -10,6 +10,7 @@ from infra.db.impl.sqlite_storage import SQLiteStorage
 from infra.db.registry import StorageRegistry
 from llm.llm_gateway import LLMGateway
 from schemas.errors import STORAGE_CONFIG_ERROR, build_pipeline_error
+from schemas.event_bus import EventBus
 from schemas.ids import TaskId
 from schemas.task import LLMProviderCapabilities
 from tools import create_default_tool_registry
@@ -164,23 +165,24 @@ class AgentFactory:
 
     def build_stage_executor(
         self,
-        provider_name: str,
         quality_evaluator: QualityEvaluator,
         knowledge_loader: KnowledgeLoader,
         planner: Planner,
         llm_gateway: LLMGateway,
-        tool_registry=None,
+        tool_registry,
+        event_bus: EventBus,
     ) -> StageExecutor:
         if tool_registry is None:
             tool_registry = self.build_tool_registry()
         return StageExecutor(
-            reasoning_manager=self.build_reasoning_manager(provider_name),
+            reasoning_manager=self.build_reasoning_manager(),
             context_manager=self.build_context_manager(),
             tool_registry=tool_registry,
             quality_evaluator=quality_evaluator,
             knowledge_loader=knowledge_loader,
             planner=planner,
             llm_gateway=llm_gateway,
+            event_bus=event_bus,
             max_iterations=int(self._config.get("agent.max_attempt_iterations", 60)),
             max_stage_eval_retries=int(self._config.get("agent.max_stage_retries", 2)),
         )
@@ -215,14 +217,16 @@ class AgentFactory:
             max_content_length=max_content_length,
         )
 
-    def build_pipeline_driver(self) -> PipelineDriver:
+    def build_pipeline_driver(self, event_bus: EventBus) -> PipelineDriver:
         return PipelineDriver(
             loop_user_messages_timeout_seconds=float(self._config.get("agent.loop_user_messages_timeout_seconds", 0.5)),
+            event_bus=event_bus
         )
 
     def build_pipeline(
         self,
-        driver: PipelineDriver | None = None,
+        driver: PipelineDriver,
+        event_bus: EventBus,
     ) -> Pipeline:
         """Build a fully-wired Pipeline for a single task."""
         primary = self._primary_provider_name()
@@ -245,6 +249,7 @@ class AgentFactory:
             analyzer=analyzer,
             planner=planner,
             pipeline_driver=driver,
+            event_bus=event_bus,
             stage_executor=stage_executor,
             knowledge_manager=knowledge_manager,
             knowledge_loader=knowledge_loader,

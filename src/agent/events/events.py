@@ -124,7 +124,7 @@ class UserCommand(DomainEvent):
     task_id: str = ""
     user_id: int
 
-__all__ = [
+ALL_EVENTS = [
     "DomainEvent",
     "TaskAnalysisCompleted",
     "ExecutionPlanFinalized",
