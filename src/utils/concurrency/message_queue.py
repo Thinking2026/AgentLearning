@@ -40,7 +40,7 @@ class _BaseMessageQueue:
             return self._closed
 
     def _safe_get(self, timeout: float | None = None) -> Optional[UserMessage]:
-        if timeout is not None and timeout <= 0:
+        if timeout is not None and timeout < 0:
             raise ValueError("timeout must be greater than 0")
         deadline = None if timeout is None else time.monotonic() + timeout
         with self._condition:

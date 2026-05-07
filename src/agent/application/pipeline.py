@@ -77,8 +77,8 @@ class Pipeline:
                 event_bus=self._event_bus,
             )
 
-        self._max_make_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
-        self._max_task_retries=int(self._config.get("agent.max_quality_retries", 2)),
+        self._max_make_plan_retries = int(self._config.get("agent.max_plan_retries", 3))
+        self._max_task_retries = int(self._config.get("agent.max_quality_retries", 2))
 
         self._task: Task | None = None
         self._session_span: Span | None = None
@@ -183,10 +183,11 @@ class Pipeline:
                 self._finish_session_trace(error=result.error_reason or None)
                 return result
 
-            self._stage_executor.archive_current_stage_context()
+            self._stage_executor.reset()
             plan = self._planner.renew_plan(
                 task=task, feedback=review.feedback, llm_api=self._llm_gateway
             )
+            self._context_manager.set_plan(plan)
 
     # ------------------------------------------------------------------
     # Tracing

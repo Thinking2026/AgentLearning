@@ -77,6 +77,7 @@ class ContextManager:
 
         self._lock = threading.RLock()
 
+        self._tool_schemas: list[dict] = []
         if tool_registry is not None:
             self._tool_schemas = tool_registry.get_tool_schemas()
 
@@ -459,9 +460,8 @@ class ContextManager:
         strategy_name = self._config.get("context_truncation.strategy", "react")
         from agent.models.context.budget.token_budget_manager import TokenBudgetManagerFactory
         from agent.models.context.truncation.token_truncation import TruncatorFactory
-        from utils.log.log import get_logger
         budget_manager = TokenBudgetManagerFactory.create(strategy_name, self._config)
-        logger = get_logger(__name__)
+        logger = Logger.get_instance()
         self._token_truncator = TruncatorFactory.create(
             strategy_name,
             budget_manager,

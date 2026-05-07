@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from agent.application.driver import PipelineDriver
 from infra.observability.tracing.tracer import Tracer
 from schemas.event_bus import EventBus
 from schemas.ids import PlanId, PlanStepId, TaskId
@@ -20,6 +19,7 @@ from agent.events.events import UserClarificationRequested
 from utils.log.log import Logger, zap
 
 if TYPE_CHECKING:
+    from agent.application.driver import PipelineDriver
     from config.config import ConfigReader
     from llm.llm_gateway import LLMGateway
 
@@ -132,7 +132,7 @@ class Planner:
 
         for attempt in range(1, _MAX_PLAN_RETRIES + 1):
             prompt = self._build_make_plan_prompt(context, extra_context)
-            plan = self._call_llm_for_plan(task.id, prompt, llm_api, config=self._config)
+            plan = self._call_llm_for_plan(task.id, prompt, llm_api)
 
             report = self._evaluator.evaluate_plan(task, plan, llm_api)
 
@@ -149,7 +149,8 @@ class Planner:
                     zap.any("question", report.clarification_question),
                 )
                 self._event_bus.publish(event)
-                clarification = self._driver.loop_user_messages().content
+                cmd = self._driver.loop_user_messages(timeout=300.0)
+                clarification = cmd.content if cmd is not None else ""
                 extra_context = f"\nUser clarification: {clarification}"
                 continue
 

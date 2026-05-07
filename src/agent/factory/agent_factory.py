@@ -14,11 +14,21 @@ from schemas.errors import STORAGE_CONFIG_ERROR, build_pipeline_error
 from schemas.event_bus import EventBus
 from schemas.ids import TaskId
 from schemas.task import LLMProviderCapabilities, Plan, Task
-from tools import create_default_tool_registry
-from tools.impl.sql_query_tool import SQLQueryTool, build_sql_query_tool_name, build_sql_query_tool_description
-from tools.impl.sql_schema_tool import SQLSchemaTool, build_sql_schema_tool_name, build_sql_schema_tool_description
-from tools.impl.vector_search_tool import VectorSearchTool, build_vector_search_tool_name, build_vector_search_tool_description
-from tools.impl.vector_schema_tool import VectorSchemaTool, build_vector_schema_tool_name, build_vector_schema_tool_description
+from tools import (
+    create_default_tool_registry,
+    SQLQueryTool,
+    build_sql_query_tool_name,
+    build_sql_query_tool_description,
+    SQLSchemaTool,
+    build_sql_schema_tool_name,
+    build_sql_schema_tool_description,
+    VectorSearchTool,
+    build_vector_search_tool_name,
+    build_vector_search_tool_description,
+    VectorSchemaTool,
+    build_vector_schema_tool_name,
+    build_vector_schema_tool_description,
+)
 from tools.tool_registry import ToolRegistry
 from utils.log.log import Logger
 
@@ -164,7 +174,7 @@ class AgentFactory:
     def build_analyzer(self, tracer: Tracer) -> Analyzer:
         return Analyzer(config=self._config, logger=self._logger, tracer=tracer)
 
-    @classmethod
+    @staticmethod
     def build_reasoning_manager(llm_gateway: LLMGateway) -> ReasoningManager:
         strategy = ReActStrategy()
         return ReasoningManager(llm_gateway=llm_gateway, strategy=strategy)

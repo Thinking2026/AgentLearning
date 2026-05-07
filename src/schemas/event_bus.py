@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Callable, Type, Union
 
-from agent.events.events import DomainEvent, UserCommand
+from agent.events.events import DomainEvent
 
 
 EventHandler = Callable[[DomainEvent], None]

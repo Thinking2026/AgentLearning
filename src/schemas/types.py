@@ -121,7 +121,7 @@ class UserMsgType(str, Enum):
     RESUME             = "RESUME"           # Resume after a B-class pause
     CHECKPOINT_RUN     = "CHECKPOINT_RUN"   # Resume from latest checkpoint
     PAUSE_FROM_AGENT   = "PAUSE"            # Pause the running task
-    PROGESS_FROM_AGENT = "PROGRESS"         # Progress update from agent
+    PROGRESS_FROM_AGENT = "PROGRESS"         # Progress update from agent
 
 
 @dataclass(frozen=True)

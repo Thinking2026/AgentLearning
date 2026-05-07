@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from agent.events.events import DomainEvent, UserCommand
+from agent.events.events import DomainEvent
 from schemas.event_bus import EventBus,EventHandler,TypeEvent
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class InMemoryEventBus(EventBus):
     # ------------------------------------------------------------------
 
     def publish(self, event: DomainEvent) -> None:
-        for handler in list(self._handlers.get(event.event_type, [])):
+        for handler in list(self._handlers.get(type(event).__name__, [])):
             try:
                 handler(event)
             except Exception:

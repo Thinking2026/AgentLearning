@@ -411,7 +411,7 @@ class UserThread(threading.Thread):
                     self._pane.add_agent_line(formatted)
 
     def _format_message(self, msg: UserMessage) -> str:
-        if msg.msg_type == UserMsgType.PROGESS_FROM_AGENT:
+        if msg.msg_type == UserMsgType.PROGRESS_FROM_AGENT:
             tool_name = str(msg.metadata.get("tool_name", ""))
             if tool_name:
                 params = json.dumps(msg.metadata.get("tool_arguments", {}), ensure_ascii=False)

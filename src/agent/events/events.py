@@ -119,10 +119,11 @@ class ToolCallFailed(DomainEvent):
     tool_name: str = ""
     error: str = ""
     
+@dataclass(frozen=True)
 class UserCommand(DomainEvent):
-    type: UserCommandType
+    type: UserCommandType = UserCommandType.CANCEL
     task_id: str = ""
-    user_id: int
+    user_id: str | None = None
 
 ALL_EVENTS = [
     "DomainEvent",

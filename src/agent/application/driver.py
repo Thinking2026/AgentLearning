@@ -45,18 +45,18 @@ class PipelineDriver:
     def loop_user_messages(self, timeout: float) -> UserCommand | None:
         if self._thread is None:
             raise build_logic_error(code=PARAMETER_FORGET_SET, message="thread is none")
-        UserMessage = self._thread.loop_user_message(timeout)
-        if UserMessage is not None:
-            return self.convert_user_message(UserMessage)
+        user_message = self._thread.loop_user_message(timeout)
+        if user_message is not None:
+            return self.convert_user_message(user_message)
         return None
 
     def convert_user_message(self, message: UserMessage) -> UserCommand | None:
         if message is not None:
             if message.msg_type == UserMsgType.CANCEL:
-                return UserCommand(type=UserCommandType.CANCEL, task_id=message.task_id, user_id=message.user_id) 
+                return UserCommand(type=UserCommandType.CANCEL, task_id=message.task_id, user_id=message.user_id)
             elif message.msg_type == UserMsgType.RESUME:
                 return UserCommand(type=UserCommandType.RESUME, task_id=message.task_id, user_id=message.user_id)
-            elif message.msg_type == UserMsgType.CLARIFICATION:                 
+            elif message.msg_type == UserMsgType.CLARIFICATION:
                 return UserCommand(type=UserCommandType.CLARIFICATION, task_id=message.task_id, user_id=message.user_id, content=message.content)
             elif message.msg_type == UserMsgType.GUIDANCE:
                 return UserCommand(type=UserCommandType.GUIDANCE, task_id=message.task_id, user_id=message.user_id, content=message.content)
@@ -64,13 +64,13 @@ class PipelineDriver:
 
     def convert_pipeline_event(self, event: DomainEvent) -> UserMessage | None:
         if isinstance(event, TaskCancelled):
-            return UserMessage(type=UserMsgType.CANCEL, task_id=event.task_id, user_id=event.user_id, content=event.reason)
+            return UserMessage(msg_type=UserMsgType.CANCEL, task_id=event.task_id, user_id=None, content=event.reason)
         elif isinstance(event, TaskPaused):
-            return UserMessage(type=UserMsgType.PAUSE_FROM_AGENT, task_id=event.task_id, user_id=event.user_id, content=event.reason)
+            return UserMessage(msg_type=UserMsgType.PAUSE_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.reason)
         elif isinstance(event, UserClarificationRequested):
-            return UserMessage(type=UserMsgType.CLARIFICATION, task_id=event.task_id, user_id=event.user_id, content=event.question)
+            return UserMessage(msg_type=UserMsgType.CLARIFICATION, task_id=event.task_id, user_id=None, content=event.question)
 
-        return UserMessage(type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=event.user_id, content=event.content)
+        return UserMessage(msg_type=UserMsgType.PROGRESS_FROM_AGENT, task_id=event.task_id, user_id=None, content=event.content)
     
     def publish_event(self, event: DomainEvent) -> None:
         msg = self.convert_pipeline_event(event)

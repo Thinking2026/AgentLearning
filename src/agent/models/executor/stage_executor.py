@@ -18,8 +18,8 @@ from agent.events.events import (
     ToolCallStarted,
     UserClarificationRequested,
 )
-from config.config import ConfigReader
-from infra.observability.tracing.tracer import Tracer
+from config import ConfigReader
+from infra.observability.tracing import Tracer
 from schemas.errors import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     PipelineError,
@@ -238,6 +238,7 @@ class StageExecutor:
                 self._context_manager.drop_stage(step_index)
                 step = self._replan_step(step, guidance or "")
                 plan = _replace_step(plan, step_index, step)
+                self._context_manager.set_plan(plan)
                 start_reason = _StartReason.REPLAN
                 continue  # retry same step_index with updated step
 
@@ -261,6 +262,7 @@ class StageExecutor:
                 step = self._replan_step(step, eval_report.feedback)
                 plan = _replace_step(plan, step_index, step)
                 start_reason = _StartReason.EVAL_RETRY
+                self._context_manager.set_pan(plan)
                 continue  # retry same step_index
 
             # ── 1.2.1.1 Eval passed ────────────────────────────────────────
@@ -454,6 +456,9 @@ class StageExecutor:
         stage.fail(f"Max iterations ({self._max_iterations}) exceeded")
         return _StageOutcome.SWITCH_MODEL, ""
 
+    def reset(self) -> None:
+        self._context_manager.reset()
+
     # ------------------------------------------------------------------
     # Public helpers used by Pipeline
     # ------------------------------------------------------------------
@@ -461,8 +466,12 @@ class StageExecutor:
     def get_current_stage(self) -> Stage | None:
         return self._current_stage
 
-    def append_user_clarification(self, clarification: str) -> None:
-        self._context_manager.add_message("user", f"Clarification: {clarification}")
+    def archive_current_stage_context(self) -> None:
+        """Reset context window for a full task retry, preserving history."""
+        self._context_manager.reset()
+
+    def get_conversation_history(self):
+        return self._context_manager.get_conversation_history()
 
     def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:
         self._llm_gateway = llm_gateway

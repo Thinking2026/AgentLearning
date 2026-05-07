@@ -72,7 +72,7 @@ class PipelineThread(threading.Thread):
                     self._logger.error(
                         "Task execution failed",
                         zap.any("task_id", result.task_id),
-                        zap.any("error", result.error),
+                        zap.any("error", result.error_reason),
                     )
                 else:
                     self._logger.info(
