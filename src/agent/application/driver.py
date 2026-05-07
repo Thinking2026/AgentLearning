@@ -21,13 +21,15 @@ class PipelineDriver:
         self,
         loop_user_messages_timeout_seconds: float,
         event_bus: EventBus,
+        thread: PipelineThread,
     ) -> None:
         self._loop_user_messages_timeout_seconds = loop_user_messages_timeout_seconds if loop_user_messages_timeout_seconds > 0 else 0.5
+        self._thread = thread
         for event_type in ALL_EVENTS:
             event_bus.subscribe(event_type, self.publish_event)
 
-    def set_thread(self, thread: PipelineThread) -> None:
-        self._thread = thread   
+    def use_pipeline(self, pipeline: Pipeline) -> None:
+        pipeline.set_driver(self)
 
     # ------------------------------------------------------------------
     # Task lifecycle entry points
@@ -75,4 +77,4 @@ class PipelineDriver:
     def publish_event(self, event: DomainEvent) -> None:
         msg = self.convert_pipeline_event(event)
         if msg is not None:
-            self._thread.publish_event(msg)
+            self._thread.publish_msg_to_user(msg)

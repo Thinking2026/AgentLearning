@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from agent.application.pipeline_thread import PipelineThread
 from config import ConfigReader
 from infra.db.bootstrap_documents import load_seed_documents
 from infra.db.impl.chromadb_storage import ChromaDBStorage
@@ -217,19 +218,15 @@ class AgentFactory:
             max_content_length=max_content_length,
         )
 
-    def build_pipeline_driver(self, event_bus: EventBus) -> PipelineDriver:
+    def build_pipeline_driver(self) -> PipelineDriver:
         return PipelineDriver(
             loop_user_messages_timeout_seconds=float(self._config.get("agent.loop_user_messages_timeout_seconds", 0.5)),
-            event_bus=event_bus
         )
 
     def build_pipeline(
         self,
-        driver: PipelineDriver,
-        event_bus: EventBus,
     ) -> Pipeline:
         """Build a fully-wired Pipeline for a single task."""
-        primary = self._primary_provider_name()
         llm_gateway = self.build_llm_gateway()
         storage_registry = self.build_storage_registry()
         tool_registry = self.build_tool_registry(storage_registry)
@@ -241,15 +238,11 @@ class AgentFactory:
         analyzer = self.build_analyzer()
         planner = self.build_planner()
         stage_executor = self.build_stage_executor(
-            primary, quality_evaluator, knowledge_loader, planner, llm_gateway, tool_registry
+            quality_evaluator, knowledge_loader, planner, llm_gateway, tool_registry
         )
-        stage_executor.set_driver(driver)
-
         return Pipeline(
             analyzer=analyzer,
             planner=planner,
-            pipeline_driver=driver,
-            event_bus=event_bus,
             stage_executor=stage_executor,
             knowledge_manager=knowledge_manager,
             knowledge_loader=knowledge_loader,

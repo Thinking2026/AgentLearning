@@ -47,17 +47,13 @@ class Pipeline:
     def __init__(
         self,
         agent_factory: AgentFactory,
-        pipeline_driver: PipelineDriver,
-        event_bus: EventBus,
         max_plan_retries: int = 3,
         max_quality_retries: int = 2,
     ) -> None:
         self._agent_factory = agent_factory
         self._analyzer = self._agent_factory.build_analyzer()
         self._planner = self._agent_factory.build_planner()
-        self._pipeline_driver = pipeline_driver
-        self._event_bus = event_bus
-        self._stage_executor = self._agent_factory.build_stage_executor(event_bus)
+        self._stage_executor = self._agent_factory.build_stage_executor()
         self._knowledge_manager = self._agent_factory.build_knowledge_manager()
         self._knowledge_loader = self._agent_factory.build_knowledge_loader()
         self._personality_manager = self._agent_factory.build_personality_manager()
@@ -75,6 +71,14 @@ class Pipeline:
 
         # Cross-thread control signals
         self._cancelled = threading.Event()
+
+    def set_driver(self, driver: PipelineDriver) -> None:
+        self._driver = driver
+        self._stage_executor.set_driver(driver)
+
+    def set_event_bus(self, event_bus: EventBus) -> None:
+        self._event_bus = event_bus
+        self._stage_executor.set_event_bus(event_bus)
     # ------------------------------------------------------------------
     # Public control API (thread-safe, called from PipelineThread)
     # ------------------------------------------------------------------

@@ -116,7 +116,6 @@ class StageExecutor:
         quality_evaluator: QualityEvaluator,
         knowledge_loader: KnowledgeLoader,
         planner: Planner,
-        llm_gateway: LLMGateway,
         driver: PipelineDriver | None = None,
         max_iterations: int = 60, #自己从配置里取
         max_stage_eval_retries: int = 2, #自己从配置里取
@@ -129,7 +128,6 @@ class StageExecutor:
         self._quality_evaluator = quality_evaluator
         self._knowledge_loader = knowledge_loader
         self._planner = planner
-        self._llm_gateway = llm_gateway
         self._event_bus = event_bus
         self._context_manager.set_tool_schemas(tool_registry.get_tool_schemas())
 
@@ -145,6 +143,9 @@ class StageExecutor:
 
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
+
+    def set_event_bus(self, event_bus: EventBus) -> None:
+        self._event_bus = event_bus
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -482,9 +483,6 @@ class StageExecutor:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _switch_provider(self, provider_name: str) -> None:
-        self._llm_gateway.switch_provider(provider_name)
 
     def _should_use_primary_provider(self) -> bool:
         """Return True when conditions favour switching back to the primary model."""
