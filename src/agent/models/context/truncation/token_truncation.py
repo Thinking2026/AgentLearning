@@ -133,6 +133,7 @@ class ReActContextTruncator(ContextTruncator):
         self._trunc_cfg = trunc_cfg or ReActTruncationConfig()
         self._config = config
 
+    #TODO 实现不同严重等级的裁剪策略，LLM API返回需要裁剪的降级时需要触发，现在只有一个模型降级
     def truncate(
         self,
         messages: list[ContextMessage],

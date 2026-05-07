@@ -79,9 +79,9 @@
 - [TODO]已经回答过问题的答案，是否要用多级存储
 - [TODO]checkpoint机制
 - [TODO]Agent执行的审计，需要单独当成一个领域来处理
-- [TODO]流程防止无限处理
-- [TODO]给LLM传递消息的strip处理要精确
-- [TODO]检查工具，环境权限等问题
+- [DONE]流程防止无限处理
+- [DONE]给LLM传递消息的strip处理要精确
+- [DONE]检查工具，环境权限等问题
 - [TODO]Agent需要用户协助时要主动提出（比如开权限），等待用户完成后继续工作
 - [TODO]多会话，每会话多轮次处理
 - [TODO]多级存储怎么做
@@ -90,15 +90,15 @@
 - [Done]失败返回引发session reset，引发的整个session流程要看一下
 - [Done]线程之间的交互方式，每个子线程都可以抛出异常，但抛出异常就意味着无法容忍的错误，子线程要捕获，然后通知所有人清理资源和退出；UserThread开始一个New Task，然后等待agent thread将状态设置为in progress并sync回User Thread；如果agent thread能解决掉需要回传user thread任务完成，user thread打印信息并退出；如果agent thread无法解决任务走异常路径，让全部线程退出
 - [Done]把conversion的role去掉
-- [TODO]喂给LLM API的conversation使用摘要技术，保存system prompt, 用户目标和前面的摘要
-- [TODO]正反馈路径，类似问题的处理存到RAG里
+- [Done]喂给LLM API的conversation使用摘要技术，保存system prompt, 用户目标和前面的摘要
+- [Done]正反馈路径，类似问题的处理存到RAG里
 - [TODO]工具不能每次全量，考虑工具过滤，工具选择等技术方案
-- [TODO]同一个模型provider都可以使用不同的model，比如claude的sonnet降级到haiku
-- [TODO]工具注册前要全部自检，除了权限问题确保都是可以执行的
+- [Done]同一个模型provider都可以使用不同的model，比如claude的sonnet降级到haiku
+- [Done]工具注册前要全部自检，除了权限问题确保都是可以执行的
 - [TODO]轨迹重放的debug能力
 - [TODO]重复的推理轨迹以及工具调用轨迹，系统介入防止死循环
-- [TODO]对于LLM返回finish reason=length时处理的不好
-- [TODO]需要根据不同provider回复处理个性化错误码和message
+- [Done]对于LLM返回finish reason=length时处理的不好
+- [Done]需要根据不同provider回复处理个性化错误码和message
 - [TODO]工具调用参数校验，返回格式不对的话先程序修复，修复不了让LLM重新处理
 - [Done]上下文剪裁，初步完成
 - [TODO]系统迭代次数最后一轮强行给一个结果？
@@ -114,6 +114,7 @@
 - [TODO]Agent执行完一个工具调用需要更新memory?
 - [TODO]先不搞多用户了，未来再说
 - [TODO]先不搞推理模式动态切换，未来再说
+- [TODO]分析任务时输出工具列表和置信度，然后后续执行的system_prompt里就用这些工具列表
 
 ## ReAct Agent裁剪上下文设计
 - 根据token预算触发裁剪
