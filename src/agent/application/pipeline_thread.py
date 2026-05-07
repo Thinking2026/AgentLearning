@@ -32,7 +32,7 @@ class PipelineThread(threading.Thread):
         self._stop_event = stop_event
         self._stop_callback = stop_callback
         self._active_driver: PipelineDriver = None
-        self._event_bus: EventBus = InMemoryEventBus()
+        
         try:
             self._logger = Logger.get_instance()
             self._factory = AgentFactory.from_config(config)
@@ -52,10 +52,6 @@ class PipelineThread(threading.Thread):
 
     def run(self) -> None:
         try:
-            self._active_driver = self._factory.build_pipeline_driver(thread=self, event_bus=self._event_bus)
-            pipeline = self._factory.build_pipeline()
-            self._active_driver.use_pipeline(pipeline)
-
             while self._is_running():
                 # Wait for the next task from the user
                 new_task = self._task_queue.get(timeout=None)
@@ -66,7 +62,11 @@ class PipelineThread(threading.Thread):
                     self._logger.info("PipelineThread received shutdown signal, exiting loop")
                     break
 
-                result = self._active_driver.submit_task(user_id=new_task.user_id, 
+                event_bus = InMemoryEventBus()
+                active_driver = self._factory.build_pipeline_driver(thread=self, event_bus=event_bus)
+                pipeline = self._factory.build_pipeline(event_bus)
+                active_driver.use_pipeline(pipeline)
+                result = active_driver.submit_task(user_id=new_task.user_id, 
                                 task_description=new_task.content.strip())
                 if not result.succeeded:
                     self._logger.error(

@@ -15,23 +15,13 @@ from agent.events.events import (
 from agent.factory.agent_factory import AgentFactory
 from config.config import ConfigReader
 from schemas.event_bus import EventBus
-from schemas.ids import CheckpointId, TaskId, UserId
+from schemas.ids import TaskId, UserId
 from schemas.task import Plan, Task, TaskResult
-from schemas.types import ClientMessage
 from utils.log.log import Logger
+from agent.models.executor.stage_executor import StageExecutor
 
 if TYPE_CHECKING:
-    from agent.models.analysis.analyzer import Analyzer
-    from agent.models.evaluate.quality_evaluator import QualityEvaluator
-    from agent.models.executor.stage_executor import StageExecutor
-    from agent.models.knowledge.knowledge_loader import KnowledgeLoader
-    from agent.models.knowledge.knowledge_manager import KnowledgeManager
-    from agent.models.model_routing.provider_router import ModelSelector
-    from agent.models.personality.user_preference import PersonalityManager
-    from agent.models.plan.planner import Planner
     from infra.observability.tracing import Span, Tracer
-    from llm.llm_gateway import LLMGateway
-    from tools.tool_registry import ToolRegistry
 
 
 class Pipeline:
@@ -51,27 +41,41 @@ class Pipeline:
         config: ConfigReader,
         logger: Logger,
         agent_factory: AgentFactory,
+        event_bus: EventBus,
     ) -> None:
         self._config = config
         self._agent_factory = agent_factory
         self._logger = logger
         self._tracer = self._agent_factory.build_tracer()
+        self._event_bus = event_bus
 
-        self._analyzer = AgentFactory.build_analyzer(self._config, self._logger, self._tracer)
-        self._quality_evaluator = AgentFactory.build_quality_evaluator(self._config, self._logger, self._tracer)
-        self._knowledge_manager = AgentFactory.build_knowledge_manager(self._config, self._logger, self._tracer)
-        self._knowledge_loader = AgentFactory.build_knowledge_loader(self._config, self._logger, self._tracer)
-        self._model_selector = AgentFactory.build_model_selector(self._config, self._logger, self._tracer)
-        self._personality_manager = AgentFactory.build_personality_manager(self._config, self._logger, self._tracer)
-        self._planner = self._agent_factory.build_planner(self._config, self._logger, self._tracer)
+        self._analyzer = self._agent_factory.build_analyzer(self._tracer)
+        self._quality_evaluator = self._agent_factory.build_quality_evaluator(self._tracer)
+        self._knowledge_manager = self._agent_factory.build_knowledge_manager(self._tracer)
+        self._knowledge_loader = self._agent_factory.build_knowledge_loader(self._tracer)
+        self._model_selector = self._agent_factory.build_model_selector(self._tracer)
+        self._personality_manager = self._agent_factory.build_personality_manager(self._tracer)
+        self._planner = self._agent_factory.build_planner(
+            tracer=self._tracer, 
+            event_bus=self._event_bus,
+            evaluator=self._quality_evaluator)
 
-        self._reasoning_manager = self._agent_factory.build_reasoning_manager(self._config, self._logger, self._tracer)
-        self._stage_executor = self._agent_factory.build_stage_executor(self._config, self._logger, self._tracer)
+        self._llm_gateway = self._agent_factory.build_llm_gateway(self._tracer)
+        self._reasoning_manager = AgentFactory.build_reasoning_manager(self._llm_gateway)
 
-        self._context_manager = self._agent_factory.build_context_manager(self._config, self._logger, self._tracer)#TODO
+        self._tool_registry = self._agent_factory.build_tool_registry(self._tracer)
+        self._context_manager = self._agent_factory.build_context_manager(tracer=self._tracer, llm_gateway=self._llm_gateway, tool_registry=self._tool_registry)
 
-        self._tool_registry = self._agent_factory.build_tool_registry(self._config, self._logger, self._tracer)
-        self._llm_gateway = self._agent_factory.build_llm_gateway(self._config, self._logger, self._tracer)
+        self._stage_executor = self._agent_factory.build_stage_executor(
+                tracer=self._tracer,
+                reasoning_manager=self._reasoning_manager,
+                context_manager=self._context_manager,
+                quality_evaluator=self._quality_evaluator,
+                knowledge_loader=self._knowledge_loader,
+                planner=self._planner,
+                llm_gateway=self._llm_gateway,
+                event_bus=self._event_bus,
+            )
 
         self._max_make_plan_retries=int(self._config.get("agent.max_plan_retries", 3)),
         self._max_task_retries=int(self._config.get("agent.max_quality_retries", 2)),
@@ -82,10 +86,7 @@ class Pipeline:
     def set_driver(self, driver: PipelineDriver) -> None:
         self._driver = driver
         self._stage_executor.set_driver(driver)
-
-    def set_event_bus(self, event_bus: EventBus) -> None:
-        self._event_bus = event_bus
-        self._stage_executor.set_event_bus(event_bus)
+        self._planner.set_driver(driver)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -114,7 +115,7 @@ class Pipeline:
         provider_chain = [routing.primary] + routing.fallbacks
 
         # ── 1.3 制定并评审执行计划（含重试循环）──────────────────────
-        plan = self._planner.make_plan(task, self._llm_gateway, self._quality_evaluator, self._pipeline_driver)
+        plan = self._planner.make_plan(task, self._llm_gateway)
         if plan is None:
             event = TaskExecutionFailed(task_id=task.id, content="Failed to produce a valid plan")
             self._event_bus.publish(event)
@@ -128,6 +129,8 @@ class Pipeline:
         )
 
         # ── 1.4 发布"Task已开始执行"事件 ─────────────────────────────
+        self._context_manager.set_task(task)
+        self._context_manager.set_plan(plan)
         self._event_bus.publish(
             TaskExecutionStarted(task_id=task.id, content="")
         )

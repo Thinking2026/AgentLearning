@@ -18,6 +18,8 @@ from agent.events.events import (
     ToolCallStarted,
     UserClarificationRequested,
 )
+from config.config import ConfigReader
+from infra.observability.tracing.tracer import Tracer
 from schemas.errors import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
     PipelineError,
@@ -36,6 +38,7 @@ from schemas.task import (
     StageStatus,
 )
 from schemas.types import LLMMessage, ToolCall, ToolResult, UserCommandType
+from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from agent.application.driver import PipelineDriver
@@ -110,33 +113,33 @@ class StageExecutor:
 
     def __init__(
         self,
+        config: ConfigReader,
+        logger: Logger,
+        tracer: Tracer,
         reasoning_manager: ReasoningManager,
         context_manager: ContextManager,
-        tool_registry: ToolRegistry,
         quality_evaluator: QualityEvaluator,
         knowledge_loader: KnowledgeLoader,
         planner: Planner,
-        driver: PipelineDriver | None = None,
-        max_iterations: int = 60, #自己从配置里取
-        max_stage_eval_retries: int = 2, #自己从配置里取
-        forbidden_tools: list[str] | None = None, #自己从配置里取
+        llm_gateway: LLMGateway,
+        event_bus: EventBus,
     ) -> None:
-        self._driver = driver
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
         self._reasoning_manager = reasoning_manager
         self._context_manager = context_manager
-        self._tool_registry = tool_registry
         self._quality_evaluator = quality_evaluator
         self._knowledge_loader = knowledge_loader
         self._planner = planner
+        self._llm_gateway = llm_gateway
         self._event_bus = event_bus
-        self._context_manager.set_tool_schemas(tool_registry.get_tool_schemas())
 
-        self._max_iterations = max_iterations
-        self._max_replan_stage_retries = max_stage_eval_retries
-        self._max_stage_eval_retries = max_stage_eval_retries
-        self._forbidden_tools: frozenset[str] = (
-            frozenset(forbidden_tools) if forbidden_tools else frozenset()
-        )
+        self._max_iterations = int(self._config.get("agent.max_attempt_iterations", 60))
+        self._max_replan_stage_retries = int(self._config.get("agent.max_replan_stage_retries", 3))
+        self._max_stage_eval_retries = int(self._config.get("agent.max_stage_retries", 2))
+        self._forbidden_tools: frozenset[str] = frozenset(self._config.get("tools.forbidden_tools", []))
+
         self._current_stage: Stage | None = None
         self._current_stage_index: int = 0
         self._cancelled = threading.Event()
@@ -205,7 +208,6 @@ class StageExecutor:
             # ── 1.1 Consider switching back to highest-priority provider ───
             if provider_index > 0 and self._should_use_primary_provider():
                 provider_index = 0
-                self._switch_provider(provider_chain[provider_index])
 
             # ── 1.2 Run reasoning loop ─────────────────────────────────────
             self._context_manager.begin_stage(step_index)
@@ -228,7 +230,6 @@ class StageExecutor:
                     )
                 self._context_manager.drop_stage(step_index)
                 provider_index = next_index
-                self._switch_provider(provider_chain[provider_index])
                 start_reason = _StartReason.MODEL_SWITCH
                 continue  # retry same step_index
 
@@ -245,7 +246,7 @@ class StageExecutor:
             eval_report = self._quality_evaluator.evaluate_stage_result(
                 step,
                 self._current_stage.result,
-                self._reasoning_manager.get_llm_gateway(),
+                self._llm_gateway,
             )
 
             if not eval_report.passed:
@@ -345,7 +346,6 @@ class StageExecutor:
                     stage.fail("Cancelled by user.")
                     return _StageOutcome.FATAL, ""
                 if user_cmd.type == UserCommandType.GUIDANCE:
-                    stage.interrupt(user_cmd.content or "")
                     return _StageOutcome.NEED_REPLAN, user_cmd.content or ""
 
             if self._cancelled.is_set():
@@ -461,24 +461,12 @@ class StageExecutor:
     def get_current_stage(self) -> Stage | None:
         return self._current_stage
 
-    def archive_current_stage_context(self) -> None:
-        pass
-
-    def reset_for_next_stage(self) -> None:
-        self._context_manager.reset()
-        self._current_stage = None
-
     def append_user_clarification(self, clarification: str) -> None:
         self._context_manager.add_message("user", f"Clarification: {clarification}")
 
     def set_llm_gateway(self, llm_gateway: LLMGateway) -> None:
-        self._reasoning_manager.set_llm_gateway(llm_gateway)
-
-    def replace_conversation_history(self, messages: list[LLMMessage]) -> None:
-        self._context_manager.replace_conversation_history(messages)
-
-    def get_conversation_history(self) -> list[LLMMessage]:
-        return self._context_manager.get_conversation_history()
+        self._llm_gateway = llm_gateway
+        self._reasoning_manager.set_llm_gateway(self._llm_gateway)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -490,16 +478,8 @@ class StageExecutor:
 
     def _replan_step(self, step: PlanStep, feedback: str) -> PlanStep:
         return self._planner.renew_plan_step(
-            step, feedback, self._reasoning_manager.get_llm_gateway()
+            step, feedback, self._llm_gateway
         )
-
-    def _load_knowledge(self, query: str) -> None:
-        entries = self._knowledge_loader.load(query)
-        if entries:
-            snippets = "\n".join(f"- {e.content}" for e in entries)
-            variables = self._context_manager.get_variables()
-            variables["reusable_knowledge"] = snippets
-            self._context_manager.set_variables(variables)
 
     def _dispatch_tool_calls(self, stage: Stage, tool_calls: list[ToolCall]) -> None:
         for tool_call in tool_calls:

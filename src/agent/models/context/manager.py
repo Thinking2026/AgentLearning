@@ -6,10 +6,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 from uuid import uuid4
 
+from infra.observability.tracing.tracer import Tracer
 from llm.llm_gateway import LLMGateway
 from schemas import LLMMessage, UnifiedLLMRequest, LLMResponse
 from schemas.task import KnowledgeEntry, Plan, Task, UserPreferenceEntry
 from schemas.types import LLMRole
+from tools.tool_registry import ToolRegistry
+from utils.log.log import Logger
 
 if TYPE_CHECKING:
     from agent.models.context.estimator.token_estimator import BaseTokenEstimator
@@ -45,18 +48,18 @@ class ContextManager:
 
     def __init__(
         self,
-        task: Task,
-        plan: Plan,
+        logger: Logger,
+        tracer: Tracer,
         config: ConfigReader | None = None,
         llm_gateway: LLMGateway | None = None,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
+        self._logger = logger
+        self._tracer = tracer
         self._config = config
-        self._task = task
-        self._plan = plan
         self._llm_gateway = llm_gateway
 
         self._system_prompt: str = ""
-        self._tool_schemas: list[dict[str, Any]] = []
         self._knowledge_entries: list[KnowledgeEntry] = []
         self._user_preferences_entries: list[UserPreferenceEntry] = []
         self._variables: dict[str, Any] = {}
@@ -74,12 +77,21 @@ class ContextManager:
 
         self._lock = threading.RLock()
 
+        if tool_registry is not None:
+            self._tool_schemas = tool_registry.get_tool_schemas()
+
+
     # ------------------------------------------------------------------
     # Basic getters
     # ------------------------------------------------------------------
+    def set_task(self, task:Task) -> None:
+        self._task = task
 
     def get_task(self) -> Task:
         return self._task
+
+    def set_plan(self, plan:Plan) -> None:
+        self._plan = plan
 
     def get_plan(self) -> Plan:
         return self._plan

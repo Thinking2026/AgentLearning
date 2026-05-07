@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from agent.application.driver import PipelineDriver
+from infra.observability.tracing.tracer import Tracer
+from schemas.event_bus import EventBus
 from schemas.ids import PlanId, PlanStepId, TaskId
 from schemas.task import (
     Plan,
@@ -99,14 +101,25 @@ def _build_plan(task_id: TaskId, raw_steps: list[dict]) -> Plan:
 
 class Planner:
     """Responsible for creating and revising execution plans."""
+    def __init__(self, 
+            config:ConfigReader, 
+            logger:Logger, 
+            tracer: Tracer, 
+            event_bus: EventBus,
+            evaluator: QualityEvaluator):
+        self._config = config
+        self._logger = logger
+        self._tracer = tracer
+        self._event_bus = event_bus
+        self._evaluator = evaluator
+
+    def set_driver(self, driver: PipelineDriver) -> None:
+        self._driver = driver
 
     def make_plan(
         self,
         task: Task,
         llm_api: LLMGateway,
-        evaluator: QualityEvaluator,
-        driver: PipelineDriver,
-        config: ConfigReader | None = None,
     ) -> Plan:
         """Generate a plan for *task*, evaluate it, and retry on failure.
 
@@ -119,29 +132,29 @@ class Planner:
 
         for attempt in range(1, _MAX_PLAN_RETRIES + 1):
             prompt = self._build_make_plan_prompt(context, extra_context)
-            plan = self._call_llm_for_plan(task.id, prompt, llm_api, config=config)
+            plan = self._call_llm_for_plan(task.id, prompt, llm_api, config=self._config)
 
-            report = evaluator.evaluate_plan(task, plan, llm_api)
+            report = self._evaluator.evaluate_plan(task, plan, llm_api)
 
             if report.need_user_clarification:
                 # Publish clarification event then mock the user's reply.
-                request = UserClarificationRequested(
+                event = UserClarificationRequested(
                     task_id=task.id,
                     order=str(attempt),
                     question=report.clarification_question,
                 )
-                Logger.get_instance().info(
+                self._logger.info(
                     "UserClarificationRequested published (mocked)",
                     zap.any("task_id", task.id),
                     zap.any("question", report.clarification_question),
                 )
-                driver.publish_event(request)
-                clarification = driver.loop_user_messages().content
+                self._event_bus.publish(event)
+                clarification = self._driver.loop_user_messages().content
                 extra_context = f"\nUser clarification: {clarification}"
                 continue
 
             if report.passed:
-                Logger.get_instance().info(
+                self._logger.info(
                     "Plan evaluation passed",
                     zap.any("task_id", task.id),
                     zap.any("plan_id", plan.id),
@@ -149,7 +162,7 @@ class Planner:
                 )
                 return plan
 
-            Logger.get_instance().info(
+            self._logger.info(
                 "Plan evaluation failed, retrying",
                 zap.any("task_id", task.id),
                 zap.any("attempt", attempt),
@@ -157,7 +170,7 @@ class Planner:
             )
             extra_context = f"\nPrevious plan was rejected. Feedback: {report.feedback}"
 
-        Logger.get_instance().error(
+        self._logger.error(
             "Plan evaluation failed after max retries, returning last plan",
             zap.any("task_id", task.id),
         )
@@ -168,7 +181,6 @@ class Planner:
         task: Task,
         feedback: str,
         llm_api: LLMGateway,
-        config: ConfigReader | None = None,
     ) -> Plan:
         """Regenerate the full plan for *task* incorporating *feedback*."""
         context = _task_context(task)
@@ -177,8 +189,8 @@ class Planner:
             f"The previous plan was unsatisfactory. Feedback:\n{feedback}\n\n"
             f"Produce a revised execution plan."
         )
-        plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=_RENEW_PLAN_SYSTEM_PROMPT, config=config)
-        Logger.get_instance().info(
+        plan = self._call_llm_for_plan(task.id, prompt, llm_api, system=_RENEW_PLAN_SYSTEM_PROMPT)
+        self._logger.info(
             "Plan renewed",
             zap.any("task_id", task.id),
             zap.any("plan_id", plan.id),
@@ -190,7 +202,6 @@ class Planner:
         step: PlanStep,
         feedback: str,
         llm_api: LLMGateway,
-        config: ConfigReader | None = None,
     ) -> PlanStep:
         """Regenerate a single *step* incorporating *feedback*."""
         prompt = (
@@ -201,7 +212,7 @@ class Planner:
             f"Feedback: {feedback}\n\n"
             f"Produce a revised step."
         )
-        provider = config.get("llm.plan_provider", ["deepseek"])[0] if config else "deepseek"
+        provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         response = llm_api.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
@@ -221,7 +232,7 @@ class Planner:
             order=step.order,
             key_results=raw.get("key_results", step.key_results),
         )
-        Logger.get_instance().info(
+        self._logger.info(
             "Plan step renewed",
             zap.any("step_id", step.id),
         )
@@ -240,9 +251,8 @@ class Planner:
         prompt: str,
         llm_api: LLMGateway,
         system: str = _MAKE_PLAN_SYSTEM_PROMPT,
-        config: ConfigReader | None = None,
     ) -> Plan:
-        provider = config.get("llm.plan_provider", ["deepseek"])[0] if config else "deepseek"
+        provider = self._config.get("llm.plan_provider", ["deepseek"])[0] if self._config else "deepseek"
         response = llm_api.generate(
             UnifiedLLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],

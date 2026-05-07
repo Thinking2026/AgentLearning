@@ -13,12 +13,13 @@ from llm.llm_gateway import LLMGateway
 from schemas.errors import STORAGE_CONFIG_ERROR, build_pipeline_error
 from schemas.event_bus import EventBus
 from schemas.ids import TaskId
-from schemas.task import LLMProviderCapabilities
+from schemas.task import LLMProviderCapabilities, Plan, Task
 from tools import create_default_tool_registry
 from tools.impl.sql_query_tool import SQLQueryTool, build_sql_query_tool_name, build_sql_query_tool_description
 from tools.impl.sql_schema_tool import SQLSchemaTool, build_sql_schema_tool_name, build_sql_schema_tool_description
 from tools.impl.vector_search_tool import VectorSearchTool, build_vector_search_tool_name, build_vector_search_tool_description
 from tools.impl.vector_schema_tool import VectorSchemaTool, build_vector_schema_tool_name, build_vector_schema_tool_description
+from tools.tool_registry import ToolRegistry
 from utils.log.log import Logger
 
 from agent.application.pipeline import Pipeline
@@ -88,7 +89,8 @@ class AgentFactory:
 
         return StorageRegistry(storages)
 
-    def build_tool_registry(self, storage_registry: StorageRegistry | None = None):
+    def build_tool_registry(self, tracer: Tracer):
+        storage_registry = self.build_storage_registry()
         package_name = self._config.get("tools.package", "tools.impl")
         if not isinstance(package_name, str) or not package_name.strip():
             package_name = "tools.impl"
@@ -100,7 +102,7 @@ class AgentFactory:
             package_name=package_name,
             timeout_retry_max_attempts=int(self._config.get("tools.retry.max_attempts", 4)),
             timeout_retry_delays=self._config.retry_delays("tools.retry.backoff_seconds"),
-            tracer=self._tracer,
+            tracer=tracer,
             logger=self._logger,
         )
         if storage_registry:
@@ -111,24 +113,24 @@ class AgentFactory:
     # LLM gateway
     # ------------------------------------------------------------------
 
-    def build_llm_gateway(self) -> LLMGateway:
+    def build_llm_gateway(self, tracer: Tracer) -> LLMGateway:
         return LLMGateway(
             config=self._config,
-            tracer=self.build_tracer()
+            tracer=tracer,
+            logger=self._logger,
         )
 
     # ------------------------------------------------------------------
     # Domain objects
     # ------------------------------------------------------------------
-    @classmethod
-    def build_model_selector(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> ModelSelector:
-        priority_chain = config.get("llm.priority_chain", ["deepseek"])
+    def build_model_selector(self, tracer: Tracer) -> ModelSelector:
+        priority_chain = self._config.get("llm.priority_chain", ["deepseek"])
         if not isinstance(priority_chain, list) or not priority_chain:
             priority_chain = ["deepseek"]
 
         capabilities: list[LLMProviderCapabilities] = []
         for name in priority_chain:
-            cap_cfg = config.get(f"llm.provider_settings.{name}.capabilities", {})
+            cap_cfg = self._config.get(f"llm.provider_settings.{name}.capabilities", {})
             if not isinstance(cap_cfg, dict):
                 cap_cfg = {}
             capabilities.append(LLMProviderCapabilities(
@@ -139,71 +141,66 @@ class AgentFactory:
                 cost_tier=str(cap_cfg.get("cost_tier", "medium")),
                 latency_tier=str(cap_cfg.get("latency_tier", "medium")),
                 context_size=int(cap_cfg.get("context_size",
-                    config.get(f"llm.provider_settings.{name}.context_window", 32000))),
+                    self._config.get(f"llm.provider_settings.{name}.context_window", 32000))),
             ))
 
         return ModelSelector(
-            config=config,
-            logger=logger,
+            config=self._config,
+            logger=self._logger,
             tracer=tracer,
             provider_capabilities=capabilities,
-            enable_fallback=bool(config.get("llm.enable_provider_fallback", False)),
+            enable_fallback=bool(self._config.get("llm.enable_provider_fallback", False)),
         )
 
-    def build_context_manager(self) -> ContextManager:
-        return ContextManager()
+    def build_context_manager(self, tracer: Tracer, llm_gateway: LLMGateway, tool_registry: ToolRegistry) -> ContextManager:
+        return ContextManager(config=self._config, logger=self._logger, tracer=tracer, llm_gateway=llm_gateway, tool_registry=tool_registry)
+
+    def build_knowledge_loader(self, tracer: Tracer)-> KnowledgeLoader:
+        return KnowledgeLoader(config=self._config, logger=self._logger, tracer=tracer)
+
+    def build_personality_manager(self, tracer: Tracer) -> PersonalityManager:
+        return PersonalityManager(config=self._config, logger=self._logger, tracer=tracer)
+
+    def build_analyzer(self, tracer: Tracer) -> Analyzer:
+        return Analyzer(config=self._config, logger=self._logger, tracer=tracer)
 
     @classmethod
-    def build_knowledge_loader(cls, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeLoader:
-        return KnowledgeLoader(config=config, logger=logger, tracer=tracer)
-
-    @classmethod
-    def build_personality_manager(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> PersonalityManager:
-        return PersonalityManager(config=config, logger=logger, tracer=tracer)
-
-    @classmethod
-    def build_analyzer(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> Analyzer:
-        return Analyzer(config=config, logger=logger, tracer=tracer)
-
-    def build_reasoning_manager(self) -> ReasoningManager:
-        gateway = self.build_llm_gateway()
+    def build_reasoning_manager(llm_gateway: LLMGateway) -> ReasoningManager:
         strategy = ReActStrategy()
-        return ReasoningManager(llm_gateway=gateway, strategy=strategy)
+        return ReasoningManager(llm_gateway=llm_gateway, strategy=strategy)
 
     def build_stage_executor(
         self,
+        tracer: Tracer,
+        reasoning_manager: ReasoningManager,
+        context_manager: ContextManager,
         quality_evaluator: QualityEvaluator,
         knowledge_loader: KnowledgeLoader,
         planner: Planner,
         llm_gateway: LLMGateway,
-        tool_registry,
         event_bus: EventBus,
     ) -> StageExecutor:
-        if tool_registry is None:
-            tool_registry = self.build_tool_registry()
         return StageExecutor(
-            reasoning_manager=self.build_reasoning_manager(),
-            context_manager=self.build_context_manager(),
-            tool_registry=tool_registry,
+            config=self._config,
+            logger=self._logger,
+            tracer=tracer,
+            reasoning_manager=reasoning_manager,
+            context_manager=context_manager,
             quality_evaluator=quality_evaluator,
             knowledge_loader=knowledge_loader,
             planner=planner,
             llm_gateway=llm_gateway,
             event_bus=event_bus,
-            max_iterations=int(self._config.get("agent.max_attempt_iterations", 60)),
-            max_stage_eval_retries=int(self._config.get("agent.max_stage_retries", 2)),
         )
 
-    def build_planner(self) -> Planner:
-        return Planner()
+    def build_planner(self, tracer: Tracer, event_bus: EventBus, evaluator: QualityEvaluator) -> Planner:
+        return Planner(config=self._config, logger=self._logger, tracer=tracer, event_bus=event_bus, evaluator=evaluator)
 
-    @classmethod
-    def build_quality_evaluator(cls, config: ConfigReader, logger: Logger, tracer: Tracer) -> QualityEvaluator:
-        return QualityEvaluator(config=config, logger=logger, tracer=tracer)
+    def build_quality_evaluator(self, tracer: Tracer) -> QualityEvaluator:
+        return QualityEvaluator(config=self._config, logger=self._logger, tracer=tracer)
 
-    @classmethod
-    def build_knowledge_manager(cls, config: ConfigReader, logger: Logger, tracer: Tracer)-> KnowledgeManager:
-        return KnowledgeManager(config=config, logger=logger, tracer=tracer)
+    def build_knowledge_manager(self, tracer: Tracer)-> KnowledgeManager:
+        return KnowledgeManager(config=self._config, logger=self._logger, tracer=tracer)
 
     # ------------------------------------------------------------------
     # Top-level entry point
@@ -232,8 +229,8 @@ class AgentFactory:
             thread=thread,
         )
 
-    def build_pipeline(self) -> Pipeline:
-        return Pipeline(config=self._config, agent_factory=self, logger=self._logger)
+    def build_pipeline(self, event_bus: EventBus) -> Pipeline:
+        return Pipeline(config=self._config, agent_factory=self, logger=self._logger, event_bus=event_bus)
 
     # ------------------------------------------------------------------
     # Private helpers
