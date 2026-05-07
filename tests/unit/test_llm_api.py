@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from llm.llm_gateway import classify_http_error, classify_agent_error, RetryConfig
+from llm.llm_gateway import classify_http_error
 from llm.registry import LLMProviderRegistry
 from agent.models.model_routing.provider_router import ModelSelector, ModelRoutingDecision
 from schemas.errors import (
@@ -112,28 +112,6 @@ def test_classify_unknown_agent_error_defaults_to_response_error():
     exc = PipelineError(code="SOME_UNKNOWN_CODE", message="unknown")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.RESPONSE_ERROR
-
-
-# ---------------------------------------------------------------------------
-# RetryConfig
-# ---------------------------------------------------------------------------
-
-def test_retry_config_defaults():
-    cfg = RetryConfig()
-    assert cfg.retry_base == pytest.approx(0.5)
-    assert cfg.retry_max_delay == pytest.approx(60.0)
-    assert cfg.retry_max_attempts == 5
-
-
-def test_retry_config_custom():
-    cfg = RetryConfig(retry_base=1.0, retry_max_delay=30.0, retry_max_attempts=3)
-    assert cfg.retry_max_attempts == 3
-
-
-def test_retry_config_zero_attempts_raises():
-    with pytest.raises(Exception):
-        RetryConfig(retry_max_attempts=0)
-
 
 # ---------------------------------------------------------------------------
 # LLMProviderRegistry

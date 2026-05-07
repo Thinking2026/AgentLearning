@@ -163,21 +163,6 @@ def classify_json_error(exc: json.JSONDecodeError, provider: str | None = None) 
 
 
 # ---------------------------------------------------------------------------
-# RetryConfig (used by AgentExecutor)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class RetryConfig:
-    retry_base: float = 0.5
-    retry_max_delay: float = 60.0
-    retry_max_attempts: int = 5
-
-    def __post_init__(self) -> None:
-        if self.retry_max_attempts <= 0:
-            raise build_pipeline_error(LLM_CONFIG_ERROR, "retry_max_attempts must be greater than 0")
-
-
-# ---------------------------------------------------------------------------
 # Base
 # ---------------------------------------------------------------------------
 
