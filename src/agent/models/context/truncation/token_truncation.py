@@ -9,6 +9,7 @@ from uuid import uuid4
 from agent.models.context.budget.token_budget_manager import BaseTokenBudgetManager
 from agent.models.context.estimator.token_estimator import BaseTokenEstimator
 from agent.models.context.manager import ContextMessage
+from llm.llm_gateway import LLMGateway
 from schemas.types import LLMMessage, UnifiedLLMRequest
 from utils.log.log import Logger, zap
 
@@ -111,13 +112,26 @@ class ReActContextTruncator(ContextTruncator):
         self,
         budget_manager: BaseTokenBudgetManager,
         logger: Logger,
-        config: ReActTruncationConfig | None = None,
-        json_config: ConfigReader | None = None,
+        config: ConfigReader,
+        llm_gateway: LLMGateway,
     ) -> None:
         self._budget_manager = budget_manager
         self._logger = logger
-        self._cfg = config or ReActTruncationConfig()
-        self._json_config = json_config
+        self._llm_gateway = llm_gateway
+
+        trunc_cfg = ReActTruncationConfig(
+            tool_arg_max_chars=int(config.get("context_truncation.react.tool_arg_max_chars", 300)) if config is not None else 300,
+            tool_result_max_chars=int(config.get("context_truncation.react.tool_result_max_chars", 500)) if config is not None else 500,
+            summary_provider=(
+                config.get("llm.summary_provider", "deepseek")
+                if config is not None else "deepseek"
+            ),
+            keep_first_units=int(config.get("context_truncation.react.keep_first_units", 1)) if config is not None else 1,
+            keep_last_units=int(config.get("context_truncation.react.keep_last_units", 3)) if config is not None else 3,
+            summary_ratio=float(config.get("context_truncation.react.summary_ratio", 0.20)) if config is not None else 0.20,
+        )
+        self._trunc_cfg = trunc_cfg or ReActTruncationConfig()
+        self._config = config
 
     def truncate(
         self,
@@ -265,7 +279,7 @@ class ReActContextTruncator(ContextTruncator):
         middle_ids = {id(m) for u in middle_units for m in _unit_to_messages(u)}
 
         result: list[ContextMessage] = []
-        limit = self._cfg.tool_arg_max_chars
+        limit = self._trunc_cfg.tool_arg_max_chars
         for msg in messages:
             if id(msg) not in middle_ids or msg.role != "assistant" or not msg.metadata.get("tool_calls"):
                 result.append(msg)
@@ -305,7 +319,7 @@ class ReActContextTruncator(ContextTruncator):
         middle_ids = {id(m) for u in middle_units for m in _unit_to_messages(u)}
 
         result: list[ContextMessage] = []
-        limit = self._cfg.tool_result_max_chars
+        limit = self._trunc_cfg.tool_result_max_chars
         for msg in messages:
             if id(msg) in middle_ids and msg.role == "tool" and len(msg.content) > limit:
                 result.append(ContextMessage(
@@ -370,7 +384,7 @@ class ReActContextTruncator(ContextTruncator):
         if not middle_units:
             return None
 
-        n_to_summarize = max(1, int(len(middle_units) * self._cfg.summary_ratio))
+        n_to_summarize = max(1, int(len(middle_units) * self._trunc_cfg.summary_ratio))
         summary_units = middle_units[:n_to_summarize]
 
         summary_msgs = [m for u in summary_units for m in _unit_to_messages(u)]
@@ -398,9 +412,7 @@ class ReActContextTruncator(ContextTruncator):
             if self._json_config is None:
                 self._logger.error("Strategy F: no json_config available, cannot build summary LLM client")
                 return None
-            summary_provider = self._json_config.get("llm.summary_provider", self._cfg.summary_provider)
-            from agent.factory.agent_factory import AgentFactory
-            client = AgentFactory(self._json_config).build_llm_gateway()
+            summary_provider = self._json_config.get("llm.summary_provider", self._trunc_cfg.summary_provider)
             history_text = "\n".join(
                 f"[{m.role}] {m.content}" for m in msgs_to_summarize
             )
@@ -413,7 +425,7 @@ class ReActContextTruncator(ContextTruncator):
                 messages=[LLMMessage(role="user", content=history_text)],
                 tool_schemas=[],
             )
-            response = client.generate(summary_request)
+            response = self._llm_gateway.generate(summary_request, summary_provider)
             self._logger.info("Strategy F: summary LLM response", content=response.assistant_message.content)
             return ContextMessage(
                 id=str(uuid4()),
@@ -432,8 +444,8 @@ class ReActContextTruncator(ContextTruncator):
     def _get_middle_units(
         self, units: list[ReasoningUnit]
     ) -> tuple[list[ReasoningUnit], list[ReasoningUnit], list[ReasoningUnit]]:
-        kf = self._cfg.keep_first_units
-        kl = self._cfg.keep_last_units
+        kf = self._trunc_cfg.keep_first_units
+        kl = self._trunc_cfg.keep_last_units
         if len(units) < kf + kl:
             return [], [], []
         head = units[:kf]
@@ -459,19 +471,9 @@ class TruncatorFactory:
         strategy: str,
         budget_manager: BaseTokenBudgetManager,
         logger: Logger,
-        config: ConfigReader | None = None,
+        config: ConfigReader,
+        llm_gateway: LLMGateway
     ) -> ContextTruncator:
         if strategy == "react":
-            trunc_cfg = ReActTruncationConfig(
-                tool_arg_max_chars=int(config.get("context_truncation.react.tool_arg_max_chars", 300)) if config is not None else 300,
-                tool_result_max_chars=int(config.get("context_truncation.react.tool_result_max_chars", 500)) if config is not None else 500,
-                summary_provider=(
-                    config.get("llm.summary_provider", "deepseek")
-                    if config is not None else "deepseek"
-                ),
-                keep_first_units=int(config.get("context_truncation.react.keep_first_units", 1)) if config is not None else 1,
-                keep_last_units=int(config.get("context_truncation.react.keep_last_units", 3)) if config is not None else 3,
-                summary_ratio=float(config.get("context_truncation.react.summary_ratio", 0.20)) if config is not None else 0.20,
-            )
-            return ReActContextTruncator(budget_manager, logger, trunc_cfg, json_config=config)
+            return ReActContextTruncator(budget_manager, logger, config, llm_gateway)
         raise ValueError(f"Unknown truncation strategy: {strategy!r}")

@@ -9,15 +9,7 @@ from infra.db.impl.mysql_storage import MySQLStorage
 from infra.db.impl.sqlite_storage import SQLiteStorage
 from infra.db.registry import StorageRegistry
 from llm.llm_gateway import LLMGateway
-from llm.registry import LLMProviderRegistry
-from llm.providers.claude_api import ClaudeLLMClient
-from llm.providers.deepseek_api import DeepSeekLLMClient
-from llm.providers.glm_api import GLMLLMClient
-from llm.providers.kimi_api import KimiLLMClient
-from llm.providers.minmax_api import MinMaxLLMClient
-from llm.providers.openai_api import OpenAILLMClient
-from llm.providers.qwen_api import QwenLLMClient
-from schemas.errors import LLM_PROVIDER_NOT_FOUND, STORAGE_CONFIG_ERROR, build_pipeline_error
+from schemas.errors import STORAGE_CONFIG_ERROR, build_pipeline_error
 from schemas.ids import TaskId
 from schemas.task import LLMProviderCapabilities
 from tools import create_default_tool_registry
@@ -94,15 +86,6 @@ class AgentFactory:
 
         return StorageRegistry(storages)
 
-    def build_llm_provider_registry(self) -> LLMProviderRegistry:
-        priority_chain = self._config.get("llm.priority_chain", ["deepseek"])
-        if not isinstance(priority_chain, list) or not priority_chain:
-            priority_chain = ["deepseek"]
-        registry = LLMProviderRegistry()
-        for name in priority_chain:
-            registry.register(self._build_provider(name))
-        return registry
-
     def build_tool_registry(self, storage_registry: StorageRegistry | None = None):
         package_name = self._config.get("tools.package", "tools.impl")
         if not isinstance(package_name, str) or not package_name.strip():
@@ -127,9 +110,7 @@ class AgentFactory:
     # ------------------------------------------------------------------
 
     def build_llm_gateway(self) -> LLMGateway:
-        registry = self.build_llm_provider_registry()
         return LLMGateway(
-            registry=registry,
             config=self._config,
             tracer=self.build_tracer()
         )
@@ -285,69 +266,6 @@ class AgentFactory:
         if isinstance(chain, list) and chain:
             return str(chain[0])
         return "deepseek"
-
-    def _build_provider(self, provider_name: str):
-        settings = self._config.get(f"llm.provider_settings.{provider_name}", {})
-        if not isinstance(settings, dict):
-            settings = {}
-        timeout = float(settings.get("timeout", 60.0))
-        api_key = settings.get("api_key")
-
-        if provider_name == "openai":
-            return OpenAILLMClient.from_settings(
-                api_key=api_key,
-                model=settings.get("model", "gpt-4o-mini"),
-                base_url=settings.get("base_url", "https://api.openai.com/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "qwen":
-            return QwenLLMClient.from_settings(
-                api_key=api_key,
-                model=settings.get("model", "qwen-plus"),
-                base_url=settings.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "deepseek":
-            return DeepSeekLLMClient.from_settings(
-                api_key=api_key,
-                model=settings.get("model", "deepseek-chat"),
-                base_url=settings.get("base_url", "https://api.deepseek.com/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "claude":
-            return ClaudeLLMClient.from_settings(
-                api_key=api_key,
-                model=settings.get("model", "claude-3-5-sonnet-latest"),
-                base_url=settings.get("base_url", "https://api.anthropic.com"),
-                timeout=timeout,
-                max_tokens=int(settings.get("max_tokens", self._config.get("llm.max_tokens", 1024))),
-                anthropic_version=settings.get(
-                    "anthropic_version",
-                    self._config.get("llm.anthropic_version", "2023-06-01"),
-                ),
-            ).set_tracer(self._tracer)
-        if provider_name == "minmax":
-            return MinMaxLLMClient.from_settings(
-                api_key=api_key,
-                model=settings.get("model", "MiniMax-Text-01"),
-                base_url=settings.get("base_url", "https://api.minimax.chat/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "glm":
-            return GLMLLMClient.from_settings(
-                api_key=api_key,
-                model=settings.get("model", "glm-4"),
-                base_url=settings.get("base_url", "https://open.bigmodel.cn/api/paas/v4"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        if provider_name == "kimi":
-            return KimiLLMClient.from_settings(
-                api_key=api_key,
-                model=settings.get("model", "moonshot-v1-8k"),
-                base_url=settings.get("base_url", "https://api.moonshot.cn/v1"),
-                timeout=timeout,
-            ).set_tracer(self._tracer)
-        raise build_pipeline_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}")
 
     def _build_sqlite_databases(self) -> dict[str, str]:
         sqlite_config = self._config.get("storage.sqlite", {})
