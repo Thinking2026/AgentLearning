@@ -11,7 +11,7 @@ from schemas.errors import (
     SQL_SCHEMA_TOOL_ERROR,
     TOOL_ARGUMENT_ERROR,
 )
-from schemas import AgentError, SQLQueryRequest
+from schemas import PipelineError, SQLQueryRequest
 from infra.db.storage import RelationalStorage
 from tools.impl.sql_query_tool import (
     SQLQueryTool,
@@ -153,7 +153,7 @@ class TestSQLQueryTool:
         assert result.error.code == TOOL_ARGUMENT_ERROR
 
     def test_storage_agent_error_propagated(self):
-        err = AgentError(code=SQL_QUERY_TOOL_ERROR, message="db error")
+        err = PipelineError(code=SQL_QUERY_TOOL_ERROR, message="db error")
         tool = _make_query_tool(_make_storage(query_side_effect=err))
         result = tool.run({"statement": "SELECT 1"})
         assert not result.success
@@ -218,7 +218,7 @@ class TestSQLSchemaTool:
         storage.inspect_schema.assert_called_once_with(database=None, table=None)
 
     def test_storage_agent_error_propagated(self):
-        err = AgentError(code=SQL_SCHEMA_TOOL_ERROR, message="schema error")
+        err = PipelineError(code=SQL_SCHEMA_TOOL_ERROR, message="schema error")
         tool = _make_schema_tool(_make_storage(schema_side_effect=err))
         result = tool.run({})
         assert not result.success

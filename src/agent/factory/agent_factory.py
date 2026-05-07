@@ -17,7 +17,7 @@ from llm.providers.kimi_api import KimiLLMClient
 from llm.providers.minmax_api import MinMaxLLMClient
 from llm.providers.openai_api import OpenAILLMClient
 from llm.providers.qwen_api import QwenLLMClient
-from schemas.errors import LLM_PROVIDER_NOT_FOUND, STORAGE_CONFIG_ERROR, build_error
+from schemas.errors import LLM_PROVIDER_NOT_FOUND, STORAGE_CONFIG_ERROR, build_pipeline_error
 from schemas.ids import TaskId
 from schemas.task import LLMProviderCapabilities
 from tools import create_default_tool_registry
@@ -347,7 +347,7 @@ class AgentFactory:
                 base_url=settings.get("base_url", "https://api.moonshot.cn/v1"),
                 timeout=timeout,
             ).set_tracer(self._tracer)
-        raise build_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}")
+        raise build_pipeline_error(LLM_PROVIDER_NOT_FOUND, f"Unsupported LLM provider: {provider_name}")
 
     def _build_sqlite_databases(self) -> dict[str, str]:
         sqlite_config = self._config.get("storage.sqlite", {})
@@ -378,7 +378,7 @@ class AgentFactory:
         fallback = str(mysql_config.get("database", "")).strip()
         if fallback:
             return [fallback]
-        raise build_error(
+        raise build_pipeline_error(
             STORAGE_CONFIG_ERROR,
             "MySQL storage requires `storage.mysql.allowed_databases` or `storage.mysql.database`.",
         )

@@ -10,7 +10,7 @@ from schemas.errors import (
     VECTOR_SCHEMA_TOOL_ERROR,
     VECTOR_SEARCH_TOOL_ERROR,
 )
-from schemas import AgentError, VectorSearchRequest
+from schemas import PipelineError, VectorSearchRequest
 from infra.db.storage import VectorStorage
 from tools.impl.vector_search_tool import (
     VectorSearchTool,
@@ -142,7 +142,7 @@ class TestVectorSearchTool:
         assert result.error.code == TOOL_ARGUMENT_ERROR
 
     def test_storage_agent_error_propagated(self):
-        err = AgentError(code=VECTOR_SEARCH_TOOL_ERROR, message="search error")
+        err = PipelineError(code=VECTOR_SEARCH_TOOL_ERROR, message="search error")
         tool = _make_search_tool(_make_storage(search_side_effect=err))
         result = tool.run({"query": "test"})
         assert not result.success
@@ -197,7 +197,7 @@ class TestVectorSchemaTool:
         storage.inspect_schema.assert_called_once_with(collection=None)
 
     def test_storage_agent_error_propagated(self):
-        err = AgentError(code=VECTOR_SCHEMA_TOOL_ERROR, message="schema error")
+        err = PipelineError(code=VECTOR_SCHEMA_TOOL_ERROR, message="schema error")
         tool = _make_schema_tool(_make_storage(schema_side_effect=err))
         result = tool.run({})
         assert not result.success

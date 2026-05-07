@@ -4,7 +4,7 @@ import ast
 import math
 from typing import Any
 
-from schemas import CALCULATION_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_error
+from schemas import CALCULATION_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_pipeline_error
 from tools.tool_base import BaseTool, build_tool_output
 
 
@@ -67,7 +67,7 @@ class CalculatorTool(BaseTool):
     def run(self, arguments: dict[str, object]) -> ToolResult:
         expression = str(arguments.get("expression", "")).strip()
         if not expression:
-            error = build_error(
+            error = build_pipeline_error(
                 TOOL_ARGUMENT_ERROR,
                 "Calculator tool requires a non-empty expression.",
             )
@@ -77,19 +77,19 @@ class CalculatorTool(BaseTool):
             parsed = ast.parse(expression, mode="eval")
             value = self._evaluate(parsed.body)
         except ZeroDivisionError:
-            error = build_error(CALCULATION_ERROR, "Division by zero is not allowed.")
+            error = build_pipeline_error(CALCULATION_ERROR, "Division by zero is not allowed.")
             return self._error_result(error)
         except ValueError as exc:
-            error = build_error(CALCULATION_ERROR, f"Invalid calculation: {exc}")
+            error = build_pipeline_error(CALCULATION_ERROR, f"Invalid calculation: {exc}")
             return self._error_result(error)
         except SyntaxError as exc:
-            error = build_error(CALCULATION_ERROR, f"Invalid expression syntax: {exc.msg}")
+            error = build_pipeline_error(CALCULATION_ERROR, f"Invalid expression syntax: {exc.msg}")
             return self._error_result(error)
         except TypeError as exc:
-            error = build_error(CALCULATION_ERROR, f"Unsupported expression: {exc}")
+            error = build_pipeline_error(CALCULATION_ERROR, f"Unsupported expression: {exc}")
             return self._error_result(error)
         except Exception as exc:
-            error = build_error(CALCULATION_ERROR, f"Failed to evaluate expression: {exc}")
+            error = build_pipeline_error(CALCULATION_ERROR, f"Failed to evaluate expression: {exc}")
             return self._error_result(error)
 
         return ToolResult(

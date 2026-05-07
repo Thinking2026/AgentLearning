@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import AgentError, SQL_SCHEMA_TOOL_ERROR, ToolResult, build_error
+from schemas import PipelineError, SQL_SCHEMA_TOOL_ERROR, ToolResult, build_pipeline_error
 from infra.db import RelationalStorage
 from tools.tool_base import BaseTool, build_tool_output
 
@@ -66,18 +66,18 @@ class SQLSchemaTool(BaseTool):
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         database = self._normalize_optional_string(arguments.get("database"))
-        if isinstance(database, AgentError):
+        if isinstance(database, PipelineError):
             return self._error_result(database)
         table = self._normalize_optional_string(arguments.get("table"))
-        if isinstance(table, AgentError):
+        if isinstance(table, PipelineError):
             return self._error_result(table)
 
         try:
             result = self._storage.inspect_schema(database=database, table=table)
-        except AgentError as exc:
+        except PipelineError as exc:
             return self._error_result(exc)
         except Exception as exc:
-            error = build_error(SQL_SCHEMA_TOOL_ERROR, f"SQL schema tool failed unexpectedly: {exc}")
+            error = build_pipeline_error(SQL_SCHEMA_TOOL_ERROR, f"SQL schema tool failed unexpectedly: {exc}")
             return self._error_result(error)
 
         return ToolResult(
@@ -89,7 +89,7 @@ class SQLSchemaTool(BaseTool):
         )
 
     @staticmethod
-    def _normalize_optional_string(value: Any) -> str | None | AgentError:
+    def _normalize_optional_string(value: Any) -> str | None | PipelineError:
         if value is None:
             return None
         normalized = str(value).strip()
@@ -98,7 +98,7 @@ class SQLSchemaTool(BaseTool):
         return normalized
 
     @staticmethod
-    def _error_result(error: AgentError) -> ToolResult:
+    def _error_result(error: PipelineError) -> ToolResult:
         return ToolResult(
             output=build_tool_output(success=False, error=error),
             success=False,

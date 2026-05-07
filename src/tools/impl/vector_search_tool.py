@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import AgentError, TOOL_ARGUMENT_ERROR, ToolResult, VECTOR_SEARCH_TOOL_ERROR, build_error
+from schemas import PipelineError, TOOL_ARGUMENT_ERROR, ToolResult, VECTOR_SEARCH_TOOL_ERROR, build_pipeline_error
 from infra.db import VectorSearchRequest, VectorStorage
 from tools.tool_base import BaseTool, build_tool_output
 
@@ -62,15 +62,15 @@ class VectorSearchTool(BaseTool):
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         collection = self._normalize_collection(arguments.get("collection"))
-        if isinstance(collection, AgentError):
+        if isinstance(collection, PipelineError):
             return self._error_result(collection)
         query = str(arguments.get("query", "")).strip()
         if not query:
-            error = build_error(TOOL_ARGUMENT_ERROR, "Vector search tool requires a non-empty query.")
+            error = build_pipeline_error(TOOL_ARGUMENT_ERROR, "Vector search tool requires a non-empty query.")
             return self._error_result(error)
 
         top_k = self._normalize_top_k(arguments.get("top_k", 3))
-        if isinstance(top_k, AgentError):
+        if isinstance(top_k, PipelineError):
             return self._error_result(top_k)
 
         try:
@@ -81,10 +81,10 @@ class VectorSearchTool(BaseTool):
                     top_k=top_k,
                 )
             )
-        except AgentError as exc:
+        except PipelineError as exc:
             return self._error_result(exc)
         except Exception as exc:
-            error = build_error(VECTOR_SEARCH_TOOL_ERROR, f"Vector search tool failed unexpectedly: {exc}")
+            error = build_pipeline_error(VECTOR_SEARCH_TOOL_ERROR, f"Vector search tool failed unexpectedly: {exc}")
             return self._error_result(error)
 
         return ToolResult(
@@ -103,17 +103,17 @@ class VectorSearchTool(BaseTool):
         )
 
     @staticmethod
-    def _normalize_top_k(value: object) -> int | AgentError:
+    def _normalize_top_k(value: object) -> int | PipelineError:
         try:
             top_k = int(value)
         except (TypeError, ValueError):
-            return build_error(TOOL_ARGUMENT_ERROR, "Vector search tool top_k must be an integer.")
+            return build_pipeline_error(TOOL_ARGUMENT_ERROR, "Vector search tool top_k must be an integer.")
         if top_k < 1 or top_k > 20:
-            return build_error(TOOL_ARGUMENT_ERROR, "Vector search tool top_k must be between 1 and 20.")
+            return build_pipeline_error(TOOL_ARGUMENT_ERROR, "Vector search tool top_k must be between 1 and 20.")
         return top_k
 
     @staticmethod
-    def _normalize_collection(value: object) -> str | None | AgentError:
+    def _normalize_collection(value: object) -> str | None | PipelineError:
         if value is None:
             return None
         normalized = str(value).strip()
@@ -122,7 +122,7 @@ class VectorSearchTool(BaseTool):
         return normalized
 
     @staticmethod
-    def _error_result(error: AgentError) -> ToolResult:
+    def _error_result(error: PipelineError) -> ToolResult:
         return ToolResult(
             output=build_tool_output(success=False, error=error),
             success=False,

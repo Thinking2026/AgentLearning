@@ -174,7 +174,6 @@ class LLMNormalizedError(Exception):
 # Legacy flat error codes (kept for tools, storage, and agent-level code)
 # ---------------------------------------------------------------------------
 
-AGENT_EXECUTION_ERROR = "AGENT_EXECUTION_ERROR"
 AGENT_MAX_ITERATIONS_EXCEEDED = "AGENT_MAX_ITERATIONS_EXCEEDED"
 AGENT_STRATEGY_NOT_FOUND = "AGENT_STRATEGY_NOT_FOUND"
 AGENT_THREAD_ERROR = "AGENT_THREAD_ERROR"
@@ -189,7 +188,6 @@ FILE_TOOL_ERROR = "FILE_TOOL_ERROR"
 LLM_ALL_PROVIDERS_FAILED = "LLM_ALL_PROVIDERS_FAILED"
 LLM_RESPONSE_TRUNCATED = "LLM_RESPONSE_TRUNCATED"
 LLM_CONFIG_ERROR = "LLM_CONFIG_ERROR"
-LLM_CONTEXT_TOO_LONG = "LLM_CONTEXT_TOO_LONG"
 LLM_HTTP_ERROR = "LLM_HTTP_ERROR"
 LLM_NETWORK_ERROR = "LLM_NETWORK_ERROR"
 LLM_PROVIDER_NOT_FOUND = "LLM_PROVIDER_NOT_FOUND"
@@ -222,7 +220,7 @@ VECTOR_SCHEMA_TOOL_ERROR = "VECTOR_SCHEMA_TOOL_ERROR"
 VECTOR_SEARCH_TOOL_ERROR = "VECTOR_SEARCH_TOOL_ERROR"
 
 
-class AgentError(Exception):
+class PipelineError(Exception):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         self.message = message
@@ -232,14 +230,35 @@ class AgentError(Exception):
         return f"[{self.code}] {self.message}"
 
 
-def build_error(code: str, message: str) -> AgentError:
-    return AgentError(code=code, message=message)
+def build_pipeline_error(code: str, message: str) -> PipelineError:
+    return PipelineError(code=code, message=message)
 
 
-class ConfigError(AgentError):
-    def __init__(self, message: str) -> None:
-        super().__init__(code=CONFIG_ERROR, message=message)
+class ConfigError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(str(self))
 
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.message}"
+
+
+def build_config_error(code: str, message: str) -> ConfigError:
+    return ConfigError(code=code, message=message)
+
+class ToolError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return f"[{self.code}] {self.message}"
+
+
+def build_tool_error(code: str, message: str) -> ToolError:
+    return ToolError(code=code, message=message)
 
 class HttpError(Exception):
     """Raised for HTTP error responses; carries status code and Retry-After."""
@@ -250,14 +269,5 @@ class HttpError(Exception):
         self.retry_after = retry_after
         super().__init__(f"HTTP {status}: {body}")
 
-class ProviderFailure(Exception):
-    """Raised by SingleProviderClient when this provider cannot serve the request.
-
-    Carries the final request state (possibly trimmed) so the fallback layer
-    can pass it to the next provider unchanged.
-    """
-
-    def __init__(self, provider_name: str, message: str, final_request: "UnifiedLLMRequest") -> None:
-        super().__init__(message)
-        self.provider_name = provider_name
-        self.final_request = final_request
+def build_http_error(status: int, body: str, retry_after: float | None = None) -> HttpError:
+    return HttpError(status=status, body=body, retry_after=retry_after)

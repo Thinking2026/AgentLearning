@@ -25,7 +25,7 @@ from schemas import (
     SEARCH_TOOL_TIMEOUT,
     TOOL_ARGUMENT_ERROR,
     ToolResult,
-    build_error,
+    build_pipeline_error,
 )
 from tools.tool_base import BaseTool, build_tool_output
 
@@ -139,9 +139,9 @@ class SearchTool(BaseTool):
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         query = str(arguments.get("query", "")).strip()
         if not query:
-            return self._error_result(build_error(TOOL_ARGUMENT_ERROR, "search requires a non-empty query."))
+            return self._error_result(build_pipeline_error(TOOL_ARGUMENT_ERROR, "search requires a non-empty query."))
         if len(query) > 500:
-            return self._error_result(build_error(TOOL_ARGUMENT_ERROR, "query must be ≤500 characters."))
+            return self._error_result(build_pipeline_error(TOOL_ARGUMENT_ERROR, "query must be ≤500 characters."))
 
         top_k = max(1, min(int(arguments.get("top_k", _DEFAULT_TOP_K)), _MAX_RESULTS))
         page = max(1, min(int(arguments.get("page", 1)), 5))
@@ -152,11 +152,11 @@ class SearchTool(BaseTool):
         try:
             session = self._fetch(query=query, top_k=top_k, page=page, timeout=timeout, provider=provider)
         except _TimeoutError as exc:
-            return self._error_result(build_error(SEARCH_TOOL_TIMEOUT, str(exc)))
+            return self._error_result(build_pipeline_error(SEARCH_TOOL_TIMEOUT, str(exc)))
         except _ProviderError as exc:
-            return self._error_result(build_error(SEARCH_TOOL_PROVIDER_ERROR, str(exc)))
+            return self._error_result(build_pipeline_error(SEARCH_TOOL_PROVIDER_ERROR, str(exc)))
         except Exception as exc:
-            return self._error_result(build_error(SEARCH_TOOL_ERROR, f"Search failed: {exc}"))
+            return self._error_result(build_pipeline_error(SEARCH_TOOL_ERROR, f"Search failed: {exc}"))
 
         if rerank and session.results:
             session.results = _rerank(query, session.results)

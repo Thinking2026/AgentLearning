@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
 
-from schemas.errors import AgentError
+from schemas.errors import PipelineError
 from schemas.ids import CheckpointId, TaskId
 
 #本文件引入的类型只能依赖内置类型或者文件中已经引入的类型，不能依赖其他文件中定义的类型，否则会导致循环依赖问题
@@ -19,6 +19,7 @@ class UnifiedLLMRequest:
     tool_schemas: list[dict[str, Any]] | None = None
     max_tokens: int = 1024
     temperature: float = 0.0
+    model_override: str | None = None
 
 @dataclass(slots=True)
 class LLMUsage:
@@ -52,7 +53,7 @@ class ToolResult:
     output: str
     llm_raw_tool_call_id: str | None = None
     success: bool = True
-    error: AgentError | None = None
+    error: PipelineError | None = None
 
 
 @dataclass(slots=True)
@@ -93,7 +94,7 @@ class ClientMessage:
 @dataclass(slots=True)
 class AgentExecutionResult:
     user_messages: list[ClientMessage] = field(default_factory=list)
-    error: AgentError | None = None
+    error: PipelineError | None = None
     task_completed: bool = False
 
 @dataclass(slots=True)

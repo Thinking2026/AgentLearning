@@ -9,7 +9,7 @@ from schemas import (
     STORAGE_QUERY_ERROR,
     STORAGE_RESOURCE_NOT_FOUND,
     STORAGE_RESOURCE_REQUIRED,
-    build_error,
+    build_pipeline_error,
 )
 from infra.db.storage import RelationalStorage
 
@@ -27,14 +27,14 @@ class SQLiteStorage(RelationalStorage):
 
     def __init__(self, databases: dict[str, str]) -> None:
         if not databases:
-            raise build_error(STORAGE_CONFIG_ERROR, "SQLite storage requires at least one database.")
+            raise build_pipeline_error(STORAGE_CONFIG_ERROR, "SQLite storage requires at least one database.")
         self._databases = {
             self._normalize_database_name(name): self._resolve_db_path(path)
             for name, path in databases.items()
             if str(name).strip() and str(path).strip()
         }
         if not self._databases:
-            raise build_error(STORAGE_CONFIG_ERROR, "SQLite storage requires valid database mappings.")
+            raise build_pipeline_error(STORAGE_CONFIG_ERROR, "SQLite storage requires valid database mappings.")
         for database_path in self._databases.values():
             database_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -87,7 +87,7 @@ class SQLiteStorage(RelationalStorage):
             ).fetchall()
             if not table_rows:
                 available = ", ".join(self._list_table_names(connection)) or "<none>"
-                raise build_error(
+                raise build_pipeline_error(
                     STORAGE_RESOURCE_NOT_FOUND,
                     f"Unknown SQLite table `{table_name}` in database `{database_name}`. "
                     f"Available tables: {available}",
@@ -118,16 +118,16 @@ class SQLiteStorage(RelationalStorage):
     def _validate_select_statement(statement: str) -> str:
         normalized = statement.strip()
         if not normalized:
-            raise build_error(STORAGE_QUERY_ERROR, "SQL query must not be empty.")
+            raise build_pipeline_error(STORAGE_QUERY_ERROR, "SQL query must not be empty.")
         compact = normalized.rstrip().rstrip(";").strip()
         if ";" in compact:
-            raise build_error(STORAGE_QUERY_ERROR, "Only a single SQL statement is allowed.")
+            raise build_pipeline_error(STORAGE_QUERY_ERROR, "Only a single SQL statement is allowed.")
         lower_compact = compact.lower()
         if lower_compact.startswith("select"):
             return compact
         if lower_compact.startswith(SQLiteStorage._READ_ONLY_PRAGMA_PREFIXES):
             return compact
-        raise build_error(
+        raise build_pipeline_error(
             STORAGE_QUERY_ERROR,
             "Only read-only SELECT queries and safe schema PRAGMA queries are allowed.",
         )
@@ -146,14 +146,14 @@ class SQLiteStorage(RelationalStorage):
             if normalized in self._databases:
                 return normalized
             available = ", ".join(sorted(self._databases)) or "<none>"
-            raise build_error(
+            raise build_pipeline_error(
                 STORAGE_RESOURCE_NOT_FOUND,
                 f"Unknown SQLite database `{database_name}`. Available databases: {available}",
             )
         if len(self._databases) == 1:
             return next(iter(self._databases))
         available = ", ".join(sorted(self._databases)) or "<none>"
-        raise build_error(
+        raise build_pipeline_error(
             STORAGE_RESOURCE_REQUIRED,
             f"SQLite database is required. Available databases: {available}",
         )

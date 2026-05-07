@@ -9,7 +9,7 @@ from schemas.task import (
     ReasoningType,
     L1, L2, L3, L4,
 )
-from schemas import LLM_CONFIG_ERROR, build_error
+from schemas import LLM_CONFIG_ERROR, build_pipeline_error
 
 # Ordered from simplest to most complex; used to derive accepted tiers by level.
 _COMPLEXITY_LEVELS = [L1, L2, L3, L4]
@@ -66,7 +66,7 @@ class CapabilityMatchStrategy:
         candidates: list[LLMProviderCapabilities],
     ) -> list[str]:
         if not candidates:
-            raise build_error(LLM_CONFIG_ERROR, "no provider candidates available")
+            raise build_pipeline_error(LLM_CONFIG_ERROR, "no provider candidates available")
         if task is None:
             return [c.name for c in candidates]
 
@@ -207,7 +207,7 @@ class ModelSelector:
         enable_fallback: bool = False,
     ) -> None:
         if not provider_capabilities:
-            raise build_error(LLM_CONFIG_ERROR, "provider_capabilities cannot be empty")
+            raise build_pipeline_error(LLM_CONFIG_ERROR, "provider_capabilities cannot be empty")
         self._capabilities = provider_capabilities
         self._strategy: RoutingStrategy = strategy or CapabilityMatchStrategy()
         self._enable_fallback = enable_fallback
@@ -227,11 +227,11 @@ class ModelSelector:
         excluded = excluded_providers or set()
         candidates = [c for c in self._capabilities if c.name not in excluded]
         if not candidates:
-            raise build_error(LLM_CONFIG_ERROR, "no available providers after applying exclusions")
+            raise build_pipeline_error(LLM_CONFIG_ERROR, "no available providers after applying exclusions")
 
         ordered = self._strategy.select(task, candidates)
         if not ordered:
-            raise build_error(LLM_CONFIG_ERROR, "routing strategy returned an empty provider list")
+            raise build_pipeline_error(LLM_CONFIG_ERROR, "routing strategy returned an empty provider list")
 
         primary = ordered[0]
         fallbacks = ordered[1:] if use_fallback else []

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from schemas import FILE_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_error
+from schemas import FILE_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_pipeline_error
 from tools.tool_base import BaseTool, build_tool_output
 from utils.env_util.runtime_env import get_task_runtime_dir
 
@@ -52,14 +52,14 @@ class FileTool(BaseTool):
         content = str(arguments.get("content", ""))
 
         if action not in {"read", "write", "append", "list_dir"}:
-            error = build_error(TOOL_ARGUMENT_ERROR, "File tool action must be read, write, append, or list_dir.")
+            error = build_pipeline_error(TOOL_ARGUMENT_ERROR, "File tool action must be read, write, append, or list_dir.")
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,
                 error=error,
             )
         if not path_value:
-            error = build_error(TOOL_ARGUMENT_ERROR, "File tool requires a non-empty path.")
+            error = build_pipeline_error(TOOL_ARGUMENT_ERROR, "File tool requires a non-empty path.")
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,
@@ -70,14 +70,14 @@ class FileTool(BaseTool):
         try:
             if action == "list_dir":
                 if not target_path.exists():
-                    error = build_error(FILE_TOOL_ERROR, f"File tool list_dir failed: path does not exist: {target_path}")
+                    error = build_pipeline_error(FILE_TOOL_ERROR, f"File tool list_dir failed: path does not exist: {target_path}")
                     return ToolResult(
                         output=build_tool_output(success=False, error=error),
                         success=False,
                         error=error,
                     )
                 if not target_path.is_dir():
-                    error = build_error(FILE_TOOL_ERROR, f"File tool list_dir failed: path is not a directory: {target_path}")
+                    error = build_pipeline_error(FILE_TOOL_ERROR, f"File tool list_dir failed: path is not a directory: {target_path}")
                     return ToolResult(
                         output=build_tool_output(success=False, error=error),
                         success=False,
@@ -145,7 +145,7 @@ class FileTool(BaseTool):
                 success=True,
             )
         except Exception as exc:
-            error = build_error(FILE_TOOL_ERROR, f"File tool failed: {exc}")
+            error = build_pipeline_error(FILE_TOOL_ERROR, f"File tool failed: {exc}")
             return ToolResult(
                 output=build_tool_output(success=False, error=error),
                 success=False,

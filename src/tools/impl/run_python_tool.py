@@ -10,7 +10,7 @@ from schemas import (
     PYTHON_TOOL_TIMEOUT,
     TOOL_ARGUMENT_ERROR,
     ToolResult,
-    build_error,
+    build_pipeline_error,
 )
 from tools.tool_base import BaseTool, build_tool_output
 
@@ -136,7 +136,7 @@ class RunPythonTool(BaseTool):
 
         code = str(arguments.get("code", "")).strip()
         if not code:
-            error = build_error(TOOL_ARGUMENT_ERROR, "run_python requires non-empty code.")
+            error = build_pipeline_error(TOOL_ARGUMENT_ERROR, "run_python requires non-empty code.")
             return self._error_result(error)
 
         raw_timeout = arguments.get("timeout", 10)
@@ -159,7 +159,7 @@ class RunPythonTool(BaseTool):
         # Static import check before execution
         forbidden = _check_imports(code)
         if forbidden:
-            error = build_error(
+            error = build_pipeline_error(
                 PYTHON_TOOL_FORBIDDEN_IMPORT,
                 f"Forbidden import(s): {', '.join(sorted(forbidden))}. "
                 f"Only whitelisted modules are allowed.",
@@ -180,7 +180,7 @@ class RunPythonTool(BaseTool):
         if proc.is_alive():
             proc.kill()
             proc.join()
-            error = build_error(
+            error = build_pipeline_error(
                 PYTHON_TOOL_TIMEOUT,
                 f"Python execution timed out after {timeout} seconds.",
             )
@@ -189,13 +189,13 @@ class RunPythonTool(BaseTool):
         try:
             payload = parent_conn.recv()
         except EOFError:
-            error = build_error(PYTHON_TOOL_ERROR, "Python execution produced no result.")
+            error = build_pipeline_error(PYTHON_TOOL_ERROR, "Python execution produced no result.")
             return self._error_result(error)
         finally:
             parent_conn.close()
 
         if not payload.get("ok"):
-            error = build_error(payload["error_code"], payload["error_message"])
+            error = build_pipeline_error(payload["error_code"], payload["error_message"])
             return self._error_result(error)
 
         # Persist extracted variables into the session for future calls

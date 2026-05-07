@@ -8,7 +8,7 @@ from llm.llm_gateway import classify_http_error, classify_agent_error, RetryConf
 from llm.registry import LLMProviderRegistry
 from agent.models.model_routing.provider_router import ModelSelector, ModelRoutingDecision
 from schemas.errors import (
-    AgentError,
+    PipelineError,
     HttpError,
     LLMNormalizedError,
     LLMNormalizedErrorCode,
@@ -78,38 +78,38 @@ def test_classify_400_non_context_is_5xx():
 # ---------------------------------------------------------------------------
 
 def test_classify_network_error():
-    exc = AgentError(code=LLM_NETWORK_ERROR, message="connection refused")
+    exc = PipelineError(code=LLM_NETWORK_ERROR, message="connection refused")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.NETWORK_ERROR
     assert err.category == ErrorCategory.TRANSIENT
 
 
 def test_classify_timeout():
-    exc = AgentError(code=LLM_TIMEOUT, message="timed out")
+    exc = PipelineError(code=LLM_TIMEOUT, message="timed out")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.TIMEOUT
 
 
 def test_classify_response_parse_error():
-    exc = AgentError(code=LLM_RESPONSE_PARSE_ERROR, message="parse failed")
+    exc = PipelineError(code=LLM_RESPONSE_PARSE_ERROR, message="parse failed")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.RESPONSE_PARSE_ERROR
 
 
 def test_classify_response_error():
-    exc = AgentError(code=LLM_RESPONSE_ERROR, message="bad response")
+    exc = PipelineError(code=LLM_RESPONSE_ERROR, message="bad response")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.RESPONSE_ERROR
 
 
 def test_classify_config_error():
-    exc = AgentError(code=LLM_CONFIG_ERROR, message="missing key")
+    exc = PipelineError(code=LLM_CONFIG_ERROR, message="missing key")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.CONFIG_ERROR
 
 
 def test_classify_unknown_agent_error_defaults_to_response_error():
-    exc = AgentError(code="SOME_UNKNOWN_CODE", message="unknown")
+    exc = PipelineError(code="SOME_UNKNOWN_CODE", message="unknown")
     err = classify_agent_error(exc)
     assert err.code == LLMNormalizedErrorCode.RESPONSE_ERROR
 

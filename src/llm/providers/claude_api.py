@@ -15,7 +15,7 @@ from schemas import (
     LLMUsage,
     LLM_CONFIG_ERROR,
     ToolCall,
-    build_error,
+    build_pipeline_error,
 )
 
 
@@ -57,7 +57,7 @@ class ClaudeLLMClient(BaseLLMClient):
     ) -> "ClaudeLLMClient":
         resolved_api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not resolved_api_key:
-            raise build_error(LLM_CONFIG_ERROR, "Missing API key for Claude client.")
+            raise build_pipeline_error(LLM_CONFIG_ERROR, "Missing API key for Claude client.")
         return cls(
             api_key=resolved_api_key,
             model=model,
@@ -68,19 +68,20 @@ class ClaudeLLMClient(BaseLLMClient):
         )
 
     def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
+        model = request.model_override or self._model
         last_message = request.messages[-1].content if request.messages else ""
         with self._start_span(
             "llm.generate",
             attributes={
                 "provider": self.provider_name,
-                "model": self._model,
+                "model": model,
                 "message_count": len(request.messages),
                 "last_user_message": last_message,
             },
         ) as span:
             try:
                 payload: dict[str, object] = {
-                    "model": self._model,
+                    "model": model,
                     "max_tokens": request.max_tokens or self._max_tokens,
                     "messages": self._serialize_messages(request),
                 }

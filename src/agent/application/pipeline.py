@@ -14,7 +14,6 @@ from agent.events.events import (
 )
 from agent.factory.agent_factory import AgentFactory
 from schemas.ids import CheckpointId, TaskId
-from schemas.errors import AgentError
 from schemas.task import Plan, Task, TaskResult
 from schemas.types import ClientMessage
 

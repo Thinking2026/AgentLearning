@@ -4,7 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from typing import Any
 
-from schemas import AgentError, ToolResult
+from schemas import PipelineError, ToolResult
 
 
 class BaseTool(ABC):
@@ -34,7 +34,7 @@ def build_tool_output(
     *,
     success: bool,
     data: dict[str, Any] | None = None,
-    error: AgentError | None = None,
+    error: PipelineError | None = None,
 ) -> str:
     payload = {
         "success": success,

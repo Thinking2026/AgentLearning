@@ -12,10 +12,10 @@ from schemas import (
     TOOL_EXECUTION_ERROR,
     TOOL_NOT_FOUND,
     TOOL_TIMEOUT,
-    AgentError,
+    PipelineError,
     ToolCall,
     ToolResult,
-    build_error,
+    build_pipeline_error,
 )
 from infra.observability.tracing import Span, Tracer
 from tools.tool_base import BaseTool
@@ -183,7 +183,7 @@ class BaseToolHandler(ABC):
             output="",
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
-            error=build_error(TOOL_NOT_FOUND, f"Unknown tool: {tool_call.name}"),
+            error=build_pipeline_error(TOOL_NOT_FOUND, f"Unknown tool: {tool_call.name}"),
         )
 
     @abstractmethod
@@ -213,9 +213,9 @@ class ToolHandlerNode(BaseToolHandler):
                 output="",
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                 success=False,
-                error=build_error(TOOL_TIMEOUT, f"Tool `{tool_call.name}` timed out: {exc}"),
+                error=build_pipeline_error(TOOL_TIMEOUT, f"Tool `{tool_call.name}` timed out: {exc}"),
             )
-        except AgentError as exc:
+        except PipelineError as exc:
             return ToolResult(
                 output="",
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
@@ -227,7 +227,7 @@ class ToolHandlerNode(BaseToolHandler):
                 output="",
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                 success=False,
-                error=build_error(
+                error=build_pipeline_error(
                     TOOL_EXECUTION_ERROR,
                     f"Tool `{tool_call.name}` failed unexpectedly: {exc}",
                 ),
@@ -243,7 +243,7 @@ class FallbackToolHandler(BaseToolHandler):
             output="",
             llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
             success=False,
-            error=build_error(TOOL_NOT_FOUND, f"Unknown tool: {tool_call.name}"),
+            error=build_pipeline_error(TOOL_NOT_FOUND, f"Unknown tool: {tool_call.name}"),
         )
 
 

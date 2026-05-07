@@ -17,11 +17,10 @@ from schemas.errors import (
     ErrorCategory,
     LLMNormalizedErrorCode,
     LLMNormalizedError,
-    AgentError,
+    PipelineError,
     ConfigError,
     HttpError,
-    ProviderFailure,
-    build_error,
+    build_pipeline_error,
     CONFIG_ERROR,
     TOOL_NOT_FOUND,
 )
@@ -48,7 +47,7 @@ def test_tool_result_defaults():
 
 
 def test_tool_result_failure():
-    err = AgentError(code="ERR", message="bad")
+    err = PipelineError(code="ERR", message="bad")
     tr = ToolResult(output="", success=False, error=err)
     assert not tr.success
     assert tr.error is err
@@ -144,14 +143,14 @@ def test_llm_error_is_exception():
 # ---------------------------------------------------------------------------
 
 def test_agent_error_str():
-    err = AgentError(code="MY_CODE", message="something went wrong")
+    err = PipelineError(code="MY_CODE", message="something went wrong")
     assert "[MY_CODE]" in str(err)
     assert "something went wrong" in str(err)
 
 
 def test_build_error_returns_agent_error():
-    err = build_error(TOOL_NOT_FOUND, "tool missing")
-    assert isinstance(err, AgentError)
+    err = build_pipeline_error(TOOL_NOT_FOUND, "tool missing")
+    assert isinstance(err, PipelineError)
     assert err.code == TOOL_NOT_FOUND
 
 
@@ -180,14 +179,3 @@ def test_http_error_str():
 def test_http_error_no_retry_after():
     err = HttpError(status=401, body="unauthorized")
     assert err.retry_after is None
-
-
-# ---------------------------------------------------------------------------
-# ProviderFailure
-# ---------------------------------------------------------------------------
-
-def test_provider_failure():
-    req = UnifiedLLMRequest(messages=[])
-    err = ProviderFailure(provider_name="openai", message="failed", final_request=req)
-    assert err.provider_name == "openai"
-    assert err.final_request is req

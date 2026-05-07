@@ -7,7 +7,7 @@ from schemas import (
     STORAGE_QUERY_ERROR,
     STORAGE_RESOURCE_NOT_FOUND,
     STORAGE_RESOURCE_REQUIRED,
-    build_error,
+    build_pipeline_error,
 )
 from infra.db.storage import RelationalStorage
 
@@ -25,12 +25,12 @@ class MySQLStorage(RelationalStorage):
         charset: str = "utf8mb4",
     ) -> None:
         if not host.strip():
-            raise build_error(STORAGE_CONFIG_ERROR, "MySQL storage requires a non-empty host.")
+            raise build_pipeline_error(STORAGE_CONFIG_ERROR, "MySQL storage requires a non-empty host.")
         if not user.strip():
-            raise build_error(STORAGE_CONFIG_ERROR, "MySQL storage requires a non-empty user.")
+            raise build_pipeline_error(STORAGE_CONFIG_ERROR, "MySQL storage requires a non-empty user.")
         normalized_databases = [database.strip() for database in allowed_databases if str(database).strip()]
         if not normalized_databases:
-            raise build_error(STORAGE_CONFIG_ERROR, "MySQL storage requires at least one allowed database.")
+            raise build_pipeline_error(STORAGE_CONFIG_ERROR, "MySQL storage requires at least one allowed database.")
 
         self._host = host
         self._port = int(port)
@@ -101,7 +101,7 @@ class MySQLStorage(RelationalStorage):
                         (database_name,),
                     )
                     available = ", ".join(row["table_name"] for row in cursor.fetchall()) or "<none>"
-                    raise build_error(
+                    raise build_pipeline_error(
                         STORAGE_RESOURCE_NOT_FOUND,
                         f"Unknown MySQL table `{table_name}` in database `{database_name}`. "
                         f"Available tables: {available}",
@@ -149,14 +149,14 @@ class MySQLStorage(RelationalStorage):
             if normalized in self._allowed_databases:
                 return normalized
             available = ", ".join(sorted(self._allowed_databases)) or "<none>"
-            raise build_error(
+            raise build_pipeline_error(
                 STORAGE_RESOURCE_NOT_FOUND,
                 f"Unknown MySQL database `{database_name}`. Available databases: {available}",
             )
         if len(self._allowed_databases) == 1:
             return self._allowed_databases[0]
         available = ", ".join(sorted(self._allowed_databases)) or "<none>"
-        raise build_error(
+        raise build_pipeline_error(
             STORAGE_RESOURCE_REQUIRED,
             f"MySQL database is required. Available databases: {available}",
         )
@@ -165,12 +165,12 @@ class MySQLStorage(RelationalStorage):
     def _validate_select_statement(statement: str) -> str:
         normalized = statement.strip()
         if not normalized:
-            raise build_error(STORAGE_QUERY_ERROR, "SQL query must not be empty.")
+            raise build_pipeline_error(STORAGE_QUERY_ERROR, "SQL query must not be empty.")
         compact = normalized.rstrip().rstrip(";").strip()
         if ";" in compact:
-            raise build_error(STORAGE_QUERY_ERROR, "Only a single SQL statement is allowed.")
+            raise build_pipeline_error(STORAGE_QUERY_ERROR, "Only a single SQL statement is allowed.")
         if not compact.lower().startswith("select"):
-            raise build_error(STORAGE_QUERY_ERROR, "Only SELECT queries are allowed.")
+            raise build_pipeline_error(STORAGE_QUERY_ERROR, "Only SELECT queries are allowed.")
         return compact
 
     @staticmethod
@@ -186,7 +186,7 @@ class MySQLStorage(RelationalStorage):
         try:
             import pymysql
         except ModuleNotFoundError as exc:
-            raise build_error(
+            raise build_pipeline_error(
                 STORAGE_DEPENDENCY_ERROR,
                 "MySQL storage requires the `pymysql` package to be installed.",
             ) from exc

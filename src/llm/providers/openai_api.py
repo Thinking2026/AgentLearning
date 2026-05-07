@@ -15,7 +15,7 @@ from schemas import (
     LLMUsage,
     LLM_CONFIG_ERROR,
     ToolCall,
-    build_error,
+    build_pipeline_error,
 )
 
 
@@ -50,7 +50,7 @@ class OpenAILLMClient(BaseLLMClient):
     ) -> "OpenAILLMClient":
         resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not resolved_api_key:
-            raise build_error(LLM_CONFIG_ERROR, "Missing API key for OpenAI client.")
+            raise build_pipeline_error(LLM_CONFIG_ERROR, "Missing API key for OpenAI client.")
         return cls(
             api_key=resolved_api_key,
             model=model,
@@ -59,19 +59,20 @@ class OpenAILLMClient(BaseLLMClient):
         )
 
     def generate(self, request: UnifiedLLMRequest) -> LLMResponse:
+        model = request.model_override or self._model
         last_message = request.messages[-1].content if request.messages else ""
         with self._start_span(
             "llm.generate",
             attributes={
                 "provider": self.provider_name,
-                "model": self._model,
+                "model": model,
                 "message_count": len(request.messages),
                 "last_user_message": last_message,
             },
         ) as span:
             try:
                 payload = {
-                    "model": self._model,
+                    "model": model,
                     "messages": self._serialize_messages(request),
                     "max_tokens": request.max_tokens,
                     "temperature": request.temperature,

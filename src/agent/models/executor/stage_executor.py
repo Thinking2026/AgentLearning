@@ -20,12 +20,12 @@ from agent.events.events import (
 )
 from schemas.errors import (
     AGENT_MAX_ITERATIONS_EXCEEDED,
-    AgentError,
+    PipelineError,
     CallerAction,
     LLMNormalizedError,
     TOOL_NOT_FOUND,
     TOOL_ARGUMENT_ERROR,
-    build_error,
+    build_pipeline_error,
 )
 from schemas.ids import PlanStepId, StageId, TaskId
 from schemas.task import (
@@ -219,7 +219,7 @@ class StageExecutor:
                 next_index = provider_index + 1
                 if next_index >= len(provider_chain):
                     # 1.2.4 No more providers — unrecoverable
-                    raise AgentError(
+                    raise PipelineError(
                         "LLM_ALL_PROVIDERS_FAILED",
                         f"All providers exhausted at stage {step_index + 1}: {step.goal}",
                     )
@@ -248,7 +248,7 @@ class StageExecutor:
             if not eval_report.passed:
                 current_replan_stage_attempts += 1
                 if current_replan_stage_attempts > self._max_replan_stage_retries:
-                    raise AgentError(
+                    raise PipelineError(
                         "LLM_REPLAN_LIMIT_EXCEEDED",
                         f"Max replan attempts exceeded at stage {step_index + 1}: {step.goal}",
                     )
@@ -288,7 +288,7 @@ class StageExecutor:
             current_replan_stage_attempts = 0
             start_reason = _StartReason.NEW
 
-        raise AgentError(AGENT_MAX_ITERATIONS_EXCEEDED, "reach max iterations")
+        raise PipelineError(AGENT_MAX_ITERATIONS_EXCEEDED, "reach max iterations")
 
     # ------------------------------------------------------------------
     # Stage internal reasoning loop
@@ -360,7 +360,7 @@ class StageExecutor:
                     return _StageOutcome.FATAL, ""
                 stage.fail(f"LLM error: {exc.message}")
                 return _StageOutcome.SWITCH_MODEL, ""
-            except AgentError as exc:
+            except PipelineError as exc:
                 stage.fail(f"Agent error: {exc.message}")
                 return _StageOutcome.FATAL, ""
 
@@ -566,7 +566,7 @@ class StageExecutor:
                 output="",
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                 success=False,
-                error=build_error(
+                error=build_pipeline_error(
                     TOOL_NOT_FOUND,
                     f"Tool '{tool_call.name}' does not exist. Available: {available}.",
                 ),
@@ -577,7 +577,7 @@ class StageExecutor:
                 output="",
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                 success=False,
-                error=build_error(
+                error=build_pipeline_error(
                     TOOL_NOT_FOUND,
                     f"Tool '{tool_call.name}' is forbidden.",
                 ),
@@ -589,7 +589,7 @@ class StageExecutor:
                 output="",
                 llm_raw_tool_call_id=tool_call.llm_raw_tool_call_id,
                 success=False,
-                error=build_error(
+                error=build_pipeline_error(
                     TOOL_ARGUMENT_ERROR,
                     f"Tool '{tool_call.name}' missing required args: {', '.join(missing)}.",
                 ),

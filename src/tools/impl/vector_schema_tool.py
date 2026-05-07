@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import AgentError, ToolResult, VECTOR_SCHEMA_TOOL_ERROR, build_error
+from schemas import PipelineError, ToolResult, VECTOR_SCHEMA_TOOL_ERROR, build_pipeline_error
 from infra.db import VectorStorage
 from tools.tool_base import BaseTool, build_tool_output
 
@@ -51,15 +51,15 @@ class VectorSchemaTool(BaseTool):
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         collection = self._normalize_optional_string(arguments.get("collection"))
-        if isinstance(collection, AgentError):
+        if isinstance(collection, PipelineError):
             return self._error_result(collection)
 
         try:
             result = self._storage.inspect_schema(collection=collection)
-        except AgentError as exc:
+        except PipelineError as exc:
             return self._error_result(exc)
         except Exception as exc:
-            error = build_error(VECTOR_SCHEMA_TOOL_ERROR, f"Vector schema tool failed unexpectedly: {exc}")
+            error = build_pipeline_error(VECTOR_SCHEMA_TOOL_ERROR, f"Vector schema tool failed unexpectedly: {exc}")
             return self._error_result(error)
 
         return ToolResult(
@@ -68,7 +68,7 @@ class VectorSchemaTool(BaseTool):
         )
 
     @staticmethod
-    def _normalize_optional_string(value: Any) -> str | None | AgentError:
+    def _normalize_optional_string(value: Any) -> str | None | PipelineError:
         if value is None:
             return None
         normalized = str(value).strip()
@@ -77,7 +77,7 @@ class VectorSchemaTool(BaseTool):
         return normalized
 
     @staticmethod
-    def _error_result(error: AgentError) -> ToolResult:
+    def _error_result(error: PipelineError) -> ToolResult:
         return ToolResult(
             output=build_tool_output(success=False, error=error),
             success=False,

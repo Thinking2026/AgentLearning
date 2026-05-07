@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from schemas import build_error
+from schemas import build_pipeline_error
 from infra.db.storage import BaseStorage
 
 
@@ -20,7 +20,7 @@ class StorageRegistry:
             return self._storages[backend_name]
         except KeyError as exc:
             available = ", ".join(sorted(self._storages)) or "<none>"
-            raise build_error(
+            raise build_pipeline_error(
                 "STORAGE_BACKEND_NOT_FOUND",
                 f"Unknown storage backend: {backend_name}. Available backends: {available}",
             ) from exc

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from schemas.types import ToolCall, ToolResult
-from schemas.errors import AgentError, TOOL_NOT_FOUND, TOOL_TIMEOUT, TOOL_EXECUTION_ERROR
+from schemas.errors import PipelineError, TOOL_NOT_FOUND, TOOL_TIMEOUT, TOOL_EXECUTION_ERROR
 from tools.models import BaseTool, build_tool_output
 from tools.tool_registry import (
     ToolRegistry,
@@ -59,7 +59,7 @@ class AgentTimeoutTool(BaseTool):
     parameters = {"type": "object", "properties": {}}
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
-        raise AgentError(code="TOOL_TIMEOUT", message="agent timeout")
+        raise PipelineError(code="TOOL_TIMEOUT", message="agent timeout")
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +77,7 @@ def test_build_tool_output_success():
 
 def test_build_tool_output_failure():
     import json
-    err = AgentError(code="ERR", message="bad")
+    err = PipelineError(code="ERR", message="bad")
     output = build_tool_output(success=False, error=err)
     parsed = json.loads(output)
     assert parsed["success"] is False

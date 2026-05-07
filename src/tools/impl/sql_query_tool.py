@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas import AGENT_EXECUTION_ERROR, AgentError, SQL_QUERY_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_error
+from schemas import PipelineError, SQL_QUERY_TOOL_ERROR, TOOL_ARGUMENT_ERROR, ToolResult, build_pipeline_error
 from infra.db import RelationalStorage, SQLQueryRequest
 from tools.tool_base import BaseTool, build_tool_output
 
@@ -87,20 +87,20 @@ class SQLQueryTool(BaseTool):
 
     def run(self, arguments: dict[str, Any]) -> ToolResult:
         database = self._normalize_database(arguments.get("database"))
-        if isinstance(database, AgentError):
+        if isinstance(database, PipelineError):
             return self._error_result(database)
         statement = str(arguments.get("statement", "")).strip()
         if not statement:
-            error = build_error(TOOL_ARGUMENT_ERROR, "SQL query tool requires a non-empty statement.")
+            error = build_pipeline_error(TOOL_ARGUMENT_ERROR, "SQL query tool requires a non-empty statement.")
             return self._error_result(error)
 
         params = arguments.get("params")
         normalized_params = self._normalize_params(params)
-        if isinstance(normalized_params, AgentError):
+        if isinstance(normalized_params, PipelineError):
             return self._error_result(normalized_params)
 
         max_rows = self._normalize_max_rows(arguments.get("max_rows", 50))
-        if isinstance(max_rows, AgentError):
+        if isinstance(max_rows, PipelineError):
             return self._error_result(max_rows)
 
         try:
@@ -112,10 +112,10 @@ class SQLQueryTool(BaseTool):
                     max_rows=max_rows,
                 )
             )
-        except AgentError as exc:
+        except PipelineError as exc:
             return self._error_result(exc)
         except Exception as exc:
-            error = build_error(SQL_QUERY_TOOL_ERROR, f"SQL query tool failed unexpectedly: {exc}")
+            error = build_pipeline_error(SQL_QUERY_TOOL_ERROR, f"SQL query tool failed unexpectedly: {exc}")
             return self._error_result(error)
 
         columns = list(rows[0].keys()) if rows else []
@@ -137,20 +137,20 @@ class SQLQueryTool(BaseTool):
     @staticmethod
     def _normalize_params(
         params: Any,
-    ) -> list[Any] | tuple[Any, ...] | dict[str, Any] | None | AgentError:
+    ) -> list[Any] | tuple[Any, ...] | dict[str, Any] | None | PipelineError:
         if params is None:
             return None
         if isinstance(params, list):
             return params
         if isinstance(params, dict):
             return params
-        return build_error(
+        return build_pipeline_error(
             TOOL_ARGUMENT_ERROR,
             "SQL query tool params must be an array, an object, or omitted.",
         )
 
     @staticmethod
-    def _normalize_database(value: Any) -> str | None | AgentError:
+    def _normalize_database(value: Any) -> str | None | PipelineError:
         if value is None:
             return None
         normalized = str(value).strip()
@@ -159,17 +159,17 @@ class SQLQueryTool(BaseTool):
         return normalized
 
     @staticmethod
-    def _normalize_max_rows(value: Any) -> int | AgentError:
+    def _normalize_max_rows(value: Any) -> int | PipelineError:
         try:
             max_rows = int(value)
         except (TypeError, ValueError):
-            return build_error(TOOL_ARGUMENT_ERROR, "SQL query tool max_rows must be an integer.")
+            return build_pipeline_error(TOOL_ARGUMENT_ERROR, "SQL query tool max_rows must be an integer.")
         if max_rows < 1 or max_rows > 1000:
-            return build_error(TOOL_ARGUMENT_ERROR, "SQL query tool max_rows must be between 1 and 1000.")
+            return build_pipeline_error(TOOL_ARGUMENT_ERROR, "SQL query tool max_rows must be between 1 and 1000.")
         return max_rows
 
     @staticmethod
-    def _error_result(error: AgentError) -> ToolResult:
+    def _error_result(error: PipelineError) -> ToolResult:
         return ToolResult(
             output=build_tool_output(success=False, error=error),
             success=False,

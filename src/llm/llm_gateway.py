@@ -2,20 +2,20 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from typing import TYPE_CHECKING
 
 from config.config import ConfigReader
 from schemas import (
+    CallerAction,
     ConfigError,
-    ErrorCategory,
     HttpError,
     LLMNormalizedError,
     LLMNormalizedErrorCode,
     UnifiedLLMRequest,
     LLMResponse,
     LLM_CONFIG_ERROR,
-    build_error,
+    build_pipeline_error,
 )
 from infra.observability.tracing import Span, Tracer
 from utils.http.http_client import HttpClient
@@ -174,7 +174,7 @@ class RetryConfig:
 
     def __post_init__(self) -> None:
         if self.retry_max_attempts <= 0:
-            raise build_error(LLM_CONFIG_ERROR, "retry_max_attempts must be greater than 0")
+            raise build_pipeline_error(LLM_CONFIG_ERROR, "retry_max_attempts must be greater than 0")
 
 
 # ---------------------------------------------------------------------------
@@ -203,11 +203,15 @@ class BaseLLMClient(ABC):
 
 
 class LLMGateway(BaseLLMClient):
-    """Wraps a provider (resolved from LLMProviderRegistry) with backoff-jitter retry.
+    """Wraps a provider (resolved from LLMProviderRegistry) with backoff-jitter retry
+    and intra-provider model fallback.
 
-    Retries on TRANSIENT and RATE_LIMITED errors up to _max_retries times.
-    AUTH/CONFIG errors are not retried — they propagate immediately.
-    All other errors propagate after exhausting retries.
+    Decision tree per CallerAction:
+      RETRY / RETRY_BACKOFF  → retry same model with backoff (up to max_retries)
+      DEGRADE                → try next model in provider's model_fallback list;
+                               if all exhausted, propagate to caller (switch provider)
+      SWITCH_MODEL / FATAL   → propagate immediately (caller handles provider switch)
+      IGNORE / others        → propagate immediately
     """
 
     def __init__(
@@ -224,6 +228,9 @@ class LLMGateway(BaseLLMClient):
         import random as _random
         self._random = _random
 
+    def _fallback_models(self, provider_name: str) -> list[str]:
+        return list(self._config.get(f"llm.provider_settings.{provider_name}.model_fallback", []))
+
     def generate(self, request: UnifiedLLMRequest, provider_name: str) -> LLMResponse:
         import time as _time
         logger = Logger.get_instance()
@@ -233,17 +240,56 @@ class LLMGateway(BaseLLMClient):
             zap.any("provider", provider_name),
             zap.any("messages", len(request.messages)),
         )
+
+        # None = use provider's configured default model
+        models_to_try: list[str | None] = [None] + self._fallback_models(provider_name)
+
+        last_exc: LLMNormalizedError | None = None
+        for model_idx, model_override in enumerate(models_to_try):
+            req = dc_replace(request, model_override=model_override) if model_override else request
+            if model_override:
+                logger.info(
+                    "LLM model fallback",
+                    zap.any("provider", provider_name),
+                    zap.any("model", model_override),
+                )
+            try:
+                return self._generate_with_retry(provider, req, provider_name, _time, logger)
+            except LLMNormalizedError as exc:
+                last_exc = exc
+                if exc.caller_action == CallerAction.DEGRADE and model_idx < len(models_to_try) - 1:
+                    # More fallback models available — try the next one
+                    logger.info(
+                        "LLM degrade: trying next fallback model",
+                        zap.any("provider", provider_name),
+                        zap.any("error_code", exc.code.value),
+                        zap.any("next_model", models_to_try[model_idx + 1]),
+                    )
+                    continue
+                # DEGRADE with no more fallbacks, SWITCH_MODEL, FATAL, or anything else
+                raise
+
+        if last_exc is not None:
+            raise last_exc
+        raise LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, "Unknown LLM error")
+
+    def _generate_with_retry(
+        self,
+        provider: BaseLLMClient,
+        request: UnifiedLLMRequest,
+        provider_name: str,
+        _time,
+        logger,
+    ) -> LLMResponse:
         last_exc: LLMNormalizedError | None = None
         for attempt in range(self._max_retries + 1):
             try:
                 return provider.generate(request)
             except LLMNormalizedError as exc:
                 last_exc = exc
-                # AUTH/CONFIG: fatal for this provider, don't retry
-                if exc.category in (ErrorCategory.AUTH, ErrorCategory.CONFIG):
+                if exc.caller_action == CallerAction.FATAL:
                     raise
-                # TRANSIENT / RATE_LIMITED: backoff and retry
-                if exc.category in (ErrorCategory.TRANSIENT, ErrorCategory.RATE_LIMIT):
+                if exc.caller_action in (CallerAction.RETRY, CallerAction.RETRY_BACKOFF):
                     if attempt < self._max_retries:
                         delay = exc.retry_after if exc.retry_after is not None else self._backoff(attempt)
                         logger.info(
@@ -254,9 +300,8 @@ class LLMGateway(BaseLLMClient):
                         )
                         _time.sleep(delay)
                         continue
-                # All other categories or retries exhausted: propagate
+                # DEGRADE, SWITCH_MODEL, IGNORE, or retries exhausted: propagate
                 raise
-        # Should not reach here, but satisfy type checker
         if last_exc is not None:
             raise last_exc
         raise LLMNormalizedError(LLMNormalizedErrorCode.HTTP_5XX, "Unknown LLM error")
